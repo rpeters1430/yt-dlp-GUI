@@ -31,4 +31,8 @@ export const api = {
 
   getSettings: () => request('/settings'),
   updateSettings: (payload) => request('/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+
+  getCookiesStatus: () => request('/settings/cookies'),
+  saveCookies: (content) => request('/settings/cookies', { method: 'PUT', body: JSON.stringify({ content }) }),
+  clearCookies: () => request('/settings/cookies', { method: 'DELETE' }),
 };

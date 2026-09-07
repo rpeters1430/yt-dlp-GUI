@@ -10,6 +10,8 @@ A self-hosted web app for downloading videos/audio from any site [yt-dlp](https:
 - Download history with thumbnails and file paths
 - "Watches" — point it at a playlist or channel URL and it checks every 30 minutes for new videos, auto-downloading them
 - Simple username/password login (single admin account)
+- YouTube cookie support (Settings page) for age-restricted/members-only/private videos
+- Ships with the Deno JS runtime yt-dlp now requires to solve YouTube's JS challenges
 
 ## Quick start (Docker Compose)
 
@@ -42,6 +44,14 @@ docker compose up -d
 
 If you want reproducible builds instead, pin a version in the `Dockerfile` (`pip3 install yt-dlp==<version>`) — see https://pypi.org/project/yt-dlp/ for release history.
 
+## YouTube JS runtime (Deno)
+
+As of yt-dlp 2025.11.12+, full YouTube support requires an external JavaScript runtime to solve YouTube's JS challenges and generate PO tokens — the bundled `yt-dlp-ejs` component can't do this on its own. The `Dockerfile` installs [Deno](https://deno.com) (yt-dlp's default/recommended runtime) automatically for both amd64 and arm64, so no setup is needed. If you run the server outside Docker (see below), install Deno yourself and make sure it's on `PATH`.
+
+## YouTube cookies
+
+Some videos (age-restricted, members-only, private, or anything YouTube is being extra suspicious about) need you to be "logged in." Go to **Settings** in the app, export `cookies.txt` from a browser where you're signed into YouTube (e.g. the "Get cookies.txt LOCALLY" extension), and paste its contents in. It's saved to `./config/cookies.txt` with owner-only file permissions and used for every yt-dlp call. Treat that file like a password — anyone with it is logged in as you.
+
 ## Local development (without Docker)
 
 ```bash
@@ -56,7 +66,7 @@ npm install
 npm run dev
 ```
 
-You'll also need `yt-dlp` and `ffmpeg` installed locally and on your `PATH`.
+You'll also need `yt-dlp`, `ffmpeg`, and `deno` installed locally and on your `PATH`.
 
 ## Architecture
 

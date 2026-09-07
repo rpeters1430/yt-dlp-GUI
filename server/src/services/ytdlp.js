@@ -1,13 +1,23 @@
+const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
 
 const YTDLP_BIN = process.env.YTDLP_BIN || 'yt-dlp';
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || '/downloads';
+const CONFIG_DIR = process.env.CONFIG_DIR || '/config';
+const COOKIES_FILE = path.join(CONFIG_DIR, 'cookies.txt');
+
+// If a cookies.txt (Netscape format) has been saved via Settings, pass it to yt-dlp so
+// age-restricted/members-only/private videos work. Absent by default.
+function cookieArgs() {
+  return fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
+}
 
 // Runs `yt-dlp -J <url>` to fetch metadata (title, id, extractor, thumbnail, formats)
 // without downloading anything. Used for the format picker and for watch/history dedup.
 function getInfo(url, { flatPlaylist = false } = {}) {
   return new Promise((resolve, reject) => {
-    const args = ['-J', '--no-warnings'];
+    const args = ['-J', '--no-warnings', ...cookieArgs()];
     if (flatPlaylist) args.push('--flat-playlist');
     args.push(url);
 
@@ -47,6 +57,7 @@ function download(url, options, onProgress) {
     const args = [
       '--newline',
       '--no-warnings',
+      ...cookieArgs(),
       '--progress-template', PROGRESS_TEMPLATE,
       '-o', `${DOWNLOAD_DIR}/%(uploader,extractor)s/%(title)s [%(id)s].%(ext)s`,
       '--print', 'after_move:FILEPATH %(filepath)s',
@@ -95,4 +106,4 @@ function download(url, options, onProgress) {
   });
 }
 
-module.exports = { getInfo, download };
+module.exports = { getInfo, download, COOKIES_FILE };
