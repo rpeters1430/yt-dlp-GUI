@@ -9,10 +9,11 @@ RUN npm run build
 # --- Final image ---
 FROM node:24-bookworm-slim
 
+# python3-pip is kept in the final image (not purged after install) so the Settings page's
+# "Update yt-dlp" action can run `pip3 install -U [--pre] yt-dlp` at runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip ffmpeg ca-certificates build-essential curl unzip \
     && pip3 install --no-cache-dir --break-system-packages -U yt-dlp \
-    && apt-get purge -y --auto-remove python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # yt-dlp requires an external JS runtime to solve YouTube's JS challenges/PO tokens

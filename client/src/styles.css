@@ -44,6 +44,16 @@ input, textarea {
 }
 textarea { resize: vertical; font-family: inherit; }
 
+select {
+  background: #0d0f14;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+  width: auto;
+}
+
 button {
   background: var(--accent);
   color: white;
@@ -161,3 +171,19 @@ button.icon-btn:hover { color: var(--danger); }
 .watch-actions { display: flex; gap: 8px; align-items: center; }
 
 .settings-form { display: flex; flex-direction: column; gap: 10px; max-width: 320px; }
+
+.file-input-label {
+  display: block;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.file-input-label:hover { color: var(--text); border-color: var(--accent); }
+
+.version-list { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 12px 0; }
+.version-list dt { color: var(--muted); font-size: 13px; }
+.version-list dd { margin: 0; font-size: 13px; font-family: monospace; }
