@@ -1,0 +1,8 @@
+**/node_modules
+client/dist
+downloads
+config
+.git
+.env
+*.md
+.github

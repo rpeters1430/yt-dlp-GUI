@@ -1,7 +1,7 @@
 services:
   ytdlp-gui:
     build: .
-    image: ytdlp-gui:latest
+    image: ghcr.io/rpeters1430/yt-dlp-gui:latest
     container_name: ytdlp-gui
     restart: unless-stopped
     ports:
