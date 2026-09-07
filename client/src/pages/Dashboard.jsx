@@ -34,6 +34,17 @@ const SUBTITLE_LANG_OPTIONS = [
   { value: 'all', label: 'All available languages' },
 ];
 
+const SPONSORBLOCK_CATEGORIES = [
+  { value: 'sponsor', label: 'Sponsor' },
+  { value: 'selfpromo', label: 'Unpaid/self promotion' },
+  { value: 'interaction', label: 'Interaction reminder' },
+  { value: 'intro', label: 'Intermission/intro' },
+  { value: 'outro', label: 'Endcards/credits' },
+  { value: 'preview', label: 'Preview/recap' },
+  { value: 'music_offtopic', label: 'Non-music section' },
+  { value: 'filler', label: 'Filler tangent' },
+];
+
 export default function Dashboard() {
   const [urlText, setUrlText] = useState('');
   const [audioOnly, setAudioOnly] = useState(false);
@@ -41,6 +52,11 @@ export default function Dashboard() {
   const [container, setContainer] = useState('mp4');
   const [subtitles, setSubtitles] = useState(false);
   const [subLangs, setSubLangs] = useState('en.*');
+  const [embedThumbnail, setEmbedThumbnail] = useState(false);
+  const [embedMetadata, setEmbedMetadata] = useState(false);
+  const [embedChapters, setEmbedChapters] = useState(false);
+  const [sponsorblock, setSponsorblock] = useState(false);
+  const [sponsorblockCategories, setSponsorblockCategories] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -108,7 +124,18 @@ export default function Dashboard() {
 
     setSubmitting(true);
     try {
-      await api.enqueue({ urls, audioOnly, quality, container, subtitles, subLangs });
+      await api.enqueue({
+        urls,
+        audioOnly,
+        quality,
+        container,
+        subtitles,
+        subLangs,
+        embedThumbnail,
+        embedMetadata,
+        embedChapters,
+        sponsorblockRemove: sponsorblock ? sponsorblockCategories : [],
+      });
       setUrlText('');
     } catch (err) {
       setError(err.message);
@@ -125,8 +152,18 @@ export default function Dashboard() {
       container: payload.container,
       subtitles: payload.subtitles,
       subLangs: payload.subLangs,
+      embedThumbnail: payload.embedThumbnail,
+      embedMetadata: payload.embedMetadata,
+      embedChapters: payload.embedChapters,
+      sponsorblockRemove: payload.sponsorblockRemove,
     });
     setUrlText('');
+  }
+
+  function toggleSponsorblockCategory(value) {
+    setSponsorblockCategories((prev) =>
+      prev.includes(value) ? prev.filter((c) => c !== value) : [...prev, value]
+    );
   }
 
   function handleDeleted(id) {
@@ -140,7 +177,17 @@ export default function Dashboard() {
         url={previewUrl}
         onClose={() => setPreviewModalOpen(false)}
         onConfirmDownload={handleConfirmDownload}
-        initialSettings={{ audioOnly, quality, container, subtitles, subLangs }}
+        initialSettings={{
+          audioOnly,
+          quality,
+          container,
+          subtitles,
+          subLangs,
+          embedThumbnail,
+          embedMetadata,
+          embedChapters,
+          sponsorblockCategories: sponsorblock ? sponsorblockCategories : [],
+        }}
       />
       <div className="page-header">
         <div>
@@ -227,6 +274,23 @@ export default function Dashboard() {
               </label>
             )}
 
+            <label className="checkbox-label">
+              <input type="checkbox" checked={embedThumbnail} onChange={(e) => setEmbedThumbnail(e.target.checked)} />
+              Embed thumbnail
+            </label>
+            <label className="checkbox-label">
+              <input type="checkbox" checked={embedMetadata} onChange={(e) => setEmbedMetadata(e.target.checked)} />
+              Embed metadata
+            </label>
+            <label className="checkbox-label">
+              <input type="checkbox" checked={embedChapters} onChange={(e) => setEmbedChapters(e.target.checked)} />
+              Embed chapters
+            </label>
+            <label className="checkbox-label">
+              <input type="checkbox" checked={sponsorblock} onChange={(e) => setSponsorblock(e.target.checked)} />
+              Auto-remove sponsored segments (SponsorBlock)
+            </label>
+
             <div className="spacer">
               {isSingleUrl && (
                 <button
@@ -246,6 +310,20 @@ export default function Dashboard() {
               </button>
             </div>
           </div>
+          {sponsorblock && (
+            <div className="sponsorblock-categories" style={{ marginTop: 10 }}>
+              {SPONSORBLOCK_CATEGORIES.map((cat) => (
+                <label key={cat.value} className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={sponsorblockCategories.includes(cat.value)}
+                    onChange={() => toggleSponsorblockCategory(cat.value)}
+                  />
+                  {cat.label}
+                </label>
+              ))}
+            </div>
+          )}
           <p className="muted small" style={{ marginTop: 10 }}>
             {audioOnly
               ? 'Quality and file type don’t apply to audio-only downloads.'

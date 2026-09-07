@@ -88,14 +88,34 @@ router.post('/info', async (req, res) => {
 
 // Accepts either a single URL or newline-separated multiple URLs.
 router.post('/', (req, res) => {
-  const { urls, url, formatSelector, audioOnly, quality, container, subtitles, subLangs } = req.body || {};
+  const {
+    urls,
+    url,
+    formatSelector,
+    audioOnly,
+    quality,
+    container,
+    subtitles,
+    subLangs,
+    embedThumbnail,
+    embedMetadata,
+    embedChapters,
+    sponsorblockRemove,
+  } = req.body || {};
   const list = urls ? urls : url ? [url] : [];
   const cleaned = list.map((u) => String(u).trim()).filter(Boolean);
 
   if (cleaned.length === 0) return res.status(400).json({ error: 'At least one URL is required' });
 
+  const optionsJson = {
+    embedThumbnail: !!embedThumbnail,
+    embedMetadata: !!embedMetadata,
+    embedChapters: !!embedChapters,
+    sponsorblockRemove: sponsorblockRemove || '',
+  };
+
   const ids = cleaned.map((u) =>
-    queue.enqueue(u, { formatSelector, audioOnly, quality, container, subtitles, subLangs })
+    queue.enqueue(u, { formatSelector, audioOnly, quality, container, subtitles, subLangs, optionsJson })
   );
   res.json({ ids });
 });

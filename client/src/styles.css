@@ -1162,6 +1162,17 @@ button.icon-btn-neutral:hover:not(:disabled) { color: var(--text); background: v
   align-items: center;
 }
 
+.preview-sponsorblock-categories,
+.sponsorblock-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-alt, rgba(127, 127, 127, 0.06));
+}
+
 @media (max-width: 640px) {
   .preview-hero {
     flex-direction: column;
