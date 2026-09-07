@@ -1,5 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
+import {
+  ListChecks, CheckCircle2, XCircle, AlertCircle,
+  Music, Captions, Inbox, PartyPopper,
+} from 'lucide-react';
 import { api } from '../api.js';
 import QueueItem from '../components/QueueItem.jsx';
 
@@ -67,6 +71,8 @@ export default function Dashboard() {
     () => jobs.filter((j) => j.status === 'completed' || j.status === 'failed').slice(0, 10),
     [jobs]
   );
+  const completedCount = useMemo(() => jobs.filter((j) => j.status === 'completed').length, [jobs]);
+  const failedCount = useMemo(() => jobs.filter((j) => j.status === 'failed').length, [jobs]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -90,9 +96,42 @@ export default function Dashboard() {
   }
 
   return (
-    <div>
+    <>
+      <div className="page-header">
+        <div>
+          <h1>Dashboard</h1>
+          <p>Add downloads and track live progress.</p>
+        </div>
+      </div>
+
+      <div className="stat-grid">
+        <div className="stat-card accent">
+          <div className="stat-top">
+            <span className="stat-label">In queue</span>
+            <span className="stat-icon"><ListChecks size={16} /></span>
+          </div>
+          <span className="stat-value">{activeJobs.length}</span>
+        </div>
+        <div className="stat-card success">
+          <div className="stat-top">
+            <span className="stat-label">Completed</span>
+            <span className="stat-icon"><CheckCircle2 size={16} /></span>
+          </div>
+          <span className="stat-value">{completedCount}</span>
+        </div>
+        <div className="stat-card danger">
+          <div className="stat-top">
+            <span className="stat-label">Failed</span>
+            <span className="stat-icon"><XCircle size={16} /></span>
+          </div>
+          <span className="stat-value">{failedCount}</span>
+        </div>
+      </div>
+
       <section className="panel">
-        <h2>Add downloads</h2>
+        <div className="panel-header">
+          <h2>Add downloads</h2>
+        </div>
         <form onSubmit={handleSubmit}>
           <textarea
             placeholder="Paste one or more URLs, one per line (any site yt-dlp supports)"
@@ -101,12 +140,15 @@ export default function Dashboard() {
             onChange={(e) => setUrlText(e.target.value)}
           />
           <div className="options-row">
-            <label>
-              <input type="checkbox" checked={audioOnly} onChange={(e) => setAudioOnly(e.target.checked)} />
-              Audio only (MP3)
-            </label>
+            <div className="segmented">
+              <button type="button" className={!audioOnly ? 'active' : ''} onClick={() => setAudioOnly(false)}>Video</button>
+              <button type="button" className={audioOnly ? 'active' : ''} onClick={() => setAudioOnly(true)}>
+                <Music size={13} /> Audio only
+              </button>
+            </div>
+
             {!audioOnly && (
-              <label>
+              <label className="field-inline">
                 Quality
                 <select value={quality} onChange={(e) => setQuality(e.target.value)}>
                   {QUALITY_OPTIONS.map((o) => (
@@ -116,21 +158,21 @@ export default function Dashboard() {
               </label>
             )}
             {!audioOnly && (
-              <label>
-                File type
+              <label className="field-inline">
+                Format
                 <select value={container} onChange={(e) => setContainer(e.target.value)}>
                   <option value="mp4">MP4</option>
                   <option value="mkv">MKV</option>
                 </select>
               </label>
             )}
-            <label>
+
+            <label className="checkbox-label">
               <input type="checkbox" checked={subtitles} onChange={(e) => setSubtitles(e.target.checked)} />
-              Download subtitles
+              <Captions size={14} /> Subtitles
             </label>
             {subtitles && (
-              <label>
-                Language
+              <label className="field-inline">
                 <select value={subLangs} onChange={(e) => setSubLangs(e.target.value)}>
                   {SUBTITLE_LANG_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>{o.label}</option>
@@ -138,34 +180,60 @@ export default function Dashboard() {
                 </select>
               </label>
             )}
-            <button type="submit" disabled={submitting || !urlText.trim()}>
-              {submitting ? 'Adding…' : 'Download'}
-            </button>
+
+            <div className="spacer">
+              <button type="submit" disabled={submitting || !urlText.trim()}>
+                {submitting ? 'Adding…' : 'Download'}
+              </button>
+            </div>
           </div>
-          <p className="muted small">
+          <p className="muted small" style={{ marginTop: 10 }}>
             {audioOnly
               ? 'Quality and file type don’t apply to audio-only downloads.'
               : 'If a video isn’t available at the selected quality, the closest quality at or below it is used instead.'}
           </p>
-          {error && <div className="error-text">{error}</div>}
+          {error && <div className="alert alert-error"><AlertCircle size={15} />{error}</div>}
         </form>
       </section>
 
       <section className="panel">
-        <h2>Queue ({activeJobs.length})</h2>
-        {activeJobs.length === 0 && <p className="muted">Nothing in progress.</p>}
-        {activeJobs.map((job) => (
-          <QueueItem key={job.id} job={job} onDeleted={handleDeleted} />
-        ))}
+        <div className="panel-header">
+          <h2><ListChecks size={16} /> Queue</h2>
+          {activeJobs.length > 0 && <span className="count-badge">{activeJobs.length}</span>}
+        </div>
+        {activeJobs.length === 0 ? (
+          <div className="empty-state">
+            <Inbox size={30} />
+            <span className="empty-title">Nothing in progress</span>
+            <span className="empty-subtitle">Paste a URL above to start a download.</span>
+          </div>
+        ) : (
+          <div className="queue-list">
+            {activeJobs.map((job) => (
+              <QueueItem key={job.id} job={job} onDeleted={handleDeleted} />
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="panel">
-        <h2>Recently finished</h2>
-        {recentFinished.length === 0 && <p className="muted">No downloads yet.</p>}
-        {recentFinished.map((job) => (
-          <QueueItem key={job.id} job={job} onDeleted={handleDeleted} />
-        ))}
+        <div className="panel-header">
+          <h2>Recently finished</h2>
+        </div>
+        {recentFinished.length === 0 ? (
+          <div className="empty-state">
+            <PartyPopper size={30} />
+            <span className="empty-title">No downloads yet</span>
+            <span className="empty-subtitle">Finished downloads will show up here.</span>
+          </div>
+        ) : (
+          <div className="queue-list">
+            {recentFinished.map((job) => (
+              <QueueItem key={job.id} job={job} onDeleted={handleDeleted} />
+            ))}
+          </div>
+        )}
       </section>
-    </div>
+    </>
   );
 }
