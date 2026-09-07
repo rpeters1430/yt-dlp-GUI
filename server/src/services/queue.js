@@ -28,9 +28,10 @@ function listJobs() {
 
 function enqueue(url, options = {}) {
   const id = uuidv4();
+  console.log(`[queue] [job:${id}] Enqueued download for: ${url}`);
   db.prepare(`
-    INSERT INTO downloads (id, url, status, format_selector, audio_only, subtitles, quality, container, sub_langs, watch_id)
-    VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO downloads (id, url, status, format_selector, audio_only, subtitles, quality, container, sub_langs, watch_id, command_args, log)
+    VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
   `).run(
     id,
     url,
@@ -62,8 +63,6 @@ async function processNext() {
   if (!next) return;
 
   activeCount++;
-  updateJob(next.id, { status: 'downloading', percent: 0 });
-
   runJob(next).finally(() => {
     activeCount--;
     processNext();
@@ -74,37 +73,98 @@ async function processNext() {
 }
 
 async function runJob(job) {
+  const logLines = [];
+  function appendLog(line) {
+    const timestamp = new Date().toISOString().substring(11, 19);
+    logLines.push(`[${timestamp}] ${line}`);
+    if (logLines.length > 500) logLines.shift();
+  }
+
+  const downloadOptions = {
+    audioOnly: !!job.audio_only,
+    formatSelector: job.format_selector,
+    quality: job.quality,
+    container: job.container,
+    subtitles: !!job.subtitles,
+    subLangs: job.sub_langs,
+    jobId: job.id,
+  };
+
+  const commandArgs = ytdlp.buildDownloadArgs(job.url, downloadOptions);
+  const commandStr = ytdlp.formatCommand(process.env.YTDLP_BIN || 'yt-dlp', commandArgs);
+  const ffmpegDir = ytdlp.getFfmpegDir();
+
+  appendLog(`Download job started`);
+  appendLog(`URL: ${job.url}`);
+  appendLog(`Command: ${commandStr}`);
+  if (ffmpegDir) {
+    appendLog(`FFmpeg path: ${ffmpegDir}`);
+  }
+
+  console.log(`[queue] [job:${job.id}] Starting download: ${job.url}`);
+  console.log(`[queue] [job:${job.id}] Command: ${commandStr}`);
+
+  updateJob(job.id, {
+    status: 'downloading',
+    percent: 0,
+    command_args: commandStr,
+    log: logLines.join('\n'),
+  });
+
   try {
     let title = null, thumbnail = null, extractor = null, videoId = null;
     try {
+      appendLog(`Resolving metadata...`);
       const info = await ytdlp.getInfo(job.url);
       title = info.title || null;
       thumbnail = info.thumbnail || null;
       extractor = info.extractor || null;
       videoId = info.id || null;
-      updateJob(job.id, { title, thumbnail, extractor, video_id: videoId });
+      appendLog(`Metadata: "${title || 'Unknown'}" (${extractor || 'extractor'}) [ID: ${videoId || 'unknown'}]`);
+      updateJob(job.id, { title, thumbnail, extractor, video_id: videoId, log: logLines.join('\n') });
     } catch (e) {
-      // Metadata lookup failing shouldn't block the actual download attempt.
+      appendLog(`Metadata lookup note: ${e.message} (proceeding to download)`);
     }
 
-    const result = await ytdlp.download(job.url, {
-      audioOnly: !!job.audio_only,
-      formatSelector: job.format_selector,
-      quality: job.quality,
-      container: job.container,
-      subtitles: !!job.subtitles,
-      subLangs: job.sub_langs,
-    }, (progress) => {
-      updateJob(job.id, {
-        percent: progress.percent,
-        speed: progress.speed || null,
-        eta: progress.eta || null,
-      });
-    });
+    let lastLogSave = Date.now();
 
-    updateJob(job.id, { status: 'completed', percent: 100, filepath: result.filepath || null });
+    const result = await ytdlp.download(
+      job.url,
+      downloadOptions,
+      (progress) => {
+        const updatePayload = {
+          percent: progress.percent,
+          speed: progress.speed || null,
+          eta: progress.eta || null,
+        };
+        // Throttle log updates during progress stream to at most once every second
+        if (Date.now() - lastLogSave > 1000) {
+          updatePayload.log = logLines.join('\n');
+          lastLogSave = Date.now();
+        }
+        updateJob(job.id, updatePayload);
+      },
+      (logLine) => {
+        appendLog(logLine);
+      }
+    );
+
+    appendLog(`Download completed successfully -> ${result.filepath || 'unknown destination'}`);
+    console.log(`[queue] [job:${job.id}] Completed successfully: ${result.filepath || 'unknown'}`);
+    updateJob(job.id, {
+      status: 'completed',
+      percent: 100,
+      filepath: result.filepath || null,
+      log: logLines.join('\n'),
+    });
   } catch (err) {
-    updateJob(job.id, { status: 'failed', error: err.message });
+    appendLog(`ERROR: ${err.message}`);
+    console.error(`[queue] [job:${job.id}] Failed: ${err.message}`);
+    updateJob(job.id, {
+      status: 'failed',
+      error: err.message,
+      log: logLines.join('\n'),
+    });
   }
 }
 

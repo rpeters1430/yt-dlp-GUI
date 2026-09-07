@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS downloads (
   container TEXT DEFAULT 'mp4',
   sub_langs TEXT,
   watch_id INTEGER,
+  command_args TEXT,
+  log TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -74,5 +76,7 @@ function ensureColumn(table, column, definition) {
 ensureColumn('downloads', 'quality', 'TEXT');
 ensureColumn('downloads', 'container', "TEXT DEFAULT 'mp4'");
 ensureColumn('downloads', 'sub_langs', 'TEXT');
+ensureColumn('downloads', 'command_args', 'TEXT');
+ensureColumn('downloads', 'log', 'TEXT');
 
 module.exports = db;

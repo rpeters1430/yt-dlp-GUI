@@ -1,5 +1,5 @@
-import React from 'react';
-import { Clock, Loader2, CheckCircle2, XCircle, Film, X } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Clock, Loader2, CheckCircle2, XCircle, Film, X, Terminal, Copy, Check } from 'lucide-react';
 import { api } from '../api.js';
 
 const STATUS_META = {
@@ -10,42 +10,116 @@ const STATUS_META = {
 };
 
 export default function QueueItem({ job, onDeleted }) {
+  const [showLogs, setShowLogs] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const logRef = useRef(null);
   const meta = STATUS_META[job.status] || { label: job.status, icon: Clock };
   const StatusIcon = meta.icon;
 
+  useEffect(() => {
+    if (showLogs && logRef.current && job.status === 'downloading') {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [showLogs, job.log, job.status]);
+
+  function handleCopy() {
+    const text = `${job.command_args ? `Command:\n${job.command_args}\n\n` : ''}Log:\n${job.log || ''}`;
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
   return (
     <div className={`queue-item status-${job.status}`}>
-      {job.thumbnail ? (
-        <img className="thumb" src={job.thumbnail} alt="" />
-      ) : (
-        <div className="thumb thumb-empty"><Film size={16} /></div>
-      )}
-      <div className="queue-item-body">
-        <div className="queue-item-title">{job.title || job.url}</div>
-        <div className="queue-item-meta">
-          {job.extractor && <span className="tag">{job.extractor}</span>}
-          <span className={`tag status-tag status-${job.status}`}>
-            <StatusIcon size={11} className={job.status === 'downloading' ? 'spin-icon' : undefined} />
-            {meta.label}
-          </span>
-        </div>
-        {job.status === 'downloading' && (
-          <div>
-            <div className="progress-bar">
-              <div className="progress-fill" style={{ width: `${job.percent || 0}%` }} />
-            </div>
-            <div className="progress-meta">
-              <span>{Math.round(job.percent || 0)}%</span>
-              {job.speed && <span>· {job.speed}</span>}
-              {job.eta && <span>· ETA {job.eta}</span>}
-            </div>
-          </div>
+      <div className="queue-item-main">
+        {job.thumbnail ? (
+          <img className="thumb" src={job.thumbnail} alt="" />
+        ) : (
+          <div className="thumb thumb-empty"><Film size={16} /></div>
         )}
-        {job.status === 'failed' && <div className="alert alert-error"><XCircle size={13} />{job.error}</div>}
+        <div className="queue-item-body">
+          <div className="queue-item-title">{job.title || job.url}</div>
+          <div className="queue-item-meta">
+            {job.extractor && <span className="tag">{job.extractor}</span>}
+            <span className={`tag status-tag status-${job.status}`}>
+              <StatusIcon size={11} className={job.status === 'downloading' ? 'spin-icon' : undefined} />
+              {meta.label}
+            </span>
+          </div>
+          {job.status === 'downloading' && (
+            <div>
+              <div className="progress-bar">
+                <div className="progress-fill" style={{ width: `${job.percent || 0}%` }} />
+              </div>
+              <div className="progress-meta">
+                <span>{Math.round(job.percent || 0)}%</span>
+                {job.speed && <span>· {job.speed}</span>}
+                {job.eta && <span>· ETA {job.eta}</span>}
+              </div>
+            </div>
+          )}
+          {job.status === 'failed' && (
+            <div className="alert alert-error" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <XCircle size={13} />
+                <span>{job.error}</span>
+              </div>
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                style={{ padding: '2px 6px', fontSize: '11px', textDecoration: 'underline' }}
+                onClick={() => setShowLogs((prev) => !prev)}
+              >
+                {showLogs ? 'Hide details' : 'View error log'}
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="queue-item-actions">
+          <button
+            className={`icon-btn ${showLogs ? 'active' : ''}`}
+            title="View command & logs"
+            onClick={() => setShowLogs(!showLogs)}
+          >
+            <Terminal size={15} />
+          </button>
+          <button
+            className="icon-btn"
+            title="Remove"
+            onClick={() => api.deleteDownload(job.id).then(() => onDeleted(job.id))}
+          >
+            <X size={16} />
+          </button>
+        </div>
       </div>
-      <button className="icon-btn" title="Remove" onClick={() => api.deleteDownload(job.id).then(() => onDeleted(job.id))}>
-        <X size={16} />
-      </button>
+
+      {showLogs && (
+        <div className="log-panel">
+          <div className="log-panel-header">
+            <span>Command &amp; Logs</span>
+            <button
+              type="button"
+              className="btn-ghost btn-sm"
+              style={{ padding: '2px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: 4 }}
+              onClick={handleCopy}
+            >
+              {copied ? <Check size={12} /> : <Copy size={12} />}
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          {job.command_args && (
+            <div className="command-box">
+              <div style={{ color: 'var(--text-tertiary)', fontSize: '10px', marginBottom: '3px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Command &amp; Arguments
+              </div>
+              <code>{job.command_args}</code>
+            </div>
+          )}
+          <pre ref={logRef} className="log-panel-content">
+            {job.log || 'No log output recorded yet.'}
+          </pre>
+        </div>
+      )}
     </div>
   );
 }

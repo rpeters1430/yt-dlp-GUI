@@ -5,6 +5,7 @@ const queue = require('./queue');
 
 async function checkWatch(watch) {
   try {
+    console.log(`[watch] Checking watch #${watch.id} "${watch.name || 'unnamed'}" (${watch.url})`);
     const info = await ytdlp.getInfo(watch.url, { flatPlaylist: true });
     const entries = info.entries || [info];
 
@@ -29,6 +30,7 @@ async function checkWatch(watch) {
       // an entire back catalog by surprise.
       if (watch.last_checked_at) {
         const entryUrl = entry.url || entry.webpage_url || `https://www.youtube.com/watch?v=${id}`;
+        console.log(`[watch] #${watch.id} Found new video ${id}: auto-enqueuing`);
         queue.enqueue(entryUrl, {
           formatSelector: watch.format_selector,
           audioOnly: !!watch.audio_only,
@@ -38,9 +40,10 @@ async function checkWatch(watch) {
     }
 
     db.prepare("UPDATE watches SET last_checked_at = datetime('now') WHERE id = ?").run(watch.id);
+    console.log(`[watch] #${watch.id} Finished check (${entries.length} items evaluated, ${newCount} new recorded)`);
     return newCount;
   } catch (err) {
-    console.error(`Watch check failed for ${watch.url}:`, err.message);
+    console.error(`[watch:error] Check failed for #${watch.id} (${watch.url}):`, err.message);
     return 0;
   }
 }

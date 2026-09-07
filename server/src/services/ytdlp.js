@@ -66,24 +66,32 @@ function commonArgs() {
 // without downloading anything. Used for the format picker and for watch/history dedup.
 function getInfo(url, { flatPlaylist = false } = {}) {
   return new Promise((resolve, reject) => {
-    const args = ['-J', '--no-warnings', ...commonArgs()];
+    const args = ['-J', ...commonArgs()];
     if (flatPlaylist) args.push('--flat-playlist');
     args.push(url);
 
+    console.log(`[ytdlp:info] Fetching metadata for ${url}`);
     const proc = spawn(YTDLP_BIN, args);
     let stdout = '';
     let stderr = '';
     proc.stdout.on('data', (d) => (stdout += d));
     proc.stderr.on('data', (d) => (stderr += d));
     proc.on('close', (code) => {
-      if (code !== 0) return reject(new Error(stderr || `yt-dlp exited with code ${code}`));
+      if (code !== 0) {
+        const errMsg = stderr.trim() || `yt-dlp exited with code ${code}`;
+        console.error(`[ytdlp:info] Metadata lookup failed (${url}): ${errMsg}`);
+        return reject(new Error(errMsg));
+      }
       try {
         resolve(JSON.parse(stdout));
       } catch (e) {
         reject(new Error('Failed to parse yt-dlp JSON output: ' + e.message));
       }
     });
-    proc.on('error', reject);
+    proc.on('error', (err) => {
+      console.error(`[ytdlp:info] Spawn error (${url}): ${err.message}`);
+      reject(err);
+    });
   });
 }
 
@@ -106,9 +114,11 @@ function buildFormatSelector({ audioOnly, formatSelector, quality }) {
   return 'bestvideo*+bestaudio/best';
 }
 
-// Downloads a single URL, streaming progress updates via onProgress({percent, speed, eta}).
-// Resolves with { filepath } once yt-dlp exits successfully.
-function download(url, options, onProgress) {
+function formatCommand(bin, args) {
+  return `${bin} ${args.map((a) => (a.includes(' ') || a.includes('"') ? JSON.stringify(a) : a)).join(' ')}`;
+}
+
+function buildDownloadArgs(url, options = {}) {
   const {
     audioOnly = false,
     formatSelector = '',
@@ -118,56 +128,103 @@ function download(url, options, onProgress) {
     subLangs = 'en.*',
   } = options;
 
+  const args = [
+    '--newline',
+    ...commonArgs(),
+    '--progress-template', PROGRESS_TEMPLATE,
+    '-o', `${DOWNLOAD_DIR}/%(uploader,extractor)s/%(title)s [%(id)s].%(ext)s`,
+    '--print', 'after_move:FILEPATH %(filepath)s',
+  ];
+
+  if (audioOnly) {
+    args.push('-x', '--audio-format', 'mp3', '-f', buildFormatSelector({ audioOnly }));
+  } else {
+    args.push('-f', buildFormatSelector({ formatSelector, quality }));
+    args.push('--merge-output-format', container === 'mkv' ? 'mkv' : 'mp4');
+  }
+
+  if (subtitles) {
+    args.push('--write-subs', '--write-auto-subs', '--sub-langs', subLangs || 'en.*', '--embed-subs');
+  }
+
+  args.push(url);
+  return args;
+}
+
+// Downloads a single URL, streaming progress updates via onProgress({percent, speed, eta})
+// and log messages via onLog(line).
+// Resolves with { filepath, command } once yt-dlp exits successfully.
+function download(url, options = {}, onProgress, onLog) {
+  const args = buildDownloadArgs(url, options);
+  const commandStr = formatCommand(YTDLP_BIN, args);
+  const jobId = options.jobId ? `job:${options.jobId}` : 'download';
+  const ffmpegDir = getFfmpegDir();
+
+  console.log(`[${jobId}] Starting download: ${url}`);
+  console.log(`[${jobId}] Command: ${commandStr}`);
+  if (ffmpegDir) {
+    console.log(`[${jobId}] FFmpeg directory: ${ffmpegDir}`);
+  }
+
   return new Promise((resolve, reject) => {
-    const args = [
-      '--newline',
-      '--no-warnings',
-      ...commonArgs(),
-      '--progress-template', PROGRESS_TEMPLATE,
-      '-o', `${DOWNLOAD_DIR}/%(uploader,extractor)s/%(title)s [%(id)s].%(ext)s`,
-      '--print', 'after_move:FILEPATH %(filepath)s',
-    ];
-
-    if (audioOnly) {
-      args.push('-x', '--audio-format', 'mp3', '-f', buildFormatSelector({ audioOnly }));
-    } else {
-      args.push('-f', buildFormatSelector({ formatSelector, quality }));
-      args.push('--merge-output-format', container === 'mkv' ? 'mkv' : 'mp4');
-    }
-
-    if (subtitles) {
-      args.push('--write-subs', '--write-auto-subs', '--sub-langs', subLangs || 'en.*', '--embed-subs');
-    }
-
-    args.push(url);
-
     const proc = spawn(YTDLP_BIN, args);
     let stderr = '';
     let filepath = null;
 
-    proc.stdout.on('data', (chunk) => {
+    function handleChunk(chunk, isStderr = false) {
       const lines = chunk.toString().split('\n');
       for (const line of lines) {
-        if (line.startsWith('YTDLP_PROGRESS')) {
-          const rest = line.replace('YTDLP_PROGRESS', '').trim();
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        if (trimmed.startsWith('YTDLP_PROGRESS')) {
+          const rest = trimmed.replace('YTDLP_PROGRESS', '').trim();
           const [percentStr, speed, eta] = rest.split('|');
           const percent = parseFloat(percentStr.replace('%', '').trim());
           if (!Number.isNaN(percent)) {
-            onProgress({ percent, speed: speed && speed.trim(), eta: eta && eta.trim() });
+            onProgress && onProgress({ percent, speed: speed && speed.trim(), eta: eta && eta.trim() });
           }
-        } else if (line.startsWith('FILEPATH ')) {
-          filepath = line.replace('FILEPATH ', '').trim();
+          continue;
         }
-      }
-    });
 
-    proc.stderr.on('data', (d) => (stderr += d));
+        if (trimmed.startsWith('FILEPATH ')) {
+          filepath = trimmed.replace('FILEPATH ', '').trim();
+          console.log(`[${jobId}] Destination file: ${filepath}`);
+          onLog && onLog(`[destination] ${filepath}`);
+          continue;
+        }
+
+        if (isStderr) {
+          stderr += trimmed + '\n';
+          console.error(`[${jobId}:err] ${trimmed}`);
+        } else {
+          console.log(`[${jobId}] ${trimmed}`);
+        }
+
+        onLog && onLog(trimmed);
+      }
+    }
+
+    proc.stdout.on('data', (chunk) => handleChunk(chunk, false));
+    proc.stderr.on('data', (chunk) => handleChunk(chunk, true));
 
     proc.on('close', (code) => {
-      if (code !== 0) return reject(new Error(stderr || `yt-dlp exited with code ${code}`));
-      resolve({ filepath });
+      if (code !== 0) {
+        const errMsg = stderr.trim() || `yt-dlp exited with code ${code}`;
+        console.error(`[${jobId}] Failed with exit code ${code}: ${errMsg}`);
+        onLog && onLog(`[failed] Exit code ${code}: ${errMsg}`);
+        return reject(new Error(errMsg));
+      }
+      console.log(`[${jobId}] Completed successfully -> ${filepath || 'unknown destination'}`);
+      onLog && onLog(`[completed] Successfully saved: ${filepath || ''}`);
+      resolve({ filepath, command: commandStr });
     });
-    proc.on('error', reject);
+
+    proc.on('error', (err) => {
+      console.error(`[${jobId}] Process spawn error: ${err.message}`);
+      onLog && onLog(`[error] Process spawn error: ${err.message}`);
+      reject(err);
+    });
   });
 }
 
@@ -423,6 +480,8 @@ async function updateFfmpeg() {
 module.exports = {
   getInfo,
   download,
+  buildDownloadArgs,
+  formatCommand,
   getVersions,
   updateYtdlp,
   updateFfmpeg,
