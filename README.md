@@ -17,30 +17,81 @@ A self-hosted web app for downloading videos/audio from any site [yt-dlp](https:
 
 A prebuilt image is published automatically to GitHub Container Registry on every merge to `main` (see [Automatic image builds](#automatic-image-builds)), so your NAS never needs to build anything itself — just pull.
 
-1. Copy `docker-compose.yml` and `.env.example` to your NAS (a `git clone` or `scp` is the easiest way; you don't need the rest of the source).
-2. Copy `.env.example` to `.env` and set:
-   - `ADMIN_USER` / `ADMIN_PASSWORD` — your login credentials
-   - `SESSION_SECRET` — any random string
-   - `.env` is gitignored, so real credentials never get committed — never put them directly in `docker-compose.yml`.
-3. In `docker-compose.yml`, optionally set `TZ` to your timezone and change the `3000:3000` port mapping.
-4. Pull and start:
-   ```bash
-   docker compose pull
-   docker compose up -d
-   ```
-5. Open `http://<your-nas-ip>:3000` and log in.
+### 1. Create a project folder on your NAS
 
-To pick up a newer image later (after a fix or update lands on `main`), just re-run `docker compose pull && docker compose up -d` — no rebuild needed.
+Anywhere with disk space, e.g. `/volume1/docker/ytdlp-gui` — SSH in and:
 
-Downloaded files land in `./downloads` (host path, mounted into the container). The SQLite database and session store live in `./config`.
+```bash
+mkdir -p ytdlp-gui/downloads ytdlp-gui/config
+cd ytdlp-gui
+```
+
+### 2. Create `docker-compose.yml`
+
+Paste this in as-is — it pulls the published image, so you don't need the rest of this repo at all:
+
+```yaml
+services:
+  ytdlp-gui:
+    image: ghcr.io/rpeters1430/yt-dlp-gui:latest
+    container_name: ytdlp-gui
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - MAX_CONCURRENT_DOWNLOADS=2
+      - TZ=America/Los_Angeles
+    volumes:
+      - ./downloads:/downloads
+      - ./config:/config
+```
+
+Adjust to taste:
+- `ports`: change the left-hand `3000` if that port is already used on your NAS (e.g. `"8080:3000"`).
+- `TZ`: your timezone (e.g. `America/New_York`), so scheduled watch checks and timestamps line up.
+- `MAX_CONCURRENT_DOWNLOADS`: how many downloads run at once — keep this low (1-2) on a NAS with limited CPU.
+
+### 3. Create `.env` next to it
+
+```env
+ADMIN_USER=choose-a-username
+ADMIN_PASSWORD=choose-a-strong-password
+SESSION_SECRET=any-long-random-string
+```
+
+This file holds real credentials — keep it out of git and don't paste it anywhere public. `chmod 600 .env` is good practice on a shared NAS.
+
+### 4. Pull and start
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Open `http://<your-nas-ip>:3000` and log in with the credentials from `.env`.
+
+### 5. Updating later
+
+Whenever a fix or feature lands on `main`, a new image is published within a few minutes (see below). To pick it up:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+This recreates the container with the new image; your downloads, history, watches, and login all persist in the `./downloads` and `./config` folders.
+
+Downloaded files land in `./downloads`, organized into a subfolder per uploader/channel. The SQLite database, session store, and any saved YouTube cookies live in `./config`.
 
 ### Ugreen NAS
 
-Ugreen's Docker/Container app UI can import a `docker-compose.yml` directly, or you can SSH in and run the `docker compose` commands above from the project directory. Make sure the host paths you mount for `downloads` and `config` are on a volume with enough free space.
+Ugreen's Docker/Container app UI can import a `docker-compose.yml` directly (point it at the file from step 2), or you can SSH in and run the `docker compose` commands above from the project directory. Make sure the host paths you mount for `downloads` and `config` are on a volume with enough free space — downloaded video can add up fast.
 
 ### Building locally instead
 
-If you'd rather build the image yourself (e.g. to test an unmerged change), `docker-compose.yml` also has a `build: .` line, so `docker compose up -d --build` from a full clone of this repo builds and runs it locally instead of pulling.
+If you'd rather build the image yourself (e.g. to test an unmerged change), clone the full repo — its `docker-compose.yml` also has a `build: .` line, so `docker compose up -d --build` builds and runs it locally instead of pulling.
 
 ## Automatic image builds
 
