@@ -87,6 +87,7 @@ io.on('connection', (socket) => {
 });
 
 queue.init(io);
+scheduler.init(io);
 scheduler.start();
 
 server.listen(PORT, () => {

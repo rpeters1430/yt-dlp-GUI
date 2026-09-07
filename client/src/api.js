@@ -36,9 +36,15 @@ export const api = {
   deleteDownload: (id) => request(`/downloads/${id}`, { method: 'DELETE' }),
 
   listWatches: () => request('/watches'),
+  inspectWatch: (url) => request('/watches/inspect', { method: 'POST', body: JSON.stringify({ url }) }),
   addWatch: (payload) => request('/watches', { method: 'POST', body: JSON.stringify(payload) }),
+  updateWatch: (id, payload) => request(`/watches/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  toggleWatch: (id) => request(`/watches/${id}/toggle`, { method: 'PATCH' }),
   deleteWatch: (id) => request(`/watches/${id}`, { method: 'DELETE' }),
   checkWatch: (id) => request(`/watches/${id}/check`, { method: 'POST' }),
+  checkAllWatches: () => request('/watches/check-all', { method: 'POST' }),
+  getWatchDownloads: (id) => request(`/watches/${id}/downloads`),
+  resetWatchSeen: (id) => request(`/watches/${id}/reset-seen`, { method: 'POST' }),
 
   getSettings: () => request('/settings'),
   updateSettings: (payload) => request('/settings', { method: 'PUT', body: JSON.stringify(payload) }),

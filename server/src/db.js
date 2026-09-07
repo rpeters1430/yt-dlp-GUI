@@ -81,9 +81,32 @@ ensureColumn('downloads', 'log', 'TEXT');
 ensureColumn('downloads', 'is_live', 'INTEGER DEFAULT 0');
 ensureColumn('downloads', 'options_json', 'TEXT');
 ensureColumn('downloads', 'pid', 'INTEGER');
+ensureColumn('downloads', 'stage', 'TEXT');
 ensureColumn('users', 'session_version', 'INTEGER DEFAULT 1');
 ensureColumn('watches', 'last_status', "TEXT DEFAULT 'ok'");
 ensureColumn('watches', 'last_error', 'TEXT');
+ensureColumn('watches', 'enabled', 'INTEGER DEFAULT 1');
+ensureColumn('watches', 'check_interval_mins', 'INTEGER DEFAULT 30');
+ensureColumn('watches', 'quality', 'TEXT');
+ensureColumn('watches', 'container', "TEXT DEFAULT 'mp4'");
+ensureColumn('watches', 'subtitles', 'INTEGER DEFAULT 0');
+ensureColumn('watches', 'sub_langs', "TEXT DEFAULT 'en.*'");
+ensureColumn('watches', 'embed_thumbnail', 'INTEGER DEFAULT 0');
+ensureColumn('watches', 'embed_metadata', 'INTEGER DEFAULT 0');
+ensureColumn('watches', 'embed_chapters', 'INTEGER DEFAULT 0');
+ensureColumn('watches', 'sponsorblock', 'INTEGER DEFAULT 0');
+ensureColumn('watches', 'sponsorblock_categories', 'TEXT');
+ensureColumn('watches', 'match_title', 'TEXT');
+ensureColumn('watches', 'reject_title', 'TEXT');
+ensureColumn('watches', 'min_duration', 'INTEGER');
+ensureColumn('watches', 'max_duration', 'INTEGER');
+ensureColumn('watches', 'download_limit', 'INTEGER DEFAULT 5');
+ensureColumn('watches', 'max_scan_entries', 'INTEGER DEFAULT 30');
+ensureColumn('watches', 'thumbnail', 'TEXT');
+ensureColumn('watches', 'channel_name', 'TEXT');
+ensureColumn('watches', 'last_new_count', 'INTEGER DEFAULT 0');
+ensureColumn('watch_seen_ids', 'title', 'TEXT');
+ensureColumn('watch_seen_ids', 'created_at', "TEXT DEFAULT (datetime('now'))");
 
 // Persists a random session-signing secret across restarts when SESSION_SECRET isn't set
 // via env, so cookies aren't signed with a predictable value and existing sessions survive

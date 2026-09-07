@@ -137,6 +137,7 @@ async function runJob(job) {
   updateJob(job.id, {
     status: 'downloading',
     percent: 0,
+    stage: 'Starting…',
     command_args: commandStr,
     log: logLines.join('\n'),
   });
@@ -145,34 +146,44 @@ async function runJob(job) {
     let title = null, thumbnail = null, extractor = null, videoId = null;
     try {
       appendLog(`Resolving metadata...`);
+      updateJob(job.id, { stage: 'Fetching metadata…', log: logLines.join('\n') });
       const info = await ytdlp.getInfo(job.url);
       title = info.title || null;
       thumbnail = info.thumbnail || null;
       extractor = info.extractor || null;
       videoId = info.id || null;
       appendLog(`Metadata: "${title || 'Unknown'}" (${extractor || 'extractor'}) [ID: ${videoId || 'unknown'}]`);
-      updateJob(job.id, { title, thumbnail, extractor, video_id: videoId, log: logLines.join('\n') });
+      updateJob(job.id, { title, thumbnail, extractor, video_id: videoId, stage: 'Ready to download', log: logLines.join('\n') });
     } catch (e) {
       appendLog(`Metadata lookup note: ${e.message} (proceeding to download)`);
     }
 
     let lastLogSave = Date.now();
+    let lastProgressSave = 0;
+    let lastPercent = -1;
 
     const result = await ytdlp.download(
       job.url,
       { ...downloadOptions, onSpawn: (pid) => updateJob(job.id, { pid }) },
       (progress) => {
-        const updatePayload = {
-          percent: progress.percent,
-          speed: progress.speed || null,
-          eta: progress.eta || null,
-        };
-        // Throttle log updates during progress stream to at most once every second
-        if (Date.now() - lastLogSave > 1000) {
-          updatePayload.log = logLines.join('\n');
-          lastLogSave = Date.now();
+        const now = Date.now();
+        const percentChanged = Math.abs((progress.percent || 0) - lastPercent) >= 1;
+        if (now - lastProgressSave >= 200 || percentChanged || (progress.percent || 0) >= 100) {
+          lastProgressSave = now;
+          lastPercent = progress.percent || 0;
+          const updatePayload = {
+            percent: progress.percent,
+            speed: progress.speed || null,
+            eta: progress.eta || null,
+            stage: progress.stage || 'Downloading…',
+          };
+          // Throttle log updates during progress stream to at most once every second
+          if (now - lastLogSave > 1000) {
+            updatePayload.log = logLines.join('\n');
+            lastLogSave = now;
+          }
+          updateJob(job.id, updatePayload);
         }
-        updateJob(job.id, updatePayload);
       },
       (logLine) => {
         appendLog(logLine);
@@ -188,6 +199,7 @@ async function runJob(job) {
     updateJob(job.id, {
       status: 'completed',
       percent: 100,
+      stage: 'Completed',
       filepath: result.filepath || null,
       pid: null,
       log: logLines.join('\n'),
@@ -198,6 +210,7 @@ async function runJob(job) {
     updateJob(job.id, {
       status: 'failed',
       error: err.message,
+      stage: 'Failed',
       pid: null,
       log: logLines.join('\n'),
     });

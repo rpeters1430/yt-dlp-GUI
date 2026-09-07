@@ -194,7 +194,7 @@ function assertPublicUrl(url) {
 // watch scheduler's tick, forever.
 const GETINFO_TIMEOUT_MS = parseInt(process.env.GETINFO_TIMEOUT_MS || String(2 * 60 * 1000), 10);
 
-function getInfo(url, { flatPlaylist = false } = {}) {
+function getInfo(url, { flatPlaylist = false, playlistEnd = null } = {}) {
   return new Promise((resolve, reject) => {
     try {
       assertPublicUrl(url);
@@ -203,6 +203,7 @@ function getInfo(url, { flatPlaylist = false } = {}) {
     }
     const args = ['-J', ...commonArgs()];
     if (flatPlaylist) args.push('--flat-playlist');
+    if (playlistEnd) args.push('--playlist-end', String(playlistEnd));
     args.push(url);
 
     console.log(`[ytdlp:info] Fetching metadata for ${url}`);
@@ -321,8 +322,10 @@ function buildDownloadArgs(url, options = {}) {
 
   const args = [
     '--newline',
+    '--progress',
     ...commonArgs(),
-    '--progress-template', PROGRESS_TEMPLATE,
+    '--progress-template', 'download:YTDLP_PROGRESS %(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s',
+    '--progress-template', 'postprocess:YTDLP_POSTPROCESS %(progress._percent_str)s',
     '-o', `${DOWNLOAD_DIR}/%(uploader,extractor)s/%(title)s [%(id)s].%(ext)s`,
     '--print', 'after_move:FILEPATH %(filepath)s',
   ];
@@ -499,9 +502,53 @@ function download(url, options = {}, onProgress, onLog) {
     }
     resetIdleTimer();
 
-    function handleChunk(chunk, isStderr = false) {
-      resetIdleTimer();
-      const lines = chunk.toString().split('\n');
+    let stdoutRemainder = '';
+    let stderrRemainder = '';
+    const isMultiFormat = !options.audioOnly && (!options.formatSelector || options.formatSelector.includes('+'));
+    let currentPass = 1;
+    let highestPassPercent = 0;
+
+    function reportProgress(rawPercent, speed, eta, explicitStage) {
+      if (Number.isNaN(rawPercent)) return;
+
+      if (rawPercent < 25 && highestPassPercent > 70) {
+        currentPass++;
+        highestPassPercent = 0;
+      }
+      if (rawPercent > highestPassPercent) {
+        highestPassPercent = rawPercent;
+      }
+
+      let effectivePercent = rawPercent;
+      let stage = explicitStage;
+
+      if (isMultiFormat) {
+        if (currentPass <= 1) {
+          // Video format pass: 0% -> 85%
+          effectivePercent = Math.min(85, rawPercent * 0.85);
+          stage = stage || (rawPercent >= 99 ? 'Processing video stream…' : 'Downloading video…');
+        } else if (currentPass === 2) {
+          // Audio format pass: 85% -> 98%
+          effectivePercent = Math.min(98, 85 + (rawPercent * 0.13));
+          stage = stage || (rawPercent >= 99 ? 'Merging streams…' : 'Downloading audio…');
+        } else {
+          effectivePercent = Math.min(99, 98 + (rawPercent * 0.01));
+          stage = stage || 'Post-processing…';
+        }
+      } else {
+        stage = stage || (options.audioOnly ? 'Downloading audio…' : 'Downloading…');
+      }
+
+      effectivePercent = Math.round(effectivePercent * 10) / 10;
+      onProgress && onProgress({
+        percent: effectivePercent,
+        speed: speed && speed.trim() ? speed.trim() : null,
+        eta: eta && eta.trim() ? eta.trim() : null,
+        stage: stage || 'Downloading…',
+      });
+    }
+
+    function processLines(lines, isStderr = false) {
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
@@ -511,9 +558,27 @@ function download(url, options = {}, onProgress, onLog) {
           const [percentStr, speed, eta] = rest.split('|');
           const percent = parseFloat(percentStr.replace('%', '').trim());
           if (!Number.isNaN(percent)) {
-            onProgress && onProgress({ percent, speed: speed && speed.trim(), eta: eta && eta.trim() });
+            reportProgress(percent, speed, eta);
           }
           continue;
+        }
+
+        if (trimmed.startsWith('YTDLP_POSTPROCESS')) {
+          const rest = trimmed.replace('YTDLP_POSTPROCESS', '').trim();
+          const percent = parseFloat(rest.replace('%', '').trim());
+          if (!Number.isNaN(percent)) {
+            reportProgress(Math.min(99, 90 + percent * 0.09), null, null, 'Post-processing…');
+          }
+          continue;
+        }
+
+        // Detect number of formats to download, e.g. "Downloading 1 format(s): 395+251"
+        const formatMatch = trimmed.match(/Downloading \d+ format\(s\):\s*([^\s]+)/i);
+        if (formatMatch && formatMatch[1]) {
+          const formats = formatMatch[1].split('+');
+          totalFormats = formats.length;
+          formatIndex = 0;
+          currentStage = totalFormats > 1 ? 'Downloading video…' : 'Downloading…';
         }
 
         if (trimmed.startsWith('FILEPATH ')) {
@@ -524,8 +589,34 @@ function download(url, options = {}, onProgress, onLog) {
         }
 
         if (trimmed.includes('[download] Destination: ')) {
+          formatIndex++;
           const dest = trimmed.split('[download] Destination: ')[1]?.trim();
           if (dest) filepath = dest.replace(/\.part$/, '');
+          if (totalFormats > 1) {
+            currentStage = formatIndex <= 1 ? 'Downloading video…' : 'Downloading audio…';
+          }
+        }
+
+        if (trimmed.includes('[Merger] Merging formats')) {
+          currentStage = 'Merging formats…';
+          reportProgress(99, null, null, 'Merging formats…');
+        } else if (trimmed.includes('[ExtractAudio]')) {
+          currentStage = 'Extracting audio…';
+          reportProgress(99, null, null, 'Extracting audio…');
+        } else if (trimmed.includes('[SponsorBlock]')) {
+          currentStage = 'Applying SponsorBlock…';
+          reportProgress(99, null, null, 'Applying SponsorBlock…');
+        }
+
+        // Fallback for standard yt-dlp progress lines (e.g. from external downloaders/HLS/fragments)
+        const stdProgressMatch = trimmed.match(/\[download\]\s+([0-9.]+)%\s+of\s+~?\s*([^\s]+)(?:\s+at\s+([^\s]+))?(?:\s+ETA\s+([^\s]+))?/i);
+        if (stdProgressMatch) {
+          const percent = parseFloat(stdProgressMatch[1]);
+          const speed = stdProgressMatch[3] || null;
+          const eta = stdProgressMatch[4] || null;
+          if (!Number.isNaN(percent)) {
+            reportProgress(percent, speed, eta);
+          }
         }
 
         if (isStderr) {
@@ -539,10 +630,25 @@ function download(url, options = {}, onProgress, onLog) {
       }
     }
 
+    function handleChunk(chunk, isStderr = false) {
+      resetIdleTimer();
+      const raw = (isStderr ? stderrRemainder : stdoutRemainder) + chunk.toString();
+      const normalized = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      const lines = normalized.split('\n');
+      if (isStderr) {
+        stderrRemainder = lines.pop() || '';
+      } else {
+        stdoutRemainder = lines.pop() || '';
+      }
+      processLines(lines, isStderr);
+    }
+
     proc.stdout.on('data', (chunk) => handleChunk(chunk, false));
     proc.stderr.on('data', (chunk) => handleChunk(chunk, true));
 
     proc.on('close', (code, signal) => {
+      if (stdoutRemainder.trim()) processLines([stdoutRemainder], false);
+      if (stderrRemainder.trim()) processLines([stderrRemainder], true);
       if (idleTimer) clearTimeout(idleTimer);
       if (options.jobId) {
         activeProcesses.delete(options.jobId);

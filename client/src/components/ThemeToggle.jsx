@@ -11,15 +11,23 @@ export default function ThemeToggle() {
     setThemeState(next);
   }
 
+  const isDark = theme === 'dark';
+
   return (
     <button
       type="button"
-      className="btn-secondary btn-sm"
+      className="m3-theme-toggle"
       onClick={toggle}
-      title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      role="switch"
+      aria-checked={isDark}
+      title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
     >
-      {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-      {theme === 'dark' ? 'Light' : 'Dark'}
+      <span className="m3-toggle-track">
+        <span className="m3-toggle-thumb">
+          {isDark ? <Moon size={12} className="thumb-icon" /> : <Sun size={12} className="thumb-icon" />}
+        </span>
+      </span>
+      <span className="m3-toggle-label">{isDark ? 'Dark mode' : 'Light mode'}</span>
     </button>
   );
 }

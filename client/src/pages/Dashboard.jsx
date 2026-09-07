@@ -82,6 +82,18 @@ export default function Dashboard() {
     return () => socket.disconnect();
   }, []);
 
+  // Polling fallback to guarantee continuous updates even if socket drops
+  useEffect(() => {
+    const hasActive = jobs.some((j) => j.status === 'queued' || j.status === 'downloading');
+    if (!hasActive) return;
+
+    const interval = setInterval(() => {
+      api.listDownloads().then(setJobs).catch(() => {});
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [jobs]);
+
   const parsedUrls = useMemo(
     () => urlText.split('\n').map((u) => u.trim()).filter(Boolean),
     [urlText]
