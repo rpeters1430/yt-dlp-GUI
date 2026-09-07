@@ -29,9 +29,14 @@ function listJobs() {
 function enqueue(url, options = {}) {
   const id = uuidv4();
   console.log(`[queue] [job:${id}] Enqueued download for: ${url}`);
+  const isLive = options.isLive ? 1 : 0;
+  const optionsJson = options.optionsJson
+    ? (typeof options.optionsJson === 'string' ? options.optionsJson : JSON.stringify(options.optionsJson))
+    : null;
+
   db.prepare(`
-    INSERT INTO downloads (id, url, status, format_selector, audio_only, subtitles, quality, container, sub_langs, watch_id, command_args, log)
-    VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+    INSERT INTO downloads (id, url, status, format_selector, audio_only, subtitles, quality, container, sub_langs, watch_id, is_live, options_json, command_args, log)
+    VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
   `).run(
     id,
     url,
@@ -41,7 +46,9 @@ function enqueue(url, options = {}) {
     options.quality || null,
     options.container || 'mp4',
     options.subLangs || null,
-    options.watchId || null
+    options.watchId || null,
+    isLive,
+    optionsJson
   );
   emit(getJob(id));
   processNext();
@@ -80,6 +87,13 @@ async function runJob(job) {
     if (logLines.length > 500) logLines.shift();
   }
 
+  let extraOptions = {};
+  if (job.options_json) {
+    try {
+      extraOptions = JSON.parse(job.options_json);
+    } catch (_) {}
+  }
+
   const downloadOptions = {
     audioOnly: !!job.audio_only,
     formatSelector: job.format_selector,
@@ -87,7 +101,9 @@ async function runJob(job) {
     container: job.container,
     subtitles: !!job.subtitles,
     subLangs: job.sub_langs,
+    isLive: !!job.is_live,
     jobId: job.id,
+    ...extraOptions,
   };
 
   const commandArgs = ytdlp.buildDownloadArgs(job.url, downloadOptions);
@@ -149,8 +165,12 @@ async function runJob(job) {
       }
     );
 
-    appendLog(`Download completed successfully -> ${result.filepath || 'unknown destination'}`);
-    console.log(`[queue] [job:${job.id}] Completed successfully: ${result.filepath || 'unknown'}`);
+    const completionMsg = result.stoppedByUser
+      ? `Live stream recording stopped by user -> ${result.filepath || 'saved stream'}`
+      : `Download completed successfully -> ${result.filepath || 'unknown destination'}`;
+
+    appendLog(completionMsg);
+    console.log(`[queue] [job:${job.id}] ${completionMsg}`);
     updateJob(job.id, {
       status: 'completed',
       percent: 100,
@@ -168,7 +188,12 @@ async function runJob(job) {
   }
 }
 
+function stopJob(id) {
+  return ytdlp.stopDownload(id);
+}
+
 function removeJob(id) {
+  ytdlp.stopDownload(id);
   db.prepare('DELETE FROM downloads WHERE id = ?').run(id);
 }
 
@@ -176,4 +201,5 @@ function getActiveCount() {
   return activeCount;
 }
 
-module.exports = { init, enqueue, listJobs, getJob, removeJob, getActiveCount };
+module.exports = { init, enqueue, listJobs, getJob, stopJob, removeJob, getActiveCount };
+

@@ -1,10 +1,11 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, History, Radar, Settings, LogOut, Download } from 'lucide-react';
+import { LayoutDashboard, History, Radar, Settings, LogOut, Download, Tv } from 'lucide-react';
 import ThemeToggle from './ThemeToggle.jsx';
 
 const LINKS = [
   { to: '/', end: true, label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/twitch', label: 'Twitch', icon: Tv },
   { to: '/history', label: 'History', icon: History },
   { to: '/watches', label: 'Watches', icon: Radar },
   { to: '/settings', label: 'Settings', icon: Settings },

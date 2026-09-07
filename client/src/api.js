@@ -39,4 +39,14 @@ export const api = {
   getYtdlpVersions: () => request('/settings/ytdlp/version'),
   updateYtdlp: (channel) => request('/settings/ytdlp/update', { method: 'POST', body: JSON.stringify({ channel }) }),
   updateFfmpeg: () => request('/settings/ffmpeg/update', { method: 'POST' }),
+
+  // Twitch
+  getTwitchChannel: (channel) => request(`/twitch/channel/${encodeURIComponent(channel)}`),
+  getTwitchVods: (channel) => request(`/twitch/vods/${encodeURIComponent(channel)}`),
+  getTwitchVodInfo: (url) => request(`/twitch/vod-info?url=${encodeURIComponent(url)}`),
+  downloadTwitch: (payload) => request('/twitch/download', { method: 'POST', body: JSON.stringify(payload) }),
+  stopTwitchJob: (id) => request(`/twitch/stop/${id}`, { method: 'POST' }),
+  getTwitchSettings: () => request('/twitch/settings'),
+  saveTwitchSettings: (payload) => request('/twitch/settings', { method: 'POST', body: JSON.stringify(payload) }),
+  listTwitchJobs: () => request('/twitch/jobs'),
 };

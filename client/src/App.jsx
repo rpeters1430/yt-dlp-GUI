@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard.jsx';
 import History from './pages/History.jsx';
 import Watches from './pages/Watches.jsx';
 import Settings from './pages/Settings.jsx';
+import Twitch from './pages/Twitch.jsx';
 import Sidebar from './components/Sidebar.jsx';
 
 export default function App() {
@@ -57,6 +58,7 @@ export default function App() {
         <main className="content">
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/twitch" element={<Twitch />} />
             <Route path="/history" element={<History />} />
             <Route path="/watches" element={<Watches />} />
             <Route path="/settings" element={<Settings />} />

@@ -14,6 +14,7 @@ const authRoutes = require('./routes/auth');
 const downloadsRoutes = require('./routes/downloads');
 const watchesRoutes = require('./routes/watches');
 const settingsRoutes = require('./routes/settings');
+const twitchRoutes = require('./routes/twitch');
 
 const PORT = process.env.PORT || 3000;
 const SqliteStore = SqliteStoreFactory(session);
@@ -34,6 +35,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/downloads', downloadsRoutes);
 app.use('/api/watches', watchesRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/twitch', twitchRoutes);
 
 const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
 app.use(express.static(clientDist));

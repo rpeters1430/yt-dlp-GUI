@@ -104,14 +104,30 @@ const PROGRESS_TEMPLATE = 'YTDLP_PROGRESS %(progress._percent_str)s|%(progress._
 // the best format at or below the cap instead of failing.
 const QUALITY_HEIGHTS = { 2160: 2160, 1440: 1440, 1080: 1080, 720: 720, 480: 480, 360: 360 };
 
+function getTwitchSettings() {
+  try {
+    const db = require('../db');
+    const tokenRow = db.prepare("SELECT value FROM settings WHERE key = 'twitch_auth_token'").get();
+    const clientRow = db.prepare("SELECT value FROM settings WHERE key = 'twitch_client_id'").get();
+    return {
+      authToken: tokenRow ? tokenRow.value : null,
+      clientId: clientRow ? clientRow.value : null,
+    };
+  } catch (_) {
+    return { authToken: null, clientId: null };
+  }
+}
+
 function buildFormatSelector({ audioOnly, formatSelector, quality }) {
-  if (audioOnly) return 'bestaudio/best';
+  if (audioOnly) return 'bestaudio/best/Audio_Only/audio_only';
   if (formatSelector) return formatSelector;
-  const height = quality ? QUALITY_HEIGHTS[parseInt(quality, 10)] : null;
-  if (height) {
+  if (!quality) return 'bestvideo*+bestaudio/best';
+  const parsed = parseInt(quality, 10);
+  if (!Number.isNaN(parsed) && QUALITY_HEIGHTS[parsed]) {
+    const height = QUALITY_HEIGHTS[parsed];
     return `bestvideo*[height<=${height}]+bestaudio/best[height<=${height}]/best[height<=${height}]`;
   }
-  return 'bestvideo*+bestaudio/best';
+  return `${quality}/bestvideo*+bestaudio/best`;
 }
 
 function formatCommand(bin, args) {
@@ -140,15 +156,77 @@ function buildDownloadArgs(url, options = {}) {
     args.push('-x', '--audio-format', 'mp3', '-f', buildFormatSelector({ audioOnly }));
   } else {
     args.push('-f', buildFormatSelector({ formatSelector, quality }));
-    args.push('--merge-output-format', container === 'mkv' ? 'mkv' : 'mp4');
+    if (container === 'ts') {
+      args.push('--merge-output-format', 'ts');
+    } else {
+      args.push('--merge-output-format', container === 'mkv' ? 'mkv' : 'mp4');
+    }
   }
 
   if (subtitles) {
     args.push('--write-subs', '--write-auto-subs', '--sub-langs', subLangs || 'en.*', '--embed-subs');
   }
 
+  // Twitch specific configuration
+  const isTwitch = /twitch\.tv/i.test(url) || options.isTwitch;
+  const isLive = options.isLive || (isTwitch && !/(\/videos\/|\/clip\/)/i.test(url));
+
+  if (isTwitch) {
+    const twitchSettings = getTwitchSettings();
+    const token = options.twitchAuthToken || twitchSettings.authToken;
+    const clientId = options.twitchClientId || twitchSettings.clientId;
+    if (token) {
+      args.push('--add-header', `Authorization: OAuth ${token}`);
+      args.push('--extractor-args', `twitch:auth_token=${token}`);
+    }
+    if (clientId) {
+      args.push('--extractor-args', `twitch:client_id=${clientId}`);
+    }
+  }
+
+  if (isLive) {
+    if (options.hlsUseMpegts !== false) {
+      args.push('--hls-use-mpegts');
+    }
+    if (options.waitForLive) {
+      const waitInterval = parseInt(options.waitInterval || '15', 10);
+      args.push('--wait-for-video', String(waitInterval));
+    }
+  }
+
+  if (options.downloadSections) {
+    args.push('--download-sections', options.downloadSections.trim());
+  }
+
+  if (options.twitchChat) {
+    args.push('--write-subs', '--sub-langs', 'rechat,all');
+  }
+
   args.push(url);
   return args;
+}
+
+const activeProcesses = new Map();
+
+function stopDownload(jobId) {
+  const proc = activeProcesses.get(jobId);
+  if (!proc) return false;
+  console.log(`[ytdlp] Gracefully stopping download for job ${jobId} via SIGINT`);
+  try {
+    proc.kill('SIGINT');
+  } catch (err) {
+    console.error(`[ytdlp] Failed to send SIGINT to job ${jobId}: ${err.message}`);
+    return false;
+  }
+  setTimeout(() => {
+    if (activeProcesses.has(jobId)) {
+      try {
+        console.log(`[ytdlp] Force terminating lingering job ${jobId} via SIGTERM`);
+        proc.kill('SIGTERM');
+      } catch (_) {}
+    }
+  }, 8000);
+  return true;
 }
 
 // Downloads a single URL, streaming progress updates via onProgress({percent, speed, eta})
@@ -170,6 +248,10 @@ function download(url, options = {}, onProgress, onLog) {
     const proc = spawn(YTDLP_BIN, args);
     let stderr = '';
     let filepath = null;
+
+    if (options.jobId) {
+      activeProcesses.set(options.jobId, proc);
+    }
 
     function handleChunk(chunk, isStderr = false) {
       const lines = chunk.toString().split('\n');
@@ -194,6 +276,11 @@ function download(url, options = {}, onProgress, onLog) {
           continue;
         }
 
+        if (trimmed.includes('[download] Destination: ')) {
+          const dest = trimmed.split('[download] Destination: ')[1]?.trim();
+          if (dest) filepath = dest.replace(/\.part$/, '');
+        }
+
         if (isStderr) {
           stderr += trimmed + '\n';
           console.error(`[${jobId}:err] ${trimmed}`);
@@ -208,19 +295,31 @@ function download(url, options = {}, onProgress, onLog) {
     proc.stdout.on('data', (chunk) => handleChunk(chunk, false));
     proc.stderr.on('data', (chunk) => handleChunk(chunk, true));
 
-    proc.on('close', (code) => {
-      if (code !== 0) {
+    proc.on('close', (code, signal) => {
+      if (options.jobId) {
+        activeProcesses.delete(options.jobId);
+      }
+      const stoppedByUser = signal === 'SIGINT' || signal === 'SIGTERM';
+      if (code !== 0 && !stoppedByUser) {
         const errMsg = stderr.trim() || `yt-dlp exited with code ${code}`;
         console.error(`[${jobId}] Failed with exit code ${code}: ${errMsg}`);
         onLog && onLog(`[failed] Exit code ${code}: ${errMsg}`);
         return reject(new Error(errMsg));
       }
-      console.log(`[${jobId}] Completed successfully -> ${filepath || 'unknown destination'}`);
-      onLog && onLog(`[completed] Successfully saved: ${filepath || ''}`);
-      resolve({ filepath, command: commandStr });
+      if (stoppedByUser) {
+        console.log(`[${jobId}] Recording stopped by user -> ${filepath || 'saved stream'}`);
+        onLog && onLog(`[stopped] Recording stopped by user -> ${filepath || 'saved stream'}`);
+      } else {
+        console.log(`[${jobId}] Completed successfully -> ${filepath || 'unknown destination'}`);
+        onLog && onLog(`[completed] Successfully saved: ${filepath || ''}`);
+      }
+      resolve({ filepath, command: commandStr, stoppedByUser });
     });
 
     proc.on('error', (err) => {
+      if (options.jobId) {
+        activeProcesses.delete(options.jobId);
+      }
       console.error(`[${jobId}] Process spawn error: ${err.message}`);
       onLog && onLog(`[error] Process spawn error: ${err.message}`);
       reject(err);
@@ -488,4 +587,5 @@ module.exports = {
   getFfmpegDir,
   getFfmpegBin,
   COOKIES_FILE,
+  stopDownload,
 };

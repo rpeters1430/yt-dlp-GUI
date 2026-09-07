@@ -78,5 +78,7 @@ ensureColumn('downloads', 'container', "TEXT DEFAULT 'mp4'");
 ensureColumn('downloads', 'sub_langs', 'TEXT');
 ensureColumn('downloads', 'command_args', 'TEXT');
 ensureColumn('downloads', 'log', 'TEXT');
+ensureColumn('downloads', 'is_live', 'INTEGER DEFAULT 0');
+ensureColumn('downloads', 'options_json', 'TEXT');
 
 module.exports = db;
