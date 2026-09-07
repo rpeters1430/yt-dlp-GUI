@@ -134,6 +134,14 @@ function formatCommand(bin, args) {
   return `${bin} ${args.map((a) => (a.includes(' ') || a.includes('"') ? JSON.stringify(a) : a)).join(' ')}`;
 }
 
+// Accepts a comma-separated string or an array of SponsorBlock category names and
+// normalizes it to the comma-separated form yt-dlp's --sponsorblock-* flags expect.
+function normalizeCategories(value) {
+  if (!value) return '';
+  if (Array.isArray(value)) return value.filter(Boolean).join(',');
+  return String(value).trim();
+}
+
 function buildDownloadArgs(url, options = {}) {
   const {
     audioOnly = false,
@@ -142,6 +150,10 @@ function buildDownloadArgs(url, options = {}) {
     container = 'mp4',
     subtitles = false,
     subLangs = 'en.*',
+    embedThumbnail = false,
+    embedMetadata = false,
+    embedChapters = false,
+    sponsorblockRemove = '',
   } = options;
 
   const args = [
@@ -165,6 +177,23 @@ function buildDownloadArgs(url, options = {}) {
 
   if (subtitles) {
     args.push('--write-subs', '--write-auto-subs', '--sub-langs', subLangs || 'en.*', '--embed-subs');
+  }
+
+  // Embed extras directly into the output file instead of leaving separate sidecar files.
+  if (embedThumbnail) {
+    args.push('--embed-thumbnail');
+  }
+  if (embedMetadata) {
+    args.push('--embed-metadata');
+  }
+  if (embedChapters) {
+    args.push('--embed-chapters');
+  }
+
+  // SponsorBlock: cut the chosen segment categories out of the file automatically.
+  const sponsorblockRemoveCats = normalizeCategories(sponsorblockRemove);
+  if (sponsorblockRemoveCats) {
+    args.push('--sponsorblock-remove', sponsorblockRemoveCats);
   }
 
   // Twitch specific configuration

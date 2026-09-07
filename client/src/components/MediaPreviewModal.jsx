@@ -53,6 +53,17 @@ const SUBTITLE_LANG_OPTIONS = [
   { value: 'all', label: 'All available languages' },
 ];
 
+const SPONSORBLOCK_CATEGORIES = [
+  { value: 'sponsor', label: 'Sponsor' },
+  { value: 'selfpromo', label: 'Unpaid/self promotion' },
+  { value: 'interaction', label: 'Interaction reminder' },
+  { value: 'intro', label: 'Intermission/intro' },
+  { value: 'outro', label: 'Endcards/credits' },
+  { value: 'preview', label: 'Preview/recap' },
+  { value: 'music_offtopic', label: 'Non-music section' },
+  { value: 'filler', label: 'Filler tangent' },
+];
+
 export default function MediaPreviewModal({
   isOpen,
   url,
@@ -70,6 +81,11 @@ export default function MediaPreviewModal({
   const [container, setContainer] = useState(initialSettings.container || 'mp4');
   const [subtitles, setSubtitles] = useState(initialSettings.subtitles || false);
   const [subLangs, setSubLangs] = useState(initialSettings.subLangs || 'en.*');
+  const [embedThumbnail, setEmbedThumbnail] = useState(initialSettings.embedThumbnail || false);
+  const [embedMetadata, setEmbedMetadata] = useState(initialSettings.embedMetadata || false);
+  const [embedChapters, setEmbedChapters] = useState(initialSettings.embedChapters || false);
+  const [sponsorblock, setSponsorblock] = useState(!!(initialSettings.sponsorblockCategories || []).length);
+  const [sponsorblockCategories, setSponsorblockCategories] = useState(initialSettings.sponsorblockCategories || []);
   const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
@@ -90,6 +106,11 @@ export default function MediaPreviewModal({
     setContainer(initialSettings.container || 'mp4');
     setSubtitles(initialSettings.subtitles || false);
     setSubLangs(initialSettings.subLangs || 'en.*');
+    setEmbedThumbnail(initialSettings.embedThumbnail || false);
+    setEmbedMetadata(initialSettings.embedMetadata || false);
+    setEmbedChapters(initialSettings.embedChapters || false);
+    setSponsorblock(!!(initialSettings.sponsorblockCategories || []).length);
+    setSponsorblockCategories(initialSettings.sponsorblockCategories || []);
 
     api
       .getInfo(url.trim())
@@ -111,6 +132,12 @@ export default function MediaPreviewModal({
 
   if (!isOpen) return null;
 
+  function toggleSponsorblockCategory(value) {
+    setSponsorblockCategories((prev) =>
+      prev.includes(value) ? prev.filter((c) => c !== value) : [...prev, value]
+    );
+  }
+
   async function handleDownload() {
     setDownloading(true);
     try {
@@ -121,6 +148,10 @@ export default function MediaPreviewModal({
         container,
         subtitles,
         subLangs,
+        embedThumbnail,
+        embedMetadata,
+        embedChapters,
+        sponsorblockRemove: sponsorblock ? sponsorblockCategories : [],
       });
       onClose();
     } catch (err) {
@@ -360,7 +391,58 @@ export default function MediaPreviewModal({
                       </select>
                     </label>
                   )}
+
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={embedThumbnail}
+                      onChange={(e) => setEmbedThumbnail(e.target.checked)}
+                    />
+                    Embed thumbnail
+                  </label>
+
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={embedMetadata}
+                      onChange={(e) => setEmbedMetadata(e.target.checked)}
+                    />
+                    Embed metadata
+                  </label>
+
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={embedChapters}
+                      onChange={(e) => setEmbedChapters(e.target.checked)}
+                    />
+                    Embed chapters
+                  </label>
+
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={sponsorblock}
+                      onChange={(e) => setSponsorblock(e.target.checked)}
+                    />
+                    Auto-remove sponsored segments (SponsorBlock)
+                  </label>
                 </div>
+
+                {sponsorblock && (
+                  <div className="preview-sponsorblock-categories">
+                    {SPONSORBLOCK_CATEGORIES.map((cat) => (
+                      <label key={cat.value} className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={sponsorblockCategories.includes(cat.value)}
+                          onChange={() => toggleSponsorblockCategory(cat.value)}
+                        />
+                        {cat.label}
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
             </>
           )}
