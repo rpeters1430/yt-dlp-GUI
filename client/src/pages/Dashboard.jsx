@@ -2,10 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import {
   ListChecks, CheckCircle2, XCircle, AlertCircle,
-  Music, Captions, Inbox, PartyPopper,
+  Music, Captions, Inbox, PartyPopper, Sparkles,
 } from 'lucide-react';
 import { api } from '../api.js';
 import QueueItem from '../components/QueueItem.jsx';
+import MediaPreviewModal from '../components/MediaPreviewModal.jsx';
 
 const QUALITY_OPTIONS = [
   { value: '', label: 'Best available' },
@@ -43,6 +44,8 @@ export default function Dashboard() {
   const [jobs, setJobs] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState('');
   const socketRef = useRef(null);
 
   useEffect(() => {
@@ -63,6 +66,12 @@ export default function Dashboard() {
     return () => socket.disconnect();
   }, []);
 
+  const parsedUrls = useMemo(
+    () => urlText.split('\n').map((u) => u.trim()).filter(Boolean),
+    [urlText]
+  );
+  const isSingleUrl = parsedUrls.length === 1 && /^https?:\/\//i.test(parsedUrls[0]);
+
   const activeJobs = useMemo(
     () => jobs.filter((j) => j.status === 'queued' || j.status === 'downloading'),
     [jobs]
@@ -74,11 +83,28 @@ export default function Dashboard() {
   const completedCount = useMemo(() => jobs.filter((j) => j.status === 'completed').length, [jobs]);
   const failedCount = useMemo(() => jobs.filter((j) => j.status === 'failed').length, [jobs]);
 
+  function handlePaste(e) {
+    const text = e.clipboardData?.getData('text') || '';
+    const trimmed = text.trim();
+    if (/^https?:\/\/[^\s]+$/i.test(trimmed)) {
+      // Single URL pasted - populate and auto-open details popup
+      setUrlText(trimmed);
+      setPreviewUrl(trimmed);
+      setPreviewModalOpen(true);
+    }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
-    const urls = urlText.split('\n').map((u) => u.trim()).filter(Boolean);
+    const urls = parsedUrls;
     if (urls.length === 0) return;
+
+    if (urls.length === 1 && /^https?:\/\//i.test(urls[0])) {
+      setPreviewUrl(urls[0]);
+      setPreviewModalOpen(true);
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -91,12 +117,31 @@ export default function Dashboard() {
     }
   }
 
+  async function handleConfirmDownload(payload) {
+    await api.enqueue({
+      urls: [payload.url],
+      audioOnly: payload.audioOnly,
+      quality: payload.quality,
+      container: payload.container,
+      subtitles: payload.subtitles,
+      subLangs: payload.subLangs,
+    });
+    setUrlText('');
+  }
+
   function handleDeleted(id) {
     setJobs((prev) => prev.filter((j) => j.id !== id));
   }
 
   return (
     <>
+      <MediaPreviewModal
+        isOpen={previewModalOpen}
+        url={previewUrl}
+        onClose={() => setPreviewModalOpen(false)}
+        onConfirmDownload={handleConfirmDownload}
+        initialSettings={{ audioOnly, quality, container, subtitles, subLangs }}
+      />
       <div className="page-header">
         <div>
           <h1>Dashboard</h1>
@@ -138,6 +183,7 @@ export default function Dashboard() {
             rows={4}
             value={urlText}
             onChange={(e) => setUrlText(e.target.value)}
+            onPaste={handlePaste}
           />
           <div className="options-row">
             <div className="segmented">
@@ -182,8 +228,21 @@ export default function Dashboard() {
             )}
 
             <div className="spacer">
+              {isSingleUrl && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    setPreviewUrl(parsedUrls[0]);
+                    setPreviewModalOpen(true);
+                  }}
+                  title="Inspect details, resolutions, and playlist info"
+                >
+                  <Sparkles size={14} /> Preview Details
+                </button>
+              )}
               <button type="submit" disabled={submitting || !urlText.trim()}>
-                {submitting ? 'Adding…' : 'Download'}
+                {submitting ? 'Adding…' : isSingleUrl ? 'Preview & Download' : 'Download'}
               </button>
             </div>
           </div>
