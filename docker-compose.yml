@@ -6,12 +6,11 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     environment:
-      - ADMIN_USER=admin
-      - ADMIN_PASSWORD=changeme
-      - SESSION_SECRET=change-this-to-a-random-string
       - MAX_CONCURRENT_DOWNLOADS=2
-      - TZ=America/New_York
+      - TZ=America/Los_Angeles
     volumes:
       - ./downloads:/downloads
       - ./config:/config

@@ -14,16 +14,16 @@ A self-hosted web app for downloading videos/audio from any site [yt-dlp](https:
 ## Quick start (Docker Compose)
 
 1. Copy this project to your NAS (e.g. via `git clone` or `scp`).
-2. Edit `docker-compose.yml` and set:
+2. Copy `.env.example` to `.env` and set:
    - `ADMIN_USER` / `ADMIN_PASSWORD` — your login credentials
    - `SESSION_SECRET` — any random string
-   - `TZ` — your timezone
-   - Optionally change the `3000:3000` port mapping
-3. Build and start:
+   - `.env` is gitignored, so real credentials never get committed — never put them directly in `docker-compose.yml`.
+3. In `docker-compose.yml`, optionally set `TZ` to your timezone and change the `3000:3000` port mapping.
+4. Build and start:
    ```bash
    docker compose up -d --build
    ```
-4. Open `http://<your-nas-ip>:3000` and log in.
+5. Open `http://<your-nas-ip>:3000` and log in.
 
 Downloaded files land in `./downloads` (host path, mounted into the container). The SQLite database and session store live in `./config`.
 
