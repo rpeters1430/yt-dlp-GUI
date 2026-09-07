@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Menu, Download } from 'lucide-react';
-import { api } from './api.js';
+import { api, setUnauthorizedHandler } from './api.js';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import History from './pages/History.jsx';
@@ -13,9 +13,20 @@ import Sidebar from './components/Sidebar.jsx';
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined = loading, null = logged out
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   useEffect(() => {
     api.me().then((u) => setUser(u)).catch(() => setUser(null));
+  }, []);
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setUser((prev) => {
+        if (prev) setSessionExpired(true); // only flag as "expired" if we were actually logged in
+        return null;
+      });
+    });
+    return () => setUnauthorizedHandler(null);
   }, []);
 
   if (user === undefined) {
@@ -28,7 +39,17 @@ export default function App() {
       </div>
     );
   }
-  if (!user) return <Login onLogin={setUser} />;
+  if (!user) {
+    return (
+      <Login
+        onLogin={(u) => {
+          setSessionExpired(false);
+          setUser(u);
+        }}
+        sessionExpired={sessionExpired}
+      />
+    );
+  }
 
   function handleLogout() {
     api.logout().then(() => setUser(null));

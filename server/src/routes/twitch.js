@@ -17,6 +17,20 @@ function cleanChannelName(input) {
   return parts[0] || '';
 }
 
+// Shared by /channel/:channel (live stream formats) and /vod-info (VOD formats) — both were
+// mapping yt-dlp's raw format list to this shape independently.
+function mapFormats(formats) {
+  return (formats || []).map((f) => ({
+    format_id: f.format_id,
+    resolution: f.resolution || (f.height ? `${f.height}p` : null),
+    height: f.height,
+    fps: f.fps,
+    vcodec: f.vcodec,
+    tbr: f.tbr,
+    note: f.format_note,
+  }));
+}
+
 // Check channel live status and fetch recent VODs
 router.get('/channel/:channel', async (req, res) => {
   const channel = cleanChannelName(req.params.channel);
@@ -29,15 +43,7 @@ router.get('/channel/:channel', async (req, res) => {
   try {
     const info = await ytdlp.getInfo(channelUrl);
     live = true;
-    const formats = (info.formats || []).map((f) => ({
-      format_id: f.format_id,
-      resolution: f.resolution || (f.height ? `${f.height}p` : null),
-      height: f.height,
-      fps: f.fps,
-      vcodec: f.vcodec,
-      tbr: f.tbr,
-      note: f.format_note,
-    }));
+    const formats = mapFormats(info.formats);
 
     const bestVideo = (info.formats || [])
       .filter((f) => f.vcodec && f.vcodec !== 'none')
@@ -93,15 +99,7 @@ router.get('/vod-info', async (req, res) => {
 
   try {
     const info = await ytdlp.getInfo(url);
-    const formats = (info.formats || []).map((f) => ({
-      format_id: f.format_id,
-      resolution: f.resolution || (f.height ? `${f.height}p` : null),
-      height: f.height,
-      fps: f.fps,
-      vcodec: f.vcodec,
-      tbr: f.tbr,
-      note: f.format_note,
-    }));
+    const formats = mapFormats(info.formats);
 
     res.json({
       id: info.id,
@@ -131,7 +129,6 @@ router.post('/download', (req, res) => {
     hlsUseMpegts = true,
     downloadSections = '',
     audioOnly = false,
-    twitchAuthToken = '',
   } = req.body || {};
 
   let targetUrl = (url || '').trim();
@@ -143,6 +140,8 @@ router.post('/download', (req, res) => {
     return res.status(400).json({ error: 'URL or channel is required' });
   }
 
+  // Auth (if configured) rides the shared cookies.txt via setTwitchAuthCookie — see
+  // ytdlp.js — so there's no per-request token to thread through here anymore.
   const optionsJson = {
     isLive: !!isLive,
     waitForLive: !!waitForLive,
@@ -150,7 +149,6 @@ router.post('/download', (req, res) => {
     twitchChat: !!twitchChat,
     hlsUseMpegts: hlsUseMpegts !== false,
     downloadSections: downloadSections ? downloadSections.trim() : null,
-    twitchAuthToken: twitchAuthToken ? twitchAuthToken.trim() : null,
     isTwitch: true,
   };
 
@@ -171,21 +169,30 @@ router.post('/stop/:id', (req, res) => {
   res.json({ ok: true, stopped });
 });
 
-// Get Twitch Settings (OAuth auth token & client ID)
+// Get Twitch Settings (client ID, plus whether an auth token cookie is configured — never
+// the token itself; it now lives only as a cookie in cookies.txt, see ytdlp.js).
 router.get('/settings', (req, res) => {
-  const tokenRow = db.prepare("SELECT value FROM settings WHERE key = 'twitch_auth_token'").get();
   const clientRow = db.prepare("SELECT value FROM settings WHERE key = 'twitch_client_id'").get();
   res.json({
-    authToken: tokenRow ? tokenRow.value : '',
+    authTokenConfigured: ytdlp.hasTwitchAuthCookie(),
+    authTokenMasked: ytdlp.getTwitchAuthTokenMasked(),
     clientId: clientRow ? clientRow.value : '',
   });
 });
 
-// Save Twitch Settings
+// Save Twitch Settings. authToken is only written when the field is present in the body at
+// all (the client only includes it when the user actually typed a new value) — omitting it
+// leaves the existing cookie untouched; sending '' explicitly clears it.
 router.post('/settings', (req, res) => {
-  const { authToken = '', clientId = '' } = req.body || {};
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('twitch_auth_token', ?)").run(authToken.trim());
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('twitch_client_id', ?)").run(clientId.trim());
+  const { authToken, clientId } = req.body || {};
+  if (authToken !== undefined) {
+    if (typeof authToken !== 'string') return res.status(400).json({ error: 'authToken must be a string' });
+    ytdlp.setTwitchAuthCookie(authToken.trim());
+  }
+  if (clientId !== undefined) {
+    if (typeof clientId !== 'string') return res.status(400).json({ error: 'clientId must be a string' });
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('twitch_client_id', ?)").run(clientId.trim());
+  }
   res.json({ ok: true });
 });
 

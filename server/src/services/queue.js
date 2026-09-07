@@ -9,8 +9,22 @@ let activeCount = 0;
 
 function init(socketIo) {
   io = socketIo;
-  // Resume anything left "downloading" from a previous run as queued, then kick the queue.
-  db.prepare("UPDATE downloads SET status = 'queued' WHERE status = 'downloading'").run();
+  // A row still marked "downloading" at boot means the server (not necessarily the whole
+  // container) restarted mid-job — the yt-dlp/ffmpeg process from that run may still be
+  // alive and orphaned (reparented, no longer tracked by anything). Best-effort kill it by
+  // its persisted pid before resuming the row as queued, so it doesn't keep writing to the
+  // same output file a fresh attempt is about to start writing to.
+  const stale = db.prepare("SELECT id, pid FROM downloads WHERE status = 'downloading'").all();
+  for (const row of stale) {
+    if (!row.pid) continue;
+    try {
+      // Negative pid targets the process group; these are spawned detached (see ytdlp.js)
+      // so this also reaches any ffmpeg child. Falls back to a direct kill if that fails
+      // (e.g. Windows, or the process already exited).
+      process.kill(process.platform === 'win32' ? row.pid : -row.pid, 'SIGKILL');
+    } catch (_) {}
+  }
+  db.prepare("UPDATE downloads SET status = 'queued', pid = NULL WHERE status = 'downloading'").run();
   processNext();
 }
 
@@ -146,7 +160,7 @@ async function runJob(job) {
 
     const result = await ytdlp.download(
       job.url,
-      downloadOptions,
+      { ...downloadOptions, onSpawn: (pid) => updateJob(job.id, { pid }) },
       (progress) => {
         const updatePayload = {
           percent: progress.percent,
@@ -175,6 +189,7 @@ async function runJob(job) {
       status: 'completed',
       percent: 100,
       filepath: result.filepath || null,
+      pid: null,
       log: logLines.join('\n'),
     });
   } catch (err) {
@@ -183,6 +198,7 @@ async function runJob(job) {
     updateJob(job.id, {
       status: 'failed',
       error: err.message,
+      pid: null,
       log: logLines.join('\n'),
     });
   }

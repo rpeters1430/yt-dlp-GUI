@@ -1,5 +1,13 @@
 const BASE = '/api';
 
+// Fires when any request other than the login/me checks below comes back 401, so App can
+// drop the client's session state and Login can show a "you were signed out" message —
+// without every page having to special-case 401 in its own .catch().
+let unauthorizedHandler = null;
+export function setUnauthorizedHandler(fn) {
+  unauthorizedHandler = fn;
+}
+
 async function request(path, options = {}) {
   const res = await fetch(BASE + path, {
     headers: { 'Content-Type': 'application/json' },
@@ -7,6 +15,9 @@ async function request(path, options = {}) {
     ...options,
   });
   if (!res.ok) {
+    if (res.status === 401 && path !== '/auth/login' && path !== '/auth/me' && unauthorizedHandler) {
+      unauthorizedHandler();
+    }
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Request failed: ${res.status}`);
   }

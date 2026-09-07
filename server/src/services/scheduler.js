@@ -39,19 +39,37 @@ async function checkWatch(watch) {
       }
     }
 
-    db.prepare("UPDATE watches SET last_checked_at = datetime('now') WHERE id = ?").run(watch.id);
+    db.prepare("UPDATE watches SET last_checked_at = datetime('now'), last_status = 'ok', last_error = NULL WHERE id = ?").run(watch.id);
     console.log(`[watch] #${watch.id} Finished check (${entries.length} items evaluated, ${newCount} new recorded)`);
     return newCount;
   } catch (err) {
     console.error(`[watch:error] Check failed for #${watch.id} (${watch.url}):`, err.message);
+    // Previously swallowed silently — a watch could fail every 30-minute check indefinitely
+    // with no way for a user to notice short of tailing server logs. Persisting it here
+    // means GET /watches (SELECT *) surfaces it in the UI instead.
+    db.prepare("UPDATE watches SET last_status = 'error', last_error = ? WHERE id = ?").run(err.message, watch.id);
     return 0;
   }
 }
 
+let running = false;
+
 async function checkAllWatches() {
-  const watches = db.prepare('SELECT * FROM watches').all();
-  for (const watch of watches) {
-    await checkWatch(watch);
+  // A single slow/hung watch (checkWatch has no timeout of its own beyond getInfo's) can
+  // otherwise still be running when the next 30-minute tick fires, causing overlapping
+  // runs and duplicate enqueues of whatever else it finds new in the meantime.
+  if (running) {
+    console.log('[scheduler] Previous run still in progress, skipping this tick');
+    return;
+  }
+  running = true;
+  try {
+    const watches = db.prepare('SELECT * FROM watches').all();
+    for (const watch of watches) {
+      await checkWatch(watch);
+    }
+  } finally {
+    running = false;
   }
 }
 

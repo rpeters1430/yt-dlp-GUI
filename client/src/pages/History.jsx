@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Search, Film, X, Archive, Terminal, Copy, Check } from 'lucide-react';
 import { api } from '../api.js';
+import ConfirmDialog from '../components/ConfirmDialog.jsx';
 
 const STATUS_FILTERS = ['all', 'completed', 'downloading', 'queued', 'failed'];
 
@@ -11,21 +12,32 @@ export default function History() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [expandedId, setExpandedId] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
 
   useEffect(() => {
     api.listDownloads().then(setJobs).finally(() => setLoading(false));
   }, []);
 
-  async function handleDelete(id) {
+  function handleDelete(id, label) {
+    setPendingDelete({ id, label });
+  }
+
+  async function confirmDelete() {
+    const { id } = pendingDelete;
+    setPendingDelete(null);
     await api.deleteDownload(id);
     setJobs((prev) => prev.filter((j) => j.id !== id));
   }
 
   function handleCopy(job) {
     const text = `${job.command_args ? `Command:\n${job.command_args}\n\n` : ''}Log:\n${job.log || ''}`;
-    navigator.clipboard.writeText(text);
-    setCopiedId(job.id);
-    setTimeout(() => setCopiedId(null), 2000);
+    navigator.clipboard.writeText(text).then(
+      () => {
+        setCopiedId(job.id);
+        setTimeout(() => setCopiedId(null), 2000);
+      },
+      () => {}
+    );
   }
 
   const filtered = useMemo(() => {
@@ -112,7 +124,7 @@ export default function History() {
                           >
                             <Terminal size={14} />
                           </button>
-                          <button className="icon-btn" onClick={() => handleDelete(job.id)} title="Delete"><X size={15} /></button>
+                          <button className="icon-btn" onClick={() => handleDelete(job.id, job.title || job.url)} title="Delete"><X size={15} /></button>
                         </div>
                       </td>
                     </tr>
@@ -154,6 +166,15 @@ export default function History() {
           </div>
         )}
       </section>
+
+      <ConfirmDialog
+        open={!!pendingDelete}
+        title="Delete from history"
+        message={`Delete "${pendingDelete?.label || 'this download'}" from history?`}
+        confirmLabel="Delete"
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={confirmDelete}
+      />
     </>
   );
 }

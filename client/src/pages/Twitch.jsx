@@ -26,6 +26,8 @@ import {
 } from 'lucide-react';
 import { api } from '../api.js';
 import QueueItem from '../components/QueueItem.jsx';
+import ConfirmDialog from '../components/ConfirmDialog.jsx';
+import { useModalA11y } from '../hooks/useModalA11y.js';
 
 function formatDuration(sec) {
   if (!sec && sec !== 0) return '';
@@ -90,8 +92,12 @@ export default function Twitch() {
   const [trimContainer, setTrimContainer] = useState('mp4');
   const [trimSubmitting, setTrimSubmitting] = useState(false);
 
-  // Twitch Settings (OAuth token & Client ID)
+  // Twitch Settings (OAuth token & Client ID). The server never sends the real token back —
+  // only whether one's configured and a masked hint — so authToken here only ever holds a
+  // value the user is actively typing to replace it.
   const [authToken, setAuthToken] = useState('');
+  const [authTokenTouched, setAuthTokenTouched] = useState(false);
+  const [authTokenMasked, setAuthTokenMasked] = useState('');
   const [clientId, setClientId] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsStatus, setSettingsStatus] = useState('');
@@ -100,11 +106,17 @@ export default function Twitch() {
   const [jobs, setJobs] = useState([]);
   const socketRef = useRef(null);
 
+  const [vodMessage, setVodMessage] = useState(null); // { type: 'success' | 'error', text }
+  const [stopConfirmJobId, setStopConfirmJobId] = useState(null);
+  const [stopError, setStopError] = useState('');
+
+  const trimModalRef = useModalA11y(!!selectedVod, () => setSelectedVod(null));
+
   useEffect(() => {
     // Initial fetch of jobs & settings
     api.listDownloads().then(setJobs).catch(() => {});
     api.getTwitchSettings().then((s) => {
-      setAuthToken(s.authToken || '');
+      setAuthTokenMasked(s.authTokenMasked || '');
       setClientId(s.clientId || '');
     }).catch(() => {});
 
@@ -227,18 +239,19 @@ export default function Twitch() {
         isLive: false,
       });
       setSelectedVod(null);
-      alert(`Queued download for "${vod.title}"`);
+      setVodMessage({ type: 'success', text: `Queued download for "${vod.title}"` });
     } catch (err) {
-      alert(`Download failed: ${err.message}`);
+      setVodMessage({ type: 'error', text: `Download failed: ${err.message}` });
     }
+    setTimeout(() => setVodMessage(null), 4000);
   }
 
   async function handleStopJob(id) {
-    if (!confirm('Stop recording and save the stream captured so far?')) return;
+    setStopError('');
     try {
       await api.stopTwitchJob(id);
     } catch (err) {
-      alert(`Failed to stop recording: ${err.message}`);
+      setStopError(`Failed to stop recording: ${err.message}`);
     }
   }
 
@@ -247,10 +260,33 @@ export default function Twitch() {
     setSavingSettings(true);
     setSettingsStatus('');
     try {
-      await api.saveTwitchSettings({ authToken, clientId });
-      setSettingsStatus('Settings saved! OAuth token will be used for all Twitch downloads.');
+      const payload = { clientId };
+      if (authTokenTouched) payload.authToken = authToken;
+      await api.saveTwitchSettings(payload);
+      if (authTokenTouched) {
+        setAuthTokenMasked(authToken ? `••••${authToken.slice(-4)}` : '');
+        setAuthToken('');
+        setAuthTokenTouched(false);
+      }
+      setSettingsStatus('Settings saved! Applies to all Twitch downloads.');
     } catch (err) {
       setSettingsStatus(`Failed to save: ${err.message}`);
+    } finally {
+      setSavingSettings(false);
+    }
+  }
+
+  async function handleClearAuthToken() {
+    setSavingSettings(true);
+    setSettingsStatus('');
+    try {
+      await api.saveTwitchSettings({ authToken: '' });
+      setAuthTokenMasked('');
+      setAuthToken('');
+      setAuthTokenTouched(false);
+      setSettingsStatus('Auth token cleared.');
+    } catch (err) {
+      setSettingsStatus(`Failed to clear: ${err.message}`);
     } finally {
       setSavingSettings(false);
     }
@@ -547,6 +583,13 @@ export default function Twitch() {
             )}
           </div>
 
+          {vodMessage && (
+            <div className={`alert ${vodMessage.type === 'error' ? 'alert-error' : 'alert-success'}`} style={{ marginBottom: 12 }}>
+              {vodMessage.type === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
+              {vodMessage.text}
+            </div>
+          )}
+
           {!channelData ? (
             <div className="empty-state">
               <Tv size={32} />
@@ -610,7 +653,15 @@ export default function Twitch() {
           {/* Modal / Panel for Trimming a selected VOD */}
           {selectedVod && (
             <div className="modal-backdrop" onClick={() => setSelectedVod(null)}>
-              <div className="modal-container" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
+              <div
+                ref={trimModalRef}
+                className="modal-container"
+                onClick={(e) => e.stopPropagation()}
+                style={{ maxWidth: 520 }}
+                role="dialog"
+                aria-modal="true"
+                tabIndex={-1}
+              >
                 <div className="modal-header">
                   <div className="modal-header-title">
                     <Scissors size={18} className="text-accent" />
@@ -771,20 +822,31 @@ export default function Twitch() {
           </div>
           <form onSubmit={handleSaveSettings}>
             <p className="muted" style={{ marginBottom: 16 }}>
-              Twitch limits non-authenticated downloads with ad interstitials and blocks subscriber-only VODs. By providing your Twitch <code>auth-token</code>, yt-dlp can access sub-only content and avoid ad breaks.
+              Twitch limits non-authenticated downloads with ad interstitials and blocks subscriber-only VODs. Providing your Twitch <code>auth-token</code> here (stored as a cookie the same way YouTube cookies are — see Settings) lets yt-dlp access sub-only content and avoid ad breaks.
+              This token is also covered by the cookies.txt uploaded on the main Settings page, if it includes your twitch.tv cookies — you only need to set it in one place.
             </p>
 
-            <label className="field-label" style={{ marginBottom: 12 }}>
+            <label className="field-label" style={{ marginBottom: 4 }}>
               Twitch OAuth Auth Token (auth-token)
               <input
                 type="password"
-                placeholder="e.g. your 30-character oauth auth-token cookie"
+                placeholder={authTokenMasked ? `Currently set (${authTokenMasked}) — enter a new value to replace it` : 'e.g. your 30-character oauth auth-token cookie'}
                 value={authToken}
-                onChange={(e) => setAuthToken(e.target.value)}
+                onChange={(e) => {
+                  setAuthToken(e.target.value);
+                  setAuthTokenTouched(true);
+                }}
               />
             </label>
+            {authTokenMasked && !authTokenTouched && (
+              <div style={{ marginBottom: 12 }}>
+                <button type="button" className="btn-ghost btn-sm" onClick={handleClearAuthToken} disabled={savingSettings}>
+                  Clear saved token
+                </button>
+              </div>
+            )}
 
-            <div className="alert alert-info" style={{ marginBottom: 16 }}>
+            <div className="alert alert-info" style={{ marginBottom: 16, marginTop: 12 }}>
               <div>
                 <strong>How to get your auth-token:</strong>
                 <ol style={{ paddingLeft: 18, marginTop: 6, marginBottom: 0 }}>
@@ -817,6 +879,12 @@ export default function Twitch() {
           {activeLiveJobs.length > 0 && <span className="count-badge">{activeLiveJobs.length}</span>}
         </div>
 
+        {stopError && (
+          <div className="alert alert-error" style={{ marginBottom: 12 }}>
+            <AlertCircle size={16} /> {stopError}
+          </div>
+        )}
+
         {activeLiveJobs.length === 0 ? (
           <div className="empty-state">
             <Radio size={30} />
@@ -844,7 +912,7 @@ export default function Twitch() {
                       <button
                         type="button"
                         className="btn-danger btn-sm"
-                        onClick={() => handleStopJob(job.id)}
+                        onClick={() => setStopConfirmJobId(job.id)}
                         title="Stop recording and save file to disk"
                       >
                         <Square size={13} /> Stop Recording
@@ -887,6 +955,19 @@ export default function Twitch() {
           </div>
         )}
       </section>
+
+      <ConfirmDialog
+        open={!!stopConfirmJobId}
+        title="Stop recording"
+        message="Stop recording and save the stream captured so far?"
+        confirmLabel="Stop recording"
+        onCancel={() => setStopConfirmJobId(null)}
+        onConfirm={() => {
+          const id = stopConfirmJobId;
+          setStopConfirmJobId(null);
+          handleStopJob(id);
+        }}
+      />
     </>
   );
 }

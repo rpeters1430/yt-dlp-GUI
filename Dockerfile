@@ -15,7 +15,7 @@ FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c
 # actions can download and unpack builds at runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip ca-certificates build-essential curl unzip xz-utils \
-    && pip3 install --no-cache-dir --break-system-packages -U yt-dlp \
+    && pip3 install --no-cache-dir --break-system-packages -U "yt-dlp[default,curl-cffi]" \
     && rm -rf /var/lib/apt/lists/*
 
 # Install latest static FFmpeg build (amd64 / arm64) from yt-dlp/FFmpeg-Builds

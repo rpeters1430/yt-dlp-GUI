@@ -14,18 +14,22 @@ router.get('/cookies', (req, res) => {
 });
 
 // Accepts pasted cookies.txt (Netscape format) content, e.g. exported via a
-// "Get cookies.txt" browser extension. Stored with owner-only permissions since
-// it's effectively a live, unauthenticated login session for whoever holds it.
+// "Get cookies.txt" browser extension — for YouTube or any other site, including Twitch.
+// Stored with owner-only permissions since it's effectively a live, unauthenticated login
+// session for whoever holds it.
 router.put('/cookies', (req, res) => {
   const { content } = req.body || {};
   if (!content || typeof content !== 'string' || !content.trim()) {
     return res.status(400).json({ error: 'cookies.txt content is required' });
   }
-  fs.writeFileSync(COOKIES_FILE, content, { mode: 0o600 });
-  fs.chmodSync(COOKIES_FILE, 0o600);
+  // Uses the preserving variant so this doesn't silently wipe a Twitch auth-token cookie
+  // set separately via the Twitch Settings tab (which merges into this same file).
+  ytdlp.writeCookiesFilePreservingTwitchAuth(content);
   res.json({ ok: true });
 });
 
+// Clears the whole cookies.txt, including any merged-in Twitch auth-token cookie — this is
+// an explicit "remove everything" action, unlike the PUT above.
 router.delete('/cookies', (req, res) => {
   if (fs.existsSync(COOKIES_FILE)) fs.unlinkSync(COOKIES_FILE);
   res.json({ ok: true });
@@ -70,15 +74,27 @@ router.get('/', (req, res) => {
   res.json(settings);
 });
 
+// The only setting this route is actually meant to expose (see client Settings.jsx) — an
+// allow-list keeps it from becoming an arbitrary authenticated-write-to-any-key endpoint,
+// since the settings table also stores the Twitch client id and the session-signing secret
+// under keys of its own.
+const ALLOWED_SETTINGS_KEYS = new Set(['ytdlpChannel']);
+
 router.put('/', (req, res) => {
+  const entries = Object.entries(req.body || {});
+  const unknown = entries.filter(([key]) => !ALLOWED_SETTINGS_KEYS.has(key)).map(([key]) => key);
+  if (unknown.length > 0) {
+    return res.status(400).json({ error: `Unknown setting(s): ${unknown.join(', ')}` });
+  }
+
   const upsert = db.prepare(`
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `);
-  const tx = db.transaction((entries) => {
-    for (const [key, value] of entries) upsert.run(key, String(value));
+  const tx = db.transaction((rows) => {
+    for (const [key, value] of rows) upsert.run(key, String(value));
   });
-  tx(Object.entries(req.body || {}));
+  tx(entries);
   res.json({ ok: true });
 });
 

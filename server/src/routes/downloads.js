@@ -106,6 +106,19 @@ router.post('/', (req, res) => {
   const cleaned = list.map((u) => String(u).trim()).filter(Boolean);
 
   if (cleaned.length === 0) return res.status(400).json({ error: 'At least one URL is required' });
+  const MAX_URLS_PER_REQUEST = 100;
+  if (cleaned.length > MAX_URLS_PER_REQUEST) {
+    return res.status(400).json({ error: `Too many URLs in one request (max ${MAX_URLS_PER_REQUEST})` });
+  }
+  // Fails fast here for immediate feedback; getInfo/download would reject the same URLs
+  // anyway once the job actually runs, but that's a queued failure minutes later instead.
+  for (const u of cleaned) {
+    try {
+      ytdlp.assertPublicUrl(u);
+    } catch (e) {
+      return res.status(400).json({ error: `${e.message}: ${u}` });
+    }
+  }
 
   const optionsJson = {
     embedThumbnail: !!embedThumbnail,

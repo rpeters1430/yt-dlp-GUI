@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Radar, RefreshCw, X, AlertCircle } from 'lucide-react';
 import { api } from '../api.js';
+import ConfirmDialog from '../components/ConfirmDialog.jsx';
 
 export default function Watches() {
   const [watches, setWatches] = useState([]);
@@ -9,6 +10,7 @@ export default function Watches() {
   const [audioOnly, setAudioOnly] = useState(false);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
 
   function refresh() {
     api.listWatches().then(setWatches).catch(() => {});
@@ -29,7 +31,13 @@ export default function Watches() {
     }
   }
 
-  async function handleDelete(id) {
+  function handleDelete(id, label) {
+    setPendingDelete({ id, label });
+  }
+
+  async function confirmDelete() {
+    const { id } = pendingDelete;
+    setPendingDelete(null);
     await api.deleteWatch(id);
     refresh();
   }
@@ -96,6 +104,12 @@ export default function Watches() {
                     <div className="muted small">
                       Last checked: {w.last_checked_at ? new Date(w.last_checked_at + 'Z').toLocaleString() : 'never'}
                     </div>
+                    {w.last_status === 'error' && (
+                      <div className="alert alert-error" style={{ marginTop: 6 }}>
+                        <AlertCircle size={13} />
+                        Last check failed: {w.last_error || 'unknown error'}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="watch-actions">
@@ -103,13 +117,22 @@ export default function Watches() {
                     <RefreshCw size={13} className={busyId === w.id ? 'spin-icon' : undefined} />
                     {busyId === w.id ? 'Checking…' : 'Check now'}
                   </button>
-                  <button className="icon-btn" onClick={() => handleDelete(w.id)} title="Remove"><X size={15} /></button>
+                  <button className="icon-btn" onClick={() => handleDelete(w.id, w.name || w.url)} title="Remove"><X size={15} /></button>
                 </div>
               </div>
             ))}
           </div>
         )}
       </section>
+
+      <ConfirmDialog
+        open={!!pendingDelete}
+        title="Remove watch"
+        message={`Remove watch "${pendingDelete?.label}"? This won't affect videos already downloaded.`}
+        confirmLabel="Remove"
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={confirmDelete}
+      />
     </>
   );
 }

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Download, AlertCircle } from 'lucide-react';
 import { api } from '../api.js';
 
-export default function Login({ onLogin }) {
+export default function Login({ onLogin, sessionExpired }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -28,6 +28,13 @@ export default function Login({ onLogin }) {
         <div className="brand-mark"><Download size={22} /></div>
         <h1>yt-dlp GUI</h1>
         <p className="login-subtitle">Sign in to manage your downloads</p>
+
+        {sessionExpired && (
+          <div className="alert alert-error">
+            <AlertCircle size={15} />
+            Your session expired. Please sign in again.
+          </div>
+        )}
 
         <label className="field-label">
           Username

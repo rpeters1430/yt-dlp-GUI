@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Clock, Loader2, CheckCircle2, XCircle, Film, X, Terminal, Copy, Check } from 'lucide-react';
 import { api } from '../api.js';
+import ConfirmDialog from './ConfirmDialog.jsx';
 
 const STATUS_META = {
   queued: { label: 'Queued', icon: Clock },
@@ -12,6 +13,7 @@ const STATUS_META = {
 export default function QueueItem({ job, onDeleted }) {
   const [showLogs, setShowLogs] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const logRef = useRef(null);
   const meta = STATUS_META[job.status] || { label: job.status, icon: Clock };
   const StatusIcon = meta.icon;
@@ -24,12 +26,17 @@ export default function QueueItem({ job, onDeleted }) {
 
   function handleCopy() {
     const text = `${job.command_args ? `Command:\n${job.command_args}\n\n` : ''}Log:\n${job.log || ''}`;
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    navigator.clipboard.writeText(text).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      },
+      () => {} // clipboard permission denied / insecure context — no-op, button just doesn't flip to "Copied"
+    );
   }
 
   return (
+    <>
     <div className={`queue-item status-${job.status}`}>
       <div className="queue-item-main">
         {job.thumbnail ? (
@@ -86,7 +93,7 @@ export default function QueueItem({ job, onDeleted }) {
           <button
             className="icon-btn"
             title="Remove"
-            onClick={() => api.deleteDownload(job.id).then(() => onDeleted(job.id))}
+            onClick={() => setConfirmRemove(true)}
           >
             <X size={16} />
           </button>
@@ -121,5 +128,17 @@ export default function QueueItem({ job, onDeleted }) {
         </div>
       )}
     </div>
+    <ConfirmDialog
+      open={confirmRemove}
+      title="Remove download"
+      message={`Remove "${job.title || job.url}" from the list?`}
+      confirmLabel="Remove"
+      onCancel={() => setConfirmRemove(false)}
+      onConfirm={() => {
+        setConfirmRemove(false);
+        api.deleteDownload(job.id).then(() => onDeleted(job.id));
+      }}
+    />
+    </>
   );
 }

@@ -44,6 +44,91 @@ function cookieArgs() {
   return fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
 }
 
+// The Twitch auth-token is stored as a real cookie in the shared cookies.txt rather than
+// injected via --add-header, because yt-dlp's own Twitch extractor authenticates by reading
+// self._get_cookies('https://gql.twitch.tv').get('auth-token') — confirmed by reading
+// yt-dlp's installed twitch.py source. A header only happened to work before because of an
+// incidental header-merge order, not because it's what the extractor actually reads. Storing
+// it as a cookie also means it rides the same --cookies file every other site's cookies use,
+// so cookieArgs()/commonArgs() cover it automatically with no Twitch-specific args needed.
+const TWITCH_AUTH_COOKIE_DOMAIN = '.twitch.tv';
+const TWITCH_AUTH_COOKIE_NAME = 'auth-token';
+
+function readCookieLines() {
+  if (!fs.existsSync(COOKIES_FILE)) return [];
+  return fs.readFileSync(COOKIES_FILE, 'utf8').split('\n');
+}
+
+// Netscape cookie file fields are tab-separated: domain, includeSubdomains, path, secure,
+// expiry, name, value. Returns null for comments/blank lines/malformed rows.
+function parseCookieLine(line) {
+  if (!line || line.trim().startsWith('#')) return null;
+  const parts = line.split('\t');
+  if (parts.length < 7) return null;
+  return { domain: parts[0], name: parts[5], value: parts.slice(6).join('\t') };
+}
+
+function isTwitchAuthCookieLine(line) {
+  const c = parseCookieLine(line);
+  return !!c && c.name === TWITCH_AUTH_COOKIE_NAME && /(^|\.)twitch\.tv$/i.test(c.domain.replace(/^\./, ''));
+}
+
+// Replaces (or removes, if token is falsy) the auth-token cookie line for twitch.tv in the
+// shared cookies.txt, leaving every other cookie (YouTube, etc.) untouched. Deletes the file
+// entirely if that leaves it with no real cookie rows, so the YouTube cookies status check
+// (which just does fs.existsSync) doesn't report "configured" for an empty file.
+function setTwitchAuthCookie(token) {
+  const kept = readCookieLines().filter((line) => line.trim() !== '' && !isTwitchAuthCookieLine(line));
+  const hasOtherCookies = kept.some((line) => parseCookieLine(line));
+
+  if (token) {
+    if (!kept.some((line) => line.startsWith('# Netscape'))) {
+      kept.unshift('# Netscape HTTP Cookie File');
+    }
+    const expiry = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365 * 5; // 5 years out
+    kept.push([TWITCH_AUTH_COOKIE_DOMAIN, 'TRUE', '/', 'TRUE', String(expiry), TWITCH_AUTH_COOKIE_NAME, token].join('\t'));
+    fs.writeFileSync(COOKIES_FILE, kept.join('\n') + '\n', { mode: 0o600 });
+    fs.chmodSync(COOKIES_FILE, 0o600);
+  } else if (hasOtherCookies) {
+    fs.writeFileSync(COOKIES_FILE, kept.join('\n') + '\n', { mode: 0o600 });
+    fs.chmodSync(COOKIES_FILE, 0o600);
+  } else if (fs.existsSync(COOKIES_FILE)) {
+    fs.unlinkSync(COOKIES_FILE);
+  }
+}
+
+function hasTwitchAuthCookie() {
+  return readCookieLines().some(isTwitchAuthCookieLine);
+}
+
+function getTwitchAuthTokenRaw() {
+  for (const line of readCookieLines()) {
+    if (isTwitchAuthCookieLine(line)) return parseCookieLine(line).value;
+  }
+  return '';
+}
+
+// The Settings page lets a user paste/upload a fresh cookies.txt (for YouTube, typically),
+// which replaces the file outright. Without this, that upload would silently wipe out a
+// separately-configured Twitch auth-token cookie merged into the same file. Re-merges it
+// back in afterward so the two features don't clobber each other.
+function writeCookiesFilePreservingTwitchAuth(content) {
+  const existingToken = getTwitchAuthTokenRaw();
+  fs.writeFileSync(COOKIES_FILE, content, { mode: 0o600 });
+  fs.chmodSync(COOKIES_FILE, 0o600);
+  if (existingToken) setTwitchAuthCookie(existingToken);
+}
+
+function getTwitchAuthTokenMasked() {
+  for (const line of readCookieLines()) {
+    const c = parseCookieLine(line);
+    if (c && isTwitchAuthCookieLine(line)) {
+      return c.value.length > 4 ? `••••${c.value.slice(-4)}` : '••••';
+    }
+  }
+  return '';
+}
+
 function ffmpegArgs() {
   const dir = getFfmpegDir();
   return dir ? ['--ffmpeg-location', dir] : [];
@@ -62,21 +147,83 @@ function commonArgs() {
   ];
 }
 
+// Best-effort SSRF guard: yt-dlp's generic extractor will fetch essentially any URL, so a
+// pasted URL targeting a loopback/private/link-local literal IP could probe the server's own
+// internal network (other Docker services, cloud metadata endpoints, etc). This only checks
+// literal IPs and scheme — it does NOT resolve hostnames, so a hostname that *resolves* to a
+// private address (DNS rebinding) isn't caught. Set ALLOW_LOCAL_URLS=1 to disable entirely
+// for setups that intentionally target internal mirrors/services.
+function isPrivateOrLoopbackIp(host) {
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const a = parseInt(v4[1], 10);
+    const b = parseInt(v4[2], 10);
+    if (a === 127 || a === 0 || a === 10) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    return false;
+  }
+  if (host === '::1' || host === '::') return true;
+  if (/^f[cd][0-9a-f]{2}:/i.test(host)) return true; // fc00::/7 (unique local)
+  if (/^fe80:/i.test(host)) return true; // link-local
+  return false;
+}
+
+function assertPublicUrl(url) {
+  if (process.env.ALLOW_LOCAL_URLS === '1') return;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (_) {
+    throw new Error('Invalid URL');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Unsupported URL scheme: ${parsed.protocol}`);
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'localhost' || isPrivateOrLoopbackIp(host)) {
+    throw new Error('URLs targeting local/private network addresses are not allowed');
+  }
+}
+
 // Runs `yt-dlp -J <url>` to fetch metadata (title, id, extractor, thumbnail, formats)
 // without downloading anything. Used for the format picker and for watch/history dedup.
+// Metadata lookups should be fast; a hung one (stalled extractor, network partition) would
+// otherwise block a queue slot indefinitely during the pre-download step, or block the
+// watch scheduler's tick, forever.
+const GETINFO_TIMEOUT_MS = parseInt(process.env.GETINFO_TIMEOUT_MS || String(2 * 60 * 1000), 10);
+
 function getInfo(url, { flatPlaylist = false } = {}) {
   return new Promise((resolve, reject) => {
+    try {
+      assertPublicUrl(url);
+    } catch (e) {
+      return reject(e);
+    }
     const args = ['-J', ...commonArgs()];
     if (flatPlaylist) args.push('--flat-playlist');
     args.push(url);
 
     console.log(`[ytdlp:info] Fetching metadata for ${url}`);
-    const proc = spawn(YTDLP_BIN, args);
+    const proc = spawn(YTDLP_BIN, args, { detached: process.platform !== 'win32' });
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      console.error(`[ytdlp:info] Metadata lookup timed out (${url}), killing`);
+      killProcessTree(proc, 'SIGKILL');
+    }, GETINFO_TIMEOUT_MS);
+
     proc.stdout.on('data', (d) => (stdout += d));
     proc.stderr.on('data', (d) => (stderr += d));
     proc.on('close', (code) => {
+      clearTimeout(timeout);
+      if (timedOut) {
+        return reject(new Error(`Metadata lookup timed out after ${Math.round(GETINFO_TIMEOUT_MS / 1000)}s`));
+      }
       if (code !== 0) {
         const errMsg = stderr.trim() || `yt-dlp exited with code ${code}`;
         console.error(`[ytdlp:info] Metadata lookup failed (${url}): ${errMsg}`);
@@ -89,6 +236,7 @@ function getInfo(url, { flatPlaylist = false } = {}) {
       }
     });
     proc.on('error', (err) => {
+      clearTimeout(timeout);
       console.error(`[ytdlp:info] Spawn error (${url}): ${err.message}`);
       reject(err);
     });
@@ -104,17 +252,16 @@ const PROGRESS_TEMPLATE = 'YTDLP_PROGRESS %(progress._percent_str)s|%(progress._
 // the best format at or below the cap instead of failing.
 const QUALITY_HEIGHTS = { 2160: 2160, 1440: 1440, 1080: 1080, 720: 720, 480: 480, 360: 360 };
 
-function getTwitchSettings() {
+// Auth now flows entirely through the cookies.txt cookie (see setTwitchAuthCookie above) —
+// client_id is the only real Twitch extractor-arg yt-dlp recognizes (verified: it's the only
+// _configuration_arg() call in yt-dlp's twitch.py), so it's the only thing left to read here.
+function getTwitchClientId() {
   try {
     const db = require('../db');
-    const tokenRow = db.prepare("SELECT value FROM settings WHERE key = 'twitch_auth_token'").get();
-    const clientRow = db.prepare("SELECT value FROM settings WHERE key = 'twitch_client_id'").get();
-    return {
-      authToken: tokenRow ? tokenRow.value : null,
-      clientId: clientRow ? clientRow.value : null,
-    };
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'twitch_client_id'").get();
+    return row ? row.value : null;
   } catch (_) {
-    return { authToken: null, clientId: null };
+    return null;
   }
 }
 
@@ -130,8 +277,24 @@ function buildFormatSelector({ audioOnly, formatSelector, quality }) {
   return `${quality}/bestvideo*+bestaudio/best`;
 }
 
+// Command strings built here are logged to the console and persisted to the downloads
+// table's command_args/log columns, which the API returns to any authenticated client —
+// so secrets (Twitch OAuth token, client id) must never survive into the displayed string.
+const SECRET_ARG_PATTERNS = [
+  /^(Authorization:\s*OAuth\s+).+$/i,
+  /(twitch:auth_token=)[^,]+/gi,
+  /(twitch:client_id=)[^,]+/gi,
+];
+
+function redactSecretArg(arg) {
+  return SECRET_ARG_PATTERNS.reduce((out, pattern) => out.replace(pattern, '$1***REDACTED***'), arg);
+}
+
 function formatCommand(bin, args) {
-  return `${bin} ${args.map((a) => (a.includes(' ') || a.includes('"') ? JSON.stringify(a) : a)).join(' ')}`;
+  return `${bin} ${args
+    .map(redactSecretArg)
+    .map((a) => (a.includes(' ') || a.includes('"') ? JSON.stringify(a) : a))
+    .join(' ')}`;
 }
 
 // Accepts a comma-separated string or an array of SponsorBlock category names and
@@ -198,16 +361,15 @@ function buildDownloadArgs(url, options = {}) {
 
   // Twitch specific configuration
   const isTwitch = /twitch\.tv/i.test(url) || options.isTwitch;
-  const isLive = options.isLive || (isTwitch && !/(\/videos\/|\/clip\/)/i.test(url));
+  // options.isLive is only ever a real override when the caller actually set it — `false`
+  // must mean "not live" (e.g. a clips.twitch.tv short link, which contains neither
+  // "/videos/" nor "/clip/" so the URL heuristic alone would misdetect it as live).
+  const isLive = options.isLive !== undefined
+    ? options.isLive
+    : isTwitch && !/(\/videos\/|\/clip\/)/i.test(url);
 
   if (isTwitch) {
-    const twitchSettings = getTwitchSettings();
-    const token = options.twitchAuthToken || twitchSettings.authToken;
-    const clientId = options.twitchClientId || twitchSettings.clientId;
-    if (token) {
-      args.push('--add-header', `Authorization: OAuth ${token}`);
-      args.push('--extractor-args', `twitch:auth_token=${token}`);
-    }
+    const clientId = options.twitchClientId || getTwitchClientId();
     if (clientId) {
       args.push('--extractor-args', `twitch:client_id=${clientId}`);
     }
@@ -237,26 +399,56 @@ function buildDownloadArgs(url, options = {}) {
 
 const activeProcesses = new Map();
 
+// yt-dlp spawns ffmpeg (merge/postprocess) as its own child process. Signaling only the
+// direct child (proc.kill()) leaves ffmpeg running as an orphan after "stop". Processes are
+// spawned detached (see download() below) so they're their own process-group leader on
+// POSIX, letting us signal the whole group via the negative pid; Windows has no such
+// concept, so taskkill /T there kills the process and its children instead.
+function killProcessTree(proc, signal) {
+  if (!proc || proc.killed || !proc.pid) return;
+  try {
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(proc.pid), '/t', '/f']);
+    } else {
+      process.kill(-proc.pid, signal);
+    }
+  } catch (err) {
+    try {
+      proc.kill(signal);
+    } catch (_) {}
+  }
+}
+
 function stopDownload(jobId) {
   const proc = activeProcesses.get(jobId);
   if (!proc) return false;
   console.log(`[ytdlp] Gracefully stopping download for job ${jobId} via SIGINT`);
   try {
-    proc.kill('SIGINT');
+    killProcessTree(proc, 'SIGINT');
   } catch (err) {
     console.error(`[ytdlp] Failed to send SIGINT to job ${jobId}: ${err.message}`);
     return false;
   }
   setTimeout(() => {
     if (activeProcesses.has(jobId)) {
-      try {
-        console.log(`[ytdlp] Force terminating lingering job ${jobId} via SIGTERM`);
-        proc.kill('SIGTERM');
-      } catch (_) {}
+      console.log(`[ytdlp] Force terminating lingering job ${jobId} via SIGTERM`);
+      killProcessTree(proc, 'SIGTERM');
     }
   }, 8000);
+  setTimeout(() => {
+    if (activeProcesses.has(jobId)) {
+      console.log(`[ytdlp] Job ${jobId} still alive after SIGTERM, sending SIGKILL`);
+      killProcessTree(proc, 'SIGKILL');
+    }
+  }, 16000);
   return true;
 }
+
+// Idle-watchdog: if yt-dlp prints nothing at all for this long, assume it's hung (stuck
+// network call, wedged extractor) and kill it rather than tying up a queue slot forever.
+// Disabled for --wait-for-video jobs, which are *supposed* to sit idle while polling for a
+// stream to go live.
+const DOWNLOAD_IDLE_TIMEOUT_MS = parseInt(process.env.DOWNLOAD_IDLE_TIMEOUT_MS || String(15 * 60 * 1000), 10);
 
 // Downloads a single URL, streaming progress updates via onProgress({percent, speed, eta})
 // and log messages via onLog(line).
@@ -274,15 +466,41 @@ function download(url, options = {}, onProgress, onLog) {
   }
 
   return new Promise((resolve, reject) => {
-    const proc = spawn(YTDLP_BIN, args);
+    try {
+      assertPublicUrl(url);
+    } catch (e) {
+      return reject(e);
+    }
+    // detached: true makes the child (and any grandchild ffmpeg it spawns) the leader of
+    // its own process group on POSIX, so killProcessTree() can signal -pid to reach both.
+    const proc = spawn(YTDLP_BIN, args, { detached: process.platform !== 'win32' });
     let stderr = '';
     let filepath = null;
+    let timedOut = false;
 
     if (options.jobId) {
       activeProcesses.set(options.jobId, proc);
     }
+    if (typeof options.onSpawn === 'function' && proc.pid) {
+      options.onSpawn(proc.pid);
+    }
+
+    let idleTimer = null;
+    function resetIdleTimer() {
+      if (options.waitForLive) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        timedOut = true;
+        const msg = `No output for ${Math.round(DOWNLOAD_IDLE_TIMEOUT_MS / 60000)} min — terminating as hung`;
+        console.error(`[${jobId}] ${msg}`);
+        onLog && onLog(`[error] ${msg}`);
+        killProcessTree(proc, 'SIGKILL');
+      }, DOWNLOAD_IDLE_TIMEOUT_MS);
+    }
+    resetIdleTimer();
 
     function handleChunk(chunk, isStderr = false) {
+      resetIdleTimer();
       const lines = chunk.toString().split('\n');
       for (const line of lines) {
         const trimmed = line.trim();
@@ -325,8 +543,12 @@ function download(url, options = {}, onProgress, onLog) {
     proc.stderr.on('data', (chunk) => handleChunk(chunk, true));
 
     proc.on('close', (code, signal) => {
+      if (idleTimer) clearTimeout(idleTimer);
       if (options.jobId) {
         activeProcesses.delete(options.jobId);
+      }
+      if (timedOut) {
+        return reject(new Error(`Download stalled: no output for ${Math.round(DOWNLOAD_IDLE_TIMEOUT_MS / 60000)} minutes`));
       }
       const stoppedByUser = signal === 'SIGINT' || signal === 'SIGTERM';
       if (code !== 0 && !stoppedByUser) {
@@ -346,6 +568,7 @@ function download(url, options = {}, onProgress, onLog) {
     });
 
     proc.on('error', (err) => {
+      if (idleTimer) clearTimeout(idleTimer);
       if (options.jobId) {
         activeProcesses.delete(options.jobId);
       }
@@ -393,7 +616,7 @@ async function getVersions() {
 function updateYtdlp(channel) {
   const args = ['install', '--no-cache-dir', '--break-system-packages', '-U'];
   if (channel === 'nightly') args.push('--pre');
-  args.push('yt-dlp');
+  args.push('yt-dlp[default,curl-cffi]');
 
   return new Promise((resolve, reject) => {
     const proc = spawn('pip3', args);
@@ -617,4 +840,9 @@ module.exports = {
   getFfmpegBin,
   COOKIES_FILE,
   stopDownload,
+  assertPublicUrl,
+  setTwitchAuthCookie,
+  hasTwitchAuthCookie,
+  getTwitchAuthTokenMasked,
+  writeCookiesFilePreservingTwitchAuth,
 };

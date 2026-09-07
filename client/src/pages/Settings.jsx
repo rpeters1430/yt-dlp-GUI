@@ -4,6 +4,7 @@ import { api } from '../api.js';
 
 export default function Settings() {
   const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
@@ -44,10 +45,19 @@ export default function Settings() {
     e.preventDefault();
     setMessage('');
     setError('');
+    if (newPassword.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
     try {
       await api.changePassword(newPassword);
       setMessage('Password updated.');
       setNewPassword('');
+      setConfirmPassword('');
     } catch (err) {
       setError(err.message);
     }
@@ -149,13 +159,24 @@ export default function Settings() {
             New password
             <input
               type="password"
-              placeholder="New password"
+              placeholder="At least 8 characters"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
+              autoComplete="new-password"
+            />
+          </label>
+          <label className="field-label">
+            Confirm new password
+            <input
+              type="password"
+              placeholder="Re-enter new password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
             />
           </label>
           <div>
-            <button type="submit" disabled={!newPassword}>Update password</button>
+            <button type="submit" disabled={!newPassword || !confirmPassword}>Update password</button>
           </div>
           {message && <div className="alert alert-success"><CheckCircle2 size={15} />{message}</div>}
           {error && <div className="alert alert-error"><AlertCircle size={15} />{error}</div>}
@@ -164,7 +185,7 @@ export default function Settings() {
 
       <section className="panel">
         <div className="panel-header">
-          <h2><Cookie size={16} /> YouTube cookies</h2>
+          <h2><Cookie size={16} /> Site cookies</h2>
           {cookiesConfigured !== null && (
             <span className={`tag status-tag ${cookiesConfigured ? 'status-completed' : ''}`}>
               {cookiesConfigured ? 'Configured' : 'Not configured'}
@@ -172,13 +193,16 @@ export default function Settings() {
           )}
         </div>
         <p className="panel-description">
-          Needed for age-restricted, members-only, or private videos, and it helps YouTube
-          trust this server as a logged-in browser. Export cookies from a browser where
-          you're signed into YouTube using an extension like{' '}
-          <em>"Get cookies.txt LOCALLY"</em> (Netscape format), then paste the file's
-          contents below. They're stored on this server only, with owner-only file
-          permissions — never share this content with anyone else, it's equivalent to
-          your login session.
+          Used for any site that needs a logged-in session — most commonly YouTube, for
+          age-restricted, members-only, or private videos. Export cookies from a browser
+          where you're signed in using an extension like <em>"Get cookies.txt LOCALLY"</em>{' '}
+          (Netscape format), then paste the file's contents below. A single cookies.txt can
+          hold cookies for multiple sites at once, so this also covers Twitch if you export
+          twitch.tv cookies into the same file — as an alternative to the separate auth-token
+          field on the Twitch page. They're stored on this server only, with owner-only file
+          permissions — never share this content with anyone else, it's equivalent to your
+          login session. Uploading a new file here won't remove a Twitch auth-token set
+          separately; only "Remove saved cookies" below clears everything.
         </p>
         <form onSubmit={handleSaveCookies} className="settings-form">
           <label className="file-input-label">

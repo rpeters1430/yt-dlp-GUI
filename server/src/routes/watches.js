@@ -1,10 +1,16 @@
 const express = require('express');
 const db = require('../db');
 const scheduler = require('../services/scheduler');
+const ytdlp = require('../services/ytdlp');
 const { requireAuth } = require('../auth');
 
 const router = express.Router();
 router.use(requireAuth);
+
+// yt-dlp's -f selector syntax (heights, codecs, +, /, [filters], etc.) — a stored watch
+// replays this on every scheduled check, so it's worth constraining to the syntax's
+// actual character set rather than accepting arbitrary strings indefinitely.
+const FORMAT_SELECTOR_RE = /^[\w+\-/*.,:()!<>=\s]{0,200}$/;
 
 router.get('/', (req, res) => {
   res.json(db.prepare('SELECT * FROM watches ORDER BY created_at DESC').all());
@@ -12,7 +18,17 @@ router.get('/', (req, res) => {
 
 router.post('/', (req, res) => {
   const { url, name, formatSelector, audioOnly } = req.body || {};
-  if (!url) return res.status(400).json({ error: 'url is required' });
+  if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+    return res.status(400).json({ error: 'A valid http(s) url is required' });
+  }
+  try {
+    ytdlp.assertPublicUrl(url);
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+  if (formatSelector && (typeof formatSelector !== 'string' || !FORMAT_SELECTOR_RE.test(formatSelector))) {
+    return res.status(400).json({ error: 'Invalid format selector' });
+  }
 
   const result = db.prepare(`
     INSERT INTO watches (url, name, format_selector, audio_only) VALUES (?, ?, ?, ?)
@@ -27,7 +43,8 @@ router.post('/', (req, res) => {
 });
 
 router.delete('/:id', (req, res) => {
-  db.prepare('DELETE FROM watches WHERE id = ?').run(req.params.id);
+  const result = db.prepare('DELETE FROM watches WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Watch not found' });
   db.prepare('DELETE FROM watch_seen_ids WHERE watch_id = ?').run(req.params.id);
   res.json({ ok: true });
 });

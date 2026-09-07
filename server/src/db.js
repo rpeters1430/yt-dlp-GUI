@@ -80,5 +80,21 @@ ensureColumn('downloads', 'command_args', 'TEXT');
 ensureColumn('downloads', 'log', 'TEXT');
 ensureColumn('downloads', 'is_live', 'INTEGER DEFAULT 0');
 ensureColumn('downloads', 'options_json', 'TEXT');
+ensureColumn('downloads', 'pid', 'INTEGER');
+ensureColumn('users', 'session_version', 'INTEGER DEFAULT 1');
+ensureColumn('watches', 'last_status', "TEXT DEFAULT 'ok'");
+ensureColumn('watches', 'last_error', 'TEXT');
+
+// Persists a random session-signing secret across restarts when SESSION_SECRET isn't set
+// via env, so cookies aren't signed with a predictable value and existing sessions survive
+// a container restart instead of being invalidated by a freshly-generated one each boot.
+function getOrCreateSessionSecret() {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('session_secret');
+  if (row && row.value) return row.value;
+  const secret = require('crypto').randomBytes(32).toString('hex');
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('session_secret', secret);
+  return secret;
+}
 
 module.exports = db;
+module.exports.getOrCreateSessionSecret = getOrCreateSessionSecret;

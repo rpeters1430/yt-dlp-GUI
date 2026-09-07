@@ -843,18 +843,22 @@ button.icon-btn-neutral:hover:not(:disabled) { color: var(--text); background: v
   to { opacity: 1; }
 }
 
-.modal-container.preview-modal {
+.modal-container {
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg), 0 20px 40px rgba(0, 0, 0, 0.4);
   width: 100%;
-  max-width: 680px;
+  max-width: 460px;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   animation: modalScaleUp 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-container.preview-modal {
+  max-width: 680px;
 }
 
 @keyframes modalScaleUp {

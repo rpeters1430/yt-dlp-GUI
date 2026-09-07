@@ -16,6 +16,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { api } from '../api.js';
+import { useModalA11y } from '../hooks/useModalA11y.js';
 
 function formatDuration(sec) {
   if (!sec && sec !== 0) return '';
@@ -130,6 +131,8 @@ export default function MediaPreviewModal({
     };
   }, [isOpen, url]);
 
+  const containerRef = useModalA11y(isOpen, onClose);
+
   if (!isOpen) return null;
 
   function toggleSponsorblockCategory(value) {
@@ -164,10 +167,12 @@ export default function MediaPreviewModal({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
+        ref={containerRef}
         className="modal-container preview-modal"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
       >
         <div className="modal-header">
           <div className="modal-header-title">
