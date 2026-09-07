@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS downloads (
   format_selector TEXT,
   audio_only INTEGER DEFAULT 0,
   subtitles INTEGER DEFAULT 0,
+  quality TEXT,
+  container TEXT DEFAULT 'mp4',
+  sub_langs TEXT,
   watch_id INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -58,5 +61,18 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT
 );
 `);
+
+// CREATE TABLE IF NOT EXISTS above only applies to brand-new databases, so upgrades of an
+// existing /config/app.db need these columns added by hand.
+function ensureColumn(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+ensureColumn('downloads', 'quality', 'TEXT');
+ensureColumn('downloads', 'container', "TEXT DEFAULT 'mp4'");
+ensureColumn('downloads', 'sub_langs', 'TEXT');
 
 module.exports = db;

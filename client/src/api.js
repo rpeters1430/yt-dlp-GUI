@@ -35,4 +35,7 @@ export const api = {
   getCookiesStatus: () => request('/settings/cookies'),
   saveCookies: (content) => request('/settings/cookies', { method: 'PUT', body: JSON.stringify({ content }) }),
   clearCookies: () => request('/settings/cookies', { method: 'DELETE' }),
+
+  getYtdlpVersions: () => request('/settings/ytdlp/version'),
+  updateYtdlp: (channel) => request('/settings/ytdlp/update', { method: 'POST', body: JSON.stringify({ channel }) }),
 };

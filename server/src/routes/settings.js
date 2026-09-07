@@ -2,7 +2,8 @@ const express = require('express');
 const fs = require('fs');
 const db = require('../db');
 const { requireAuth } = require('../auth');
-const { COOKIES_FILE } = require('../services/ytdlp');
+const ytdlp = require('../services/ytdlp');
+const { COOKIES_FILE } = ytdlp;
 
 const router = express.Router();
 router.use(requireAuth);
@@ -27,6 +28,26 @@ router.put('/cookies', (req, res) => {
 router.delete('/cookies', (req, res) => {
   if (fs.existsSync(COOKIES_FILE)) fs.unlinkSync(COOKIES_FILE);
   res.json({ ok: true });
+});
+
+router.get('/ytdlp/version', async (req, res) => {
+  try {
+    res.json(await ytdlp.getVersions());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Upgrades yt-dlp via pip. `channel` picks stable (latest release) or nightly (pre-release
+// master builds); see ytdlp.updateYtdlp for how that maps to the pip invocation.
+router.post('/ytdlp/update', async (req, res) => {
+  const channel = req.body && req.body.channel === 'nightly' ? 'nightly' : 'stable';
+  try {
+    await ytdlp.updateYtdlp(channel);
+    res.json({ ok: true, ...(await ytdlp.getVersions()) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.get('/', (req, res) => {

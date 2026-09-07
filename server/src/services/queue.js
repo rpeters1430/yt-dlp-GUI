@@ -29,14 +29,17 @@ function listJobs() {
 function enqueue(url, options = {}) {
   const id = uuidv4();
   db.prepare(`
-    INSERT INTO downloads (id, url, status, format_selector, audio_only, subtitles, watch_id)
-    VALUES (?, ?, 'queued', ?, ?, ?, ?)
+    INSERT INTO downloads (id, url, status, format_selector, audio_only, subtitles, quality, container, sub_langs, watch_id)
+    VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     url,
     options.formatSelector || null,
     options.audioOnly ? 1 : 0,
     options.subtitles ? 1 : 0,
+    options.quality || null,
+    options.container || 'mp4',
+    options.subLangs || null,
     options.watchId || null
   );
   emit(getJob(id));
@@ -87,7 +90,10 @@ async function runJob(job) {
     const result = await ytdlp.download(job.url, {
       audioOnly: !!job.audio_only,
       formatSelector: job.format_selector,
+      quality: job.quality,
+      container: job.container,
       subtitles: !!job.subtitles,
+      subLangs: job.sub_langs,
     }, (progress) => {
       updateJob(job.id, {
         percent: progress.percent,
