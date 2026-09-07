@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload } from 'lucide-react';
 import { api } from '../api.js';
 
 export default function Settings() {
@@ -112,26 +113,46 @@ export default function Settings() {
   }
 
   return (
-    <div>
+    <>
+      <div className="page-header">
+        <div>
+          <h1>Settings</h1>
+          <p>Account, YouTube cookies, and yt-dlp dependencies.</p>
+        </div>
+      </div>
+
       <section className="panel">
-        <h2>Settings</h2>
+        <div className="panel-header">
+          <h2><KeyRound size={16} /> Account</h2>
+        </div>
         <form onSubmit={handleChangePassword} className="settings-form">
-          <label>Change password</label>
-          <input
-            type="password"
-            placeholder="New password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-          />
-          <button type="submit" disabled={!newPassword}>Update password</button>
-          {message && <div className="success-text">{message}</div>}
-          {error && <div className="error-text">{error}</div>}
+          <label className="field-label">
+            New password
+            <input
+              type="password"
+              placeholder="New password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+            />
+          </label>
+          <div>
+            <button type="submit" disabled={!newPassword}>Update password</button>
+          </div>
+          {message && <div className="alert alert-success"><CheckCircle2 size={15} />{message}</div>}
+          {error && <div className="alert alert-error"><AlertCircle size={15} />{error}</div>}
         </form>
       </section>
 
       <section className="panel">
-        <h2>YouTube cookies</h2>
-        <p className="muted">
+        <div className="panel-header">
+          <h2><Cookie size={16} /> YouTube cookies</h2>
+          {cookiesConfigured !== null && (
+            <span className={`tag status-tag ${cookiesConfigured ? 'status-completed' : ''}`}>
+              {cookiesConfigured ? 'Configured' : 'Not configured'}
+            </span>
+          )}
+        </div>
+        <p className="panel-description">
           Needed for age-restricted, members-only, or private videos, and it helps YouTube
           trust this server as a logged-in browser. Export cookies from a browser where
           you're signed into YouTube using an extension like{' '}
@@ -140,16 +161,9 @@ export default function Settings() {
           permissions — never share this content with anyone else, it's equivalent to
           your login session.
         </p>
-        {cookiesConfigured !== null && (
-          <p>
-            Status:{' '}
-            <span className={`tag status-tag ${cookiesConfigured ? 'status-completed' : ''}`}>
-              {cookiesConfigured ? 'Configured' : 'Not configured'}
-            </span>
-          </p>
-        )}
         <form onSubmit={handleSaveCookies} className="settings-form">
           <label className="file-input-label">
+            <Upload size={14} />
             {cookiesFileName || 'Upload cookies.txt…'}
             <input type="file" accept=".txt,text/plain" onChange={handleCookiesFile} hidden />
           </label>
@@ -159,24 +173,26 @@ export default function Settings() {
             value={cookiesText}
             onChange={(e) => setCookiesText(e.target.value)}
           />
-          <div className="options-row">
+          <div className="options-row" style={{ marginTop: 0 }}>
             <button type="submit" disabled={cookiesBusy || !cookiesText.trim()}>
               {cookiesBusy ? 'Saving…' : 'Save cookies'}
             </button>
             {cookiesConfigured && (
-              <button type="button" className="icon-btn" onClick={handleClearCookies}>
+              <button type="button" className="btn-secondary" onClick={handleClearCookies}>
                 Remove saved cookies
               </button>
             )}
           </div>
-          {cookiesMessage && <div className="success-text">{cookiesMessage}</div>}
-          {cookiesError && <div className="error-text">{cookiesError}</div>}
+          {cookiesMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{cookiesMessage}</div>}
+          {cookiesError && <div className="alert alert-error"><AlertCircle size={15} />{cookiesError}</div>}
         </form>
       </section>
 
       <section className="panel">
-        <h2>yt-dlp &amp; dependencies</h2>
-        <p className="muted">
+        <div className="panel-header">
+          <h2><PackageCheck size={16} /> yt-dlp &amp; dependencies</h2>
+        </div>
+        <p className="panel-description">
           Nightly builds get new site fixes sooner but are less tested. Switch channels here,
           then use "Update now" whenever you want to pull the latest version.
         </p>
@@ -186,8 +202,8 @@ export default function Settings() {
           <dt>Node.js</dt><dd>{versions ? versions.node || 'unknown' : 'Loading…'}</dd>
           {versions && versions.deno && (<><dt>Deno</dt><dd>{versions.deno}</dd></>)}
         </dl>
-        <div className="options-row">
-          <label>
+        <div className="options-row" style={{ marginTop: 0 }}>
+          <label className="field-inline">
             Update channel
             <select value={channel} onChange={(e) => handleChannelChange(e.target.value)}>
               <option value="stable">Stable</option>
@@ -198,9 +214,9 @@ export default function Settings() {
             {ytdlpBusy ? 'Updating…' : 'Update now'}
           </button>
         </div>
-        {ytdlpMessage && <div className="success-text">{ytdlpMessage}</div>}
-        {ytdlpError && <div className="error-text">{ytdlpError}</div>}
+        {ytdlpMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{ytdlpMessage}</div>}
+        {ytdlpError && <div className="alert alert-error"><AlertCircle size={15} />{ytdlpError}</div>}
       </section>
-    </div>
+    </>
   );
 }
