@@ -6,6 +6,7 @@ const YTDLP_BIN = process.env.YTDLP_BIN || 'yt-dlp';
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || '/downloads';
 const CONFIG_DIR = process.env.CONFIG_DIR || '/config';
 const COOKIES_FILE = path.join(CONFIG_DIR, 'cookies.txt');
+const YTDLP_CACHE_DIR = path.join(CONFIG_DIR, 'yt-dlp-cache');
 
 // If a cookies.txt (Netscape format) has been saved via Settings, pass it to yt-dlp so
 // age-restricted/members-only/private videos work. Absent by default.
@@ -13,11 +14,19 @@ function cookieArgs() {
   return fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
 }
 
+// yt-dlp's pip package doesn't bundle the EJS challenge-solver script the way official
+// executables do, so YouTube extraction silently falls back to images-only formats unless
+// we explicitly allow it to fetch that script at runtime. --cache-dir persists it (and other
+// yt-dlp caches) across container restarts instead of re-fetching every time.
+function commonArgs() {
+  return ['--remote-components', 'ejs:github', '--cache-dir', YTDLP_CACHE_DIR, ...cookieArgs()];
+}
+
 // Runs `yt-dlp -J <url>` to fetch metadata (title, id, extractor, thumbnail, formats)
 // without downloading anything. Used for the format picker and for watch/history dedup.
 function getInfo(url, { flatPlaylist = false } = {}) {
   return new Promise((resolve, reject) => {
-    const args = ['-J', '--no-warnings', ...cookieArgs()];
+    const args = ['-J', '--no-warnings', ...commonArgs()];
     if (flatPlaylist) args.push('--flat-playlist');
     args.push(url);
 
@@ -57,7 +66,7 @@ function download(url, options, onProgress) {
     const args = [
       '--newline',
       '--no-warnings',
-      ...cookieArgs(),
+      ...commonArgs(),
       '--progress-template', PROGRESS_TEMPLATE,
       '-o', `${DOWNLOAD_DIR}/%(uploader,extractor)s/%(title)s [%(id)s].%(ext)s`,
       '--print', 'after_move:FILEPATH %(filepath)s',
