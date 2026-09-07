@@ -1,0 +1,17 @@
+services:
+  ytdlp-gui:
+    build: .
+    image: ytdlp-gui:latest
+    container_name: ytdlp-gui
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - ADMIN_USER=admin
+      - ADMIN_PASSWORD=changeme
+      - SESSION_SECRET=change-this-to-a-random-string
+      - MAX_CONCURRENT_DOWNLOADS=2
+      - TZ=America/New_York
+    volumes:
+      - ./downloads:/downloads
+      - ./config:/config
