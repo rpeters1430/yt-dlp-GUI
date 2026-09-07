@@ -112,4 +112,8 @@ function removeJob(id) {
   db.prepare('DELETE FROM downloads WHERE id = ?').run(id);
 }
 
-module.exports = { init, enqueue, listJobs, getJob, removeJob };
+function getActiveCount() {
+  return activeCount;
+}
+
+module.exports = { init, enqueue, listJobs, getJob, removeJob, getActiveCount };

@@ -1,12 +1,42 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { spawn } = require('child_process');
+const { pipeline } = require('stream/promises');
+const { Readable } = require('stream');
 
 const YTDLP_BIN = process.env.YTDLP_BIN || 'yt-dlp';
-const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || '/downloads';
-const CONFIG_DIR = process.env.CONFIG_DIR || '/config';
+const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(__dirname, '..', '..', 'downloads');
+const CONFIG_DIR = process.env.CONFIG_DIR || path.join(__dirname, '..', '..', 'config');
 const COOKIES_FILE = path.join(CONFIG_DIR, 'cookies.txt');
 const YTDLP_CACHE_DIR = path.join(CONFIG_DIR, 'yt-dlp-cache');
+const CUSTOM_BIN_DIR = path.join(CONFIG_DIR, 'bin');
+
+// Ensure custom/persisted bin dir is in process.env.PATH if it exists
+if (fs.existsSync(CUSTOM_BIN_DIR)) {
+  const paths = (process.env.PATH || '').split(path.delimiter);
+  if (!paths.includes(CUSTOM_BIN_DIR)) {
+    process.env.PATH = `${CUSTOM_BIN_DIR}${path.delimiter}${process.env.PATH}`;
+  }
+}
+
+function getFfmpegDir() {
+  if (process.env.FFMPEG_DIR) return process.env.FFMPEG_DIR;
+  const binName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  if (fs.existsSync(path.join(CUSTOM_BIN_DIR, binName))) {
+    return CUSTOM_BIN_DIR;
+  }
+  return null;
+}
+
+function getFfmpegBin() {
+  const dir = getFfmpegDir();
+  if (dir) {
+    const binName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+    return path.join(dir, binName);
+  }
+  return 'ffmpeg';
+}
 
 // If a cookies.txt (Netscape format) has been saved via Settings, pass it to yt-dlp so
 // age-restricted/members-only/private videos work. Absent by default.
@@ -14,12 +44,22 @@ function cookieArgs() {
   return fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
 }
 
+function ffmpegArgs() {
+  const dir = getFfmpegDir();
+  return dir ? ['--ffmpeg-location', dir] : [];
+}
+
 // yt-dlp's pip package doesn't bundle the EJS challenge-solver script the way official
 // executables do, so YouTube extraction silently falls back to images-only formats unless
 // we explicitly allow it to fetch that script at runtime. --cache-dir persists it (and other
 // yt-dlp caches) across container restarts instead of re-fetching every time.
 function commonArgs() {
-  return ['--remote-components', 'ejs:github', '--cache-dir', YTDLP_CACHE_DIR, ...cookieArgs()];
+  return [
+    '--remote-components', 'ejs:github',
+    '--cache-dir', YTDLP_CACHE_DIR,
+    ...cookieArgs(),
+    ...ffmpegArgs(),
+  ];
 }
 
 // Runs `yt-dlp -J <url>` to fetch metadata (title, id, extractor, thumbnail, formats)
@@ -148,9 +188,10 @@ function firstLine(output) {
 }
 
 async function getVersions() {
+  const ffmpegBin = getFfmpegBin();
   const [ytdlpOut, ffmpegOut, denoOut] = await Promise.all([
     runCommand(YTDLP_BIN, ['--version']),
-    runCommand('ffmpeg', ['-version']),
+    runCommand(ffmpegBin, ['-version']),
     runCommand('deno', ['--version']),
   ]);
   return {
@@ -183,4 +224,209 @@ function updateYtdlp(channel) {
   });
 }
 
-module.exports = { getInfo, download, getVersions, updateYtdlp, COOKIES_FILE };
+function getFfmpegAssetInfo() {
+  const platform = process.platform;
+  const arch = process.arch;
+
+  if (platform === 'linux') {
+    if (arch === 'x64') {
+      return { filename: 'ffmpeg-master-latest-linux64-gpl.tar.xz' };
+    }
+    if (arch === 'arm64') {
+      return { filename: 'ffmpeg-master-latest-linuxarm64-gpl.tar.xz' };
+    }
+  } else if (platform === 'win32') {
+    if (arch === 'x64') {
+      return { filename: 'ffmpeg-master-latest-win64-gpl.zip' };
+    }
+    if (arch === 'arm64') {
+      return { filename: 'ffmpeg-master-latest-winarm64-gpl.zip' };
+    }
+    if (arch === 'ia32') {
+      return { filename: 'ffmpeg-master-latest-win32-gpl.zip' };
+    }
+  }
+
+  throw new Error(`yt-dlp FFmpeg builds are not available for platform '${platform}' (${arch}).`);
+}
+
+function extractArchive(archivePath, outDir) {
+  return new Promise((resolve, reject) => {
+    const tarProc = spawn('tar', ['-xf', archivePath, '-C', outDir]);
+    let stderr = '';
+    tarProc.stderr.on('data', (d) => (stderr += d));
+    tarProc.on('close', (code) => {
+      if (code === 0) return resolve();
+      // On Windows, fallback to PowerShell Expand-Archive if tar failed on a zip
+      if (process.platform === 'win32' && archivePath.endsWith('.zip')) {
+        const psProc = spawn('powershell.exe', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `Expand-Archive -LiteralPath "${archivePath}" -DestinationPath "${outDir}" -Force`,
+        ]);
+        let psStderr = '';
+        psProc.stderr.on('data', (d) => (psStderr += d));
+        psProc.on('close', (psCode) => {
+          if (psCode === 0) return resolve();
+          reject(new Error(`Extraction failed: ${stderr || psStderr || `code ${psCode}`}`));
+        });
+        psProc.on('error', () => reject(new Error(`Extraction failed: ${stderr}`)));
+      } else {
+        reject(new Error(stderr || `tar exited with code ${code}`));
+      }
+    });
+    tarProc.on('error', (err) => {
+      if (process.platform === 'win32' && archivePath.endsWith('.zip')) {
+        const psProc = spawn('powershell.exe', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `Expand-Archive -LiteralPath "${archivePath}" -DestinationPath "${outDir}" -Force`,
+        ]);
+        let psStderr = '';
+        psProc.stderr.on('data', (d) => (psStderr += d));
+        psProc.on('close', (psCode) => {
+          if (psCode === 0) return resolve();
+          reject(new Error(`Extraction failed: ${err.message}; ${psStderr}`));
+        });
+        psProc.on('error', () => reject(err));
+      } else {
+        reject(err);
+      }
+    });
+  });
+}
+
+function findBinary(dir, targetName) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const found = findBinary(fullPath, targetName);
+      if (found) return found;
+    } else if (entry.isFile() && entry.name.toLowerCase() === targetName.toLowerCase()) {
+      return fullPath;
+    }
+  }
+  return null;
+}
+
+function installBinary(srcPath, destDir, binName) {
+  fs.mkdirSync(destDir, { recursive: true });
+  const destPath = path.join(destDir, binName);
+  const tempDest = path.join(destDir, `${binName}.tmp-${Date.now()}`);
+
+  fs.copyFileSync(srcPath, tempDest);
+  if (process.platform !== 'win32') {
+    try {
+      fs.chmodSync(tempDest, 0o755);
+    } catch {}
+  }
+
+  try {
+    fs.renameSync(tempDest, destPath);
+  } catch (err) {
+    if (process.platform === 'win32') {
+      try {
+        fs.unlinkSync(destPath);
+        fs.renameSync(tempDest, destPath);
+      } catch {
+        fs.copyFileSync(tempDest, destPath);
+        try { fs.unlinkSync(tempDest); } catch {}
+      }
+    } else {
+      throw err;
+    }
+  }
+
+  if (process.platform !== 'win32') {
+    try {
+      fs.chmodSync(destPath, 0o755);
+    } catch {}
+  }
+}
+
+let isUpdatingFfmpeg = false;
+
+async function updateFfmpeg() {
+  if (isUpdatingFfmpeg) {
+    throw new Error('FFmpeg update is already in progress');
+  }
+
+  const { filename } = getFfmpegAssetInfo();
+  const downloadUrl = `https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/${filename}`;
+
+  isUpdatingFfmpeg = true;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-ffmpeg-'));
+  const archivePath = path.join(tempDir, filename);
+  const extractDir = path.join(tempDir, 'extracted');
+
+  try {
+    const res = await fetch(downloadUrl, {
+      headers: { 'User-Agent': 'yt-dlp-gui' },
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to download FFmpeg build (${res.status} ${res.statusText})`);
+    }
+
+    await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(archivePath));
+
+    fs.mkdirSync(extractDir, { recursive: true });
+    await extractArchive(archivePath, extractDir);
+
+    const binExt = process.platform === 'win32' ? '.exe' : '';
+    const ffmpegTarget = `ffmpeg${binExt}`;
+    const ffprobeTarget = `ffprobe${binExt}`;
+
+    const ffmpegSrc = findBinary(extractDir, ffmpegTarget);
+    const ffprobeSrc = findBinary(extractDir, ffprobeTarget);
+
+    if (!ffmpegSrc) {
+      throw new Error(`Extracted archive did not contain ${ffmpegTarget}`);
+    }
+
+    // Always install to persistent CUSTOM_BIN_DIR (/config/bin)
+    installBinary(ffmpegSrc, CUSTOM_BIN_DIR, ffmpegTarget);
+    if (ffprobeSrc) {
+      installBinary(ffprobeSrc, CUSTOM_BIN_DIR, ffprobeTarget);
+    }
+
+    // Also update /usr/local/bin if running on Linux with write permissions (e.g. Docker)
+    if (process.platform === 'linux') {
+      try {
+        fs.accessSync('/usr/local/bin', fs.constants.W_OK);
+        installBinary(ffmpegSrc, '/usr/local/bin', ffmpegTarget);
+        if (ffprobeSrc) {
+          installBinary(ffprobeSrc, '/usr/local/bin', ffprobeTarget);
+        }
+      } catch {
+        // Not writable, persistent custom bin dir in /config/bin is sufficient
+      }
+    }
+
+    // Ensure CUSTOM_BIN_DIR is prepended to process.env.PATH
+    const paths = (process.env.PATH || '').split(path.delimiter);
+    if (!paths.includes(CUSTOM_BIN_DIR)) {
+      process.env.PATH = `${CUSTOM_BIN_DIR}${path.delimiter}${process.env.PATH}`;
+    }
+
+    return await getVersions();
+  } finally {
+    isUpdatingFfmpeg = false;
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+module.exports = {
+  getInfo,
+  download,
+  getVersions,
+  updateYtdlp,
+  updateFfmpeg,
+  getFfmpegDir,
+  getFfmpegBin,
+  COOKIES_FILE,
+};

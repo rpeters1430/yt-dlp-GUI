@@ -3,6 +3,7 @@ const fs = require('fs');
 const db = require('../db');
 const { requireAuth } = require('../auth');
 const ytdlp = require('../services/ytdlp');
+const queue = require('../services/queue');
 const { COOKIES_FILE } = ytdlp;
 
 const router = express.Router();
@@ -45,6 +46,18 @@ router.post('/ytdlp/update', async (req, res) => {
   try {
     await ytdlp.updateYtdlp(channel);
     res.json({ ok: true, ...(await ytdlp.getVersions()) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/ffmpeg/update', async (req, res) => {
+  if (queue.getActiveCount && queue.getActiveCount() > 0) {
+    return res.status(409).json({ error: 'Cannot update FFmpeg while downloads are active. Please wait for them to complete.' });
+  }
+  try {
+    const versions = await ytdlp.updateFfmpeg();
+    res.json({ ok: true, ...versions });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

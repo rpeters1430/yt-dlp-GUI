@@ -20,6 +20,10 @@ export default function Settings() {
   const [ytdlpMessage, setYtdlpMessage] = useState('');
   const [ytdlpError, setYtdlpError] = useState('');
 
+  const [ffmpegBusy, setFfmpegBusy] = useState(false);
+  const [ffmpegMessage, setFfmpegMessage] = useState('');
+  const [ffmpegError, setFfmpegError] = useState('');
+
   function refreshCookiesStatus() {
     api.getCookiesStatus().then((s) => setCookiesConfigured(s.configured)).catch(() => {});
   }
@@ -112,6 +116,21 @@ export default function Settings() {
     }
   }
 
+  async function handleUpdateFfmpeg() {
+    setFfmpegMessage('');
+    setFfmpegError('');
+    setFfmpegBusy(true);
+    try {
+      const result = await api.updateFfmpeg();
+      setVersions(result);
+      setFfmpegMessage(`FFmpeg is now updated (${result.ffmpeg || 'latest'}).`);
+    } catch (err) {
+      setFfmpegError(err.message);
+    } finally {
+      setFfmpegBusy(false);
+    }
+  }
+
   return (
     <>
       <div className="page-header">
@@ -192,30 +211,54 @@ export default function Settings() {
         <div className="panel-header">
           <h2><PackageCheck size={16} /> yt-dlp &amp; dependencies</h2>
         </div>
-        <p className="panel-description">
-          Nightly builds get new site fixes sooner but are less tested. Switch channels here,
-          then use "Update now" whenever you want to pull the latest version.
-        </p>
         <dl className="version-list">
           <dt>yt-dlp</dt><dd>{versions ? versions.ytdlp || 'unknown' : 'Loading…'}</dd>
           <dt>ffmpeg</dt><dd>{versions ? versions.ffmpeg || 'unknown' : 'Loading…'}</dd>
           <dt>Node.js</dt><dd>{versions ? versions.node || 'unknown' : 'Loading…'}</dd>
           {versions && versions.deno && (<><dt>Deno</dt><dd>{versions.deno}</dd></>)}
         </dl>
-        <div className="options-row" style={{ marginTop: 0 }}>
-          <label className="field-inline">
-            Update channel
-            <select value={channel} onChange={(e) => handleChannelChange(e.target.value)}>
-              <option value="stable">Stable</option>
-              <option value="nightly">Nightly</option>
-            </select>
-          </label>
-          <button type="button" onClick={handleUpdateYtdlp} disabled={ytdlpBusy}>
-            {ytdlpBusy ? 'Updating…' : 'Update now'}
-          </button>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '16px' }}>
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+            <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>yt-dlp</h3>
+            <p className="panel-description" style={{ marginBottom: '10px' }}>
+              Nightly builds get new site fixes sooner but are less tested. Switch channels here,
+              then use "Update yt-dlp" to pull the latest version.
+            </p>
+            <div className="options-row" style={{ marginTop: 0 }}>
+              <label className="field-inline">
+                Update channel
+                <select value={channel} onChange={(e) => handleChannelChange(e.target.value)}>
+                  <option value="stable">Stable</option>
+                  <option value="nightly">Nightly</option>
+                </select>
+              </label>
+              <button type="button" onClick={handleUpdateYtdlp} disabled={ytdlpBusy}>
+                {ytdlpBusy ? 'Updating yt-dlp…' : 'Update yt-dlp'}
+              </button>
+            </div>
+            {ytdlpMessage && <div className="alert alert-success" style={{ marginTop: '10px' }}><CheckCircle2 size={15} />{ytdlpMessage}</div>}
+            {ytdlpError && <div className="alert alert-error" style={{ marginTop: '10px' }}><AlertCircle size={15} />{ytdlpError}</div>}
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+            <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>FFmpeg</h3>
+            <p className="panel-description" style={{ marginBottom: '10px' }}>
+              Uses the latest static builds from{' '}
+              <a href="https://github.com/yt-dlp/FFmpeg-Builds" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>
+                yt-dlp/FFmpeg-Builds
+              </a>{' '}
+              with updated codecs and fixes.
+            </p>
+            <div className="options-row" style={{ marginTop: 0 }}>
+              <button type="button" onClick={handleUpdateFfmpeg} disabled={ffmpegBusy}>
+                {ffmpegBusy ? 'Updating FFmpeg…' : 'Update FFmpeg'}
+              </button>
+            </div>
+            {ffmpegMessage && <div className="alert alert-success" style={{ marginTop: '10px' }}><CheckCircle2 size={15} />{ffmpegMessage}</div>}
+            {ffmpegError && <div className="alert alert-error" style={{ marginTop: '10px' }}><AlertCircle size={15} />{ffmpegError}</div>}
+          </div>
         </div>
-        {ytdlpMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{ytdlpMessage}</div>}
-        {ytdlpError && <div className="alert alert-error"><AlertCircle size={15} />{ytdlpError}</div>}
       </section>
     </>
   );

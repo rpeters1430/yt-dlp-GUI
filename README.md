@@ -11,6 +11,7 @@ A self-hosted web app for downloading videos/audio from any site [yt-dlp](https:
 - "Watches" — point it at a playlist or channel URL and it checks every 30 minutes for new videos, auto-downloading them
 - Simple username/password login (single admin account)
 - YouTube cookie support (Settings page) for age-restricted/members-only/private videos
+- Ships with modern static FFmpeg builds from [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds), with one-click in-app updates in Settings
 - Ships with the Deno JS runtime yt-dlp now requires to solve YouTube's JS challenges
 
 ## Quick start (Docker Compose)

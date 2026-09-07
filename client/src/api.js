@@ -38,4 +38,5 @@ export const api = {
 
   getYtdlpVersions: () => request('/settings/ytdlp/version'),
   updateYtdlp: (channel) => request('/settings/ytdlp/update', { method: 'POST', body: JSON.stringify({ channel }) }),
+  updateFfmpeg: () => request('/settings/ffmpeg/update', { method: 'POST' }),
 };
