@@ -342,7 +342,14 @@ function buildDownloadArgs(url, options = {}) {
   }
 
   if (subtitles) {
-    args.push('--write-subs', '--write-auto-subs', '--sub-langs', subLangs || 'en.*', '--embed-subs');
+    // --write-subs is required so yt-dlp actually fetches the subtitle tracks to embed, but by
+    // default yt-dlp keeps that downloaded .srt/.vtt alongside the video once --write-subs is
+    // set (see FFmpegEmbedSubtitlePP's `already_have_subtitle` in yt-dlp's source). We only want
+    // them embedded, not left as separate sidecar files, so force cleanup of the temp files.
+    args.push(
+      '--write-subs', '--write-auto-subs', '--sub-langs', subLangs || 'en.*', '--embed-subs',
+      '--compat-options', 'no-keep-subs',
+    );
   }
 
   // Embed extras directly into the output file instead of leaving separate sidecar files.
