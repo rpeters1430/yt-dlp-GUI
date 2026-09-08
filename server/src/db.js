@@ -116,7 +116,7 @@ ensureColumn('watch_seen_ids', 'created_at', "TEXT DEFAULT (datetime('now'))");
 // columns it expects; sessions are ephemeral, so this just signs everyone out once.
 const sessionsTableInfo = db.prepare("PRAGMA table_info(sessions)").all();
 if (sessionsTableInfo.length > 0 && !sessionsTableInfo.some((c) => c.name === 'expired')) {
-  db.exec('DROP TABLE sessions');
+  db.exec('DROP TABLE IF EXISTS sessions');
 }
 
 // Persists a random session-signing secret across restarts when SESSION_SECRET isn't set
