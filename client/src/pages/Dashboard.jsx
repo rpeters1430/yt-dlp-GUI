@@ -2,68 +2,27 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import {
   ListChecks, CheckCircle2, XCircle, AlertCircle,
-  Music, Captions, Inbox, PartyPopper, Sparkles, SlidersHorizontal, ChevronDown,
+  Inbox, PartyPopper, Sparkles, SlidersHorizontal, ChevronDown,
 } from 'lucide-react';
 import { api } from '../api.js';
 import QueueItem from '../components/QueueItem.jsx';
 import MediaPreviewModal from '../components/MediaPreviewModal.jsx';
-
-const QUALITY_OPTIONS = [
-  { value: '', label: 'Best available' },
-  { value: '2160', label: 'Up to 4K (2160p)' },
-  { value: '1440', label: 'Up to 1440p' },
-  { value: '1080', label: 'Up to 1080p' },
-  { value: '720', label: 'Up to 720p' },
-  { value: '480', label: 'Up to 480p' },
-  { value: '360', label: 'Up to 360p' },
-];
-
-const SUBTITLE_LANG_OPTIONS = [
-  { value: 'en.*', label: 'English' },
-  { value: 'es.*', label: 'Spanish' },
-  { value: 'fr.*', label: 'French' },
-  { value: 'de.*', label: 'German' },
-  { value: 'it.*', label: 'Italian' },
-  { value: 'pt.*', label: 'Portuguese' },
-  { value: 'ja.*', label: 'Japanese' },
-  { value: 'ko.*', label: 'Korean' },
-  { value: 'zh.*', label: 'Chinese' },
-  { value: 'ru.*', label: 'Russian' },
-  { value: 'ar.*', label: 'Arabic' },
-  { value: 'hi.*', label: 'Hindi' },
-  { value: 'all', label: 'All available languages' },
-];
-
-const SPONSORBLOCK_CATEGORIES = [
-  { value: 'sponsor', label: 'Sponsor' },
-  { value: 'selfpromo', label: 'Unpaid/self promotion' },
-  { value: 'interaction', label: 'Interaction reminder' },
-  { value: 'intro', label: 'Intermission/intro' },
-  { value: 'outro', label: 'Endcards/credits' },
-  { value: 'preview', label: 'Preview/recap' },
-  { value: 'music_offtopic', label: 'Non-music section' },
-  { value: 'filler', label: 'Filler tangent' },
-];
+import DownloadOptionsFields, { defaultDownloadOptions } from '../components/DownloadOptionsFields.jsx';
 
 export default function Dashboard() {
   const [urlText, setUrlText] = useState('');
-  const [audioOnly, setAudioOnly] = useState(false);
-  const [quality, setQuality] = useState('');
-  const [container, setContainer] = useState('mp4');
-  const [subtitles, setSubtitles] = useState(false);
-  const [subLangs, setSubLangs] = useState('en.*');
-  const [embedThumbnail, setEmbedThumbnail] = useState(false);
-  const [embedMetadata, setEmbedMetadata] = useState(false);
-  const [embedChapters, setEmbedChapters] = useState(false);
-  const [sponsorblock, setSponsorblock] = useState(false);
-  const [sponsorblockCategories, setSponsorblockCategories] = useState([]);
+  const [options, setOptions] = useState(() => defaultDownloadOptions());
   const [jobs, setJobs] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState('');
+  const [previewUrls, setPreviewUrls] = useState([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const socketRef = useRef(null);
+
+  const {
+    audioOnly, subtitles, embedThumbnail, embedMetadata, embedChapters, sponsorblock,
+  } = options;
 
   useEffect(() => {
     api.listDownloads().then(setJobs).catch(() => {});
@@ -99,7 +58,10 @@ export default function Dashboard() {
     () => urlText.split('\n').map((u) => u.trim()).filter(Boolean),
     [urlText]
   );
-  const isSingleUrl = parsedUrls.length === 1 && /^https?:\/\//i.test(parsedUrls[0]);
+  const validUrls = useMemo(
+    () => parsedUrls.filter((u) => /^https?:\/\//i.test(u)),
+    [parsedUrls]
+  );
 
   const advancedActiveCount = [subtitles, embedThumbnail, embedMetadata, embedChapters, sponsorblock]
     .filter(Boolean).length;
@@ -119,67 +81,48 @@ export default function Dashboard() {
     const text = e.clipboardData?.getData('text') || '';
     const trimmed = text.trim();
     if (/^https?:\/\/[^\s]+$/i.test(trimmed)) {
-      // Single URL pasted - populate and auto-open details popup
+      // Single URL pasted - populate and auto-open the analyze popup
       setUrlText(trimmed);
-      setPreviewUrl(trimmed);
+      setPreviewUrls([trimmed]);
       setPreviewModalOpen(true);
     }
   }
 
-  async function handleSubmit(e) {
+  // Always analyzes every entered URL (one or many) before enqueueing, so the user can review
+  // details and choose shared or per-video options first instead of downloading blind.
+  function handleAnalyze(e) {
     e.preventDefault();
     setError('');
-    const urls = parsedUrls;
-    if (urls.length === 0) return;
+    if (validUrls.length === 0) return;
+    setPreviewUrls(validUrls);
+    setPreviewModalOpen(true);
+  }
 
-    if (urls.length === 1 && /^https?:\/\//i.test(urls[0])) {
-      setPreviewUrl(urls[0]);
-      setPreviewModalOpen(true);
-      return;
-    }
-
+  // Enqueues one or more groups of { urls, options } produced by the analyze modal — a single
+  // group when the same options apply to every video, or one group per video when customized
+  // individually.
+  async function handleConfirmDownload(groups) {
     setSubmitting(true);
     try {
-      await api.enqueue({
-        urls,
-        audioOnly,
-        quality,
-        container,
-        subtitles,
-        subLangs,
-        embedThumbnail,
-        embedMetadata,
-        embedChapters,
-        sponsorblockRemove: sponsorblock ? sponsorblockCategories : [],
-      });
+      for (const group of groups) {
+        const opts = group.options;
+        await api.enqueue({
+          urls: group.urls,
+          audioOnly: opts.audioOnly,
+          quality: opts.quality,
+          container: opts.container,
+          subtitles: opts.subtitles,
+          subLangs: opts.subLangs,
+          embedThumbnail: opts.embedThumbnail,
+          embedMetadata: opts.embedMetadata,
+          embedChapters: opts.embedChapters,
+          sponsorblockRemove: opts.sponsorblock ? opts.sponsorblockCategories : [],
+        });
+      }
       setUrlText('');
-    } catch (err) {
-      setError(err.message);
     } finally {
       setSubmitting(false);
     }
-  }
-
-  async function handleConfirmDownload(payload) {
-    await api.enqueue({
-      urls: [payload.url],
-      audioOnly: payload.audioOnly,
-      quality: payload.quality,
-      container: payload.container,
-      subtitles: payload.subtitles,
-      subLangs: payload.subLangs,
-      embedThumbnail: payload.embedThumbnail,
-      embedMetadata: payload.embedMetadata,
-      embedChapters: payload.embedChapters,
-      sponsorblockRemove: payload.sponsorblockRemove,
-    });
-    setUrlText('');
-  }
-
-  function toggleSponsorblockCategory(value) {
-    setSponsorblockCategories((prev) =>
-      prev.includes(value) ? prev.filter((c) => c !== value) : [...prev, value]
-    );
   }
 
   function handleDeleted(id) {
@@ -190,20 +133,10 @@ export default function Dashboard() {
     <>
       <MediaPreviewModal
         isOpen={previewModalOpen}
-        url={previewUrl}
+        urls={previewUrls}
         onClose={() => setPreviewModalOpen(false)}
         onConfirmDownload={handleConfirmDownload}
-        initialSettings={{
-          audioOnly,
-          quality,
-          container,
-          subtitles,
-          subLangs,
-          embedThumbnail,
-          embedMetadata,
-          embedChapters,
-          sponsorblockCategories: sponsorblock ? sponsorblockCategories : [],
-        }}
+        initialSettings={options}
       />
       <div className="page-header">
         <div>
@@ -240,7 +173,7 @@ export default function Dashboard() {
         <div className="panel-header">
           <h2>Add downloads</h2>
         </div>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleAnalyze}>
           <textarea
             placeholder="Paste one or more URLs, one per line (any site yt-dlp supports)"
             rows={4}
@@ -249,33 +182,6 @@ export default function Dashboard() {
             onPaste={handlePaste}
           />
           <div className="options-row">
-            <div className="segmented">
-              <button type="button" className={!audioOnly ? 'active' : ''} onClick={() => setAudioOnly(false)}>Video</button>
-              <button type="button" className={audioOnly ? 'active' : ''} onClick={() => setAudioOnly(true)}>
-                <Music size={13} /> Audio only
-              </button>
-            </div>
-
-            {!audioOnly && (
-              <label className="field-inline">
-                Quality
-                <select value={quality} onChange={(e) => setQuality(e.target.value)}>
-                  {QUALITY_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {!audioOnly && (
-              <label className="field-inline">
-                Format
-                <select value={container} onChange={(e) => setContainer(e.target.value)}>
-                  <option value="mp4">MP4</option>
-                  <option value="mkv">MKV</option>
-                </select>
-              </label>
-            )}
-
             <button
               type="button"
               className={`btn-ghost btn-sm advanced-toggle${advancedOpen ? ' active' : ''}`}
@@ -283,78 +189,32 @@ export default function Dashboard() {
               aria-expanded={advancedOpen}
             >
               <SlidersHorizontal size={13} />
-              Advanced
+              Default options
               {advancedActiveCount > 0 && <span className="count-badge">{advancedActiveCount}</span>}
               <ChevronDown size={13} className={`advanced-toggle-chevron${advancedOpen ? ' open' : ''}`} />
             </button>
 
             <div className="spacer">
-              {isSingleUrl && (
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => {
-                    setPreviewUrl(parsedUrls[0]);
-                    setPreviewModalOpen(true);
-                  }}
-                  title="Inspect details, resolutions, and playlist info"
-                >
-                  <Sparkles size={14} /> Preview Details
-                </button>
-              )}
-              <button type="submit" disabled={submitting || !urlText.trim()}>
-                {submitting ? 'Adding…' : isSingleUrl ? 'Preview & Download' : 'Download'}
+              <button type="submit" disabled={submitting || validUrls.length === 0}>
+                {submitting
+                  ? 'Adding…'
+                  : (
+                    <>
+                      <Sparkles size={14} />
+                      {validUrls.length > 1 ? `Analyze ${validUrls.length} videos` : 'Analyze & Download'}
+                    </>
+                  )}
               </button>
             </div>
           </div>
 
           {advancedOpen && (
             <div className="advanced-panel">
-              <label className="checkbox-label">
-                <input type="checkbox" checked={subtitles} onChange={(e) => setSubtitles(e.target.checked)} />
-                <Captions size={14} /> Subtitles
-              </label>
-              {subtitles && (
-                <label className="field-inline">
-                  <select value={subLangs} onChange={(e) => setSubLangs(e.target.value)}>
-                    {SUBTITLE_LANG_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              <label className="checkbox-label">
-                <input type="checkbox" checked={embedThumbnail} onChange={(e) => setEmbedThumbnail(e.target.checked)} />
-                Embed thumbnail
-              </label>
-              <label className="checkbox-label">
-                <input type="checkbox" checked={embedMetadata} onChange={(e) => setEmbedMetadata(e.target.checked)} />
-                Embed metadata
-              </label>
-              <label className="checkbox-label">
-                <input type="checkbox" checked={embedChapters} onChange={(e) => setEmbedChapters(e.target.checked)} />
-                Embed chapters
-              </label>
-              <label className="checkbox-label">
-                <input type="checkbox" checked={sponsorblock} onChange={(e) => setSponsorblock(e.target.checked)} />
-                Auto-remove sponsored segments (SponsorBlock)
-              </label>
-
-              {sponsorblock && (
-                <div className="sponsorblock-categories">
-                  {SPONSORBLOCK_CATEGORIES.map((cat) => (
-                    <label key={cat.value} className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={sponsorblockCategories.includes(cat.value)}
-                        onChange={() => toggleSponsorblockCategory(cat.value)}
-                      />
-                      {cat.label}
-                    </label>
-                  ))}
-                </div>
-              )}
+              <p className="muted small" style={{ width: '100%' }}>
+                These are the default options used when you click Analyze — you can still review
+                or change them (and apply them to all videos or individually) before downloading.
+              </p>
+              <DownloadOptionsFields values={options} onChange={setOptions} />
             </div>
           )}
 
