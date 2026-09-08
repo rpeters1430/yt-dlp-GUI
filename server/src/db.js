@@ -108,6 +108,17 @@ ensureColumn('watches', 'last_new_count', 'INTEGER DEFAULT 0');
 ensureColumn('watch_seen_ids', 'title', 'TEXT');
 ensureColumn('watch_seen_ids', 'created_at', "TEXT DEFAULT (datetime('now'))");
 
+// The session store used to be `better-sqlite3-session-store`, which created a `sessions`
+// table with (sid, sess, expire) columns. The current store (connect-sqlite3) expects
+// (sid, expired, sess) and only ever runs `CREATE TABLE IF NOT EXISTS`, so a table left
+// over from the old store keeps its incompatible schema and every session query then
+// fails with "no such column: expired". Drop it so the new store recreates it with the
+// columns it expects; sessions are ephemeral, so this just signs everyone out once.
+const sessionsTableInfo = db.prepare("PRAGMA table_info(sessions)").all();
+if (sessionsTableInfo.length > 0 && !sessionsTableInfo.some((c) => c.name === 'expired')) {
+  db.exec('DROP TABLE sessions');
+}
+
 // Persists a random session-signing secret across restarts when SESSION_SECRET isn't set
 // via env, so cookies aren't signed with a predictable value and existing sessions survive
 // a container restart instead of being invalidated by a freshly-generated one each boot.
