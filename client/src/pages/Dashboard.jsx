@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import {
   ListChecks, CheckCircle2, XCircle, AlertCircle,
-  Music, Captions, Inbox, PartyPopper, Sparkles,
+  Music, Captions, Inbox, PartyPopper, Sparkles, SlidersHorizontal, ChevronDown,
 } from 'lucide-react';
 import { api } from '../api.js';
 import QueueItem from '../components/QueueItem.jsx';
@@ -62,6 +62,7 @@ export default function Dashboard() {
   const [error, setError] = useState('');
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [previewUrl, setPreviewUrl] = useState('');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const socketRef = useRef(null);
 
   useEffect(() => {
@@ -99,6 +100,9 @@ export default function Dashboard() {
     [urlText]
   );
   const isSingleUrl = parsedUrls.length === 1 && /^https?:\/\//i.test(parsedUrls[0]);
+
+  const advancedActiveCount = [subtitles, embedThumbnail, embedMetadata, embedChapters, sponsorblock]
+    .filter(Boolean).length;
 
   const activeJobs = useMemo(
     () => jobs.filter((j) => j.status === 'queued' || j.status === 'downloading'),
@@ -272,36 +276,17 @@ export default function Dashboard() {
               </label>
             )}
 
-            <label className="checkbox-label">
-              <input type="checkbox" checked={subtitles} onChange={(e) => setSubtitles(e.target.checked)} />
-              <Captions size={14} /> Subtitles
-            </label>
-            {subtitles && (
-              <label className="field-inline">
-                <select value={subLangs} onChange={(e) => setSubLangs(e.target.value)}>
-                  {SUBTITLE_LANG_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            <label className="checkbox-label">
-              <input type="checkbox" checked={embedThumbnail} onChange={(e) => setEmbedThumbnail(e.target.checked)} />
-              Embed thumbnail
-            </label>
-            <label className="checkbox-label">
-              <input type="checkbox" checked={embedMetadata} onChange={(e) => setEmbedMetadata(e.target.checked)} />
-              Embed metadata
-            </label>
-            <label className="checkbox-label">
-              <input type="checkbox" checked={embedChapters} onChange={(e) => setEmbedChapters(e.target.checked)} />
-              Embed chapters
-            </label>
-            <label className="checkbox-label">
-              <input type="checkbox" checked={sponsorblock} onChange={(e) => setSponsorblock(e.target.checked)} />
-              Auto-remove sponsored segments (SponsorBlock)
-            </label>
+            <button
+              type="button"
+              className={`btn-ghost btn-sm advanced-toggle${advancedOpen ? ' active' : ''}`}
+              onClick={() => setAdvancedOpen((v) => !v)}
+              aria-expanded={advancedOpen}
+            >
+              <SlidersHorizontal size={13} />
+              Advanced
+              {advancedActiveCount > 0 && <span className="count-badge">{advancedActiveCount}</span>}
+              <ChevronDown size={13} className={`advanced-toggle-chevron${advancedOpen ? ' open' : ''}`} />
+            </button>
 
             <div className="spacer">
               {isSingleUrl && (
@@ -322,21 +307,58 @@ export default function Dashboard() {
               </button>
             </div>
           </div>
-          {sponsorblock && (
-            <div className="sponsorblock-categories" style={{ marginTop: 10 }}>
-              {SPONSORBLOCK_CATEGORIES.map((cat) => (
-                <label key={cat.value} className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={sponsorblockCategories.includes(cat.value)}
-                    onChange={() => toggleSponsorblockCategory(cat.value)}
-                  />
-                  {cat.label}
+
+          {advancedOpen && (
+            <div className="advanced-panel">
+              <label className="checkbox-label">
+                <input type="checkbox" checked={subtitles} onChange={(e) => setSubtitles(e.target.checked)} />
+                <Captions size={14} /> Subtitles
+              </label>
+              {subtitles && (
+                <label className="field-inline">
+                  <select value={subLangs} onChange={(e) => setSubLangs(e.target.value)}>
+                    {SUBTITLE_LANG_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
                 </label>
-              ))}
+              )}
+
+              <label className="checkbox-label">
+                <input type="checkbox" checked={embedThumbnail} onChange={(e) => setEmbedThumbnail(e.target.checked)} />
+                Embed thumbnail
+              </label>
+              <label className="checkbox-label">
+                <input type="checkbox" checked={embedMetadata} onChange={(e) => setEmbedMetadata(e.target.checked)} />
+                Embed metadata
+              </label>
+              <label className="checkbox-label">
+                <input type="checkbox" checked={embedChapters} onChange={(e) => setEmbedChapters(e.target.checked)} />
+                Embed chapters
+              </label>
+              <label className="checkbox-label">
+                <input type="checkbox" checked={sponsorblock} onChange={(e) => setSponsorblock(e.target.checked)} />
+                Auto-remove sponsored segments (SponsorBlock)
+              </label>
+
+              {sponsorblock && (
+                <div className="sponsorblock-categories">
+                  {SPONSORBLOCK_CATEGORIES.map((cat) => (
+                    <label key={cat.value} className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={sponsorblockCategories.includes(cat.value)}
+                        onChange={() => toggleSponsorblockCategory(cat.value)}
+                      />
+                      {cat.label}
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           )}
-          <p className="muted small" style={{ marginTop: 10 }}>
+
+          <p className="muted small form-hint">
             {audioOnly
               ? 'Quality and file type don’t apply to audio-only downloads.'
               : 'If a video isn’t available at the selected quality, the closest quality at or below it is used instead.'}

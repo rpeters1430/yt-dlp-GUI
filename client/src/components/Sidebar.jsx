@@ -2,6 +2,7 @@ import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, History, Radar, Settings, LogOut, Download, Tv } from 'lucide-react';
 import ThemeToggle from './ThemeToggle.jsx';
+import DensityToggle from './DensityToggle.jsx';
 
 const LINKS = [
   { to: '/', end: true, label: 'Dashboard', icon: LayoutDashboard },
@@ -35,7 +36,10 @@ export default function Sidebar({ open, onNavigate, onLogout, username }) {
       </nav>
 
       <div className="sidebar-footer">
-        <ThemeToggle />
+        <div className="sidebar-footer-toggles">
+          <ThemeToggle />
+          <DensityToggle />
+        </div>
         <button type="button" className="btn-ghost btn-sm" onClick={onLogout} title={username ? `Signed in as ${username}` : undefined}>
           <LogOut size={15} />
           Log out

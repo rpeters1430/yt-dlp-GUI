@@ -312,9 +312,21 @@ export default function Watches() {
 
       {/* Watches List */}
       {loading ? (
-        <div className="empty-state">
-          <div className="spinner" />
-          <span className="empty-subtitle">Loading watched sources…</span>
+        <div className="watch-list" aria-busy="true" aria-label="Loading watched sources">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="watch-card watch-card-skeleton">
+              <div className="watch-card-header">
+                <div className="watch-card-main">
+                  <div className="skeleton-block skeleton-avatar" />
+                  <div className="skeleton-title-group">
+                    <div className="skeleton-block skeleton-line" style={{ width: '45%' }} />
+                    <div className="skeleton-block skeleton-line" style={{ width: '70%' }} />
+                  </div>
+                </div>
+              </div>
+              <div className="skeleton-block skeleton-line" style={{ width: '30%' }} />
+            </div>
+          ))}
         </div>
       ) : filteredWatches.length === 0 ? (
         <div className="panel empty-state">

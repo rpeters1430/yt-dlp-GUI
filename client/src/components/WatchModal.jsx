@@ -441,7 +441,7 @@ export default function WatchModal({
                     <span className="muted small" style={{ display: 'block', marginBottom: 10 }}>
                       Control whether you only want new uploads going forward, or want to download recent uploads right now.
                     </span>
-                    <div className="segmented" style={{ width: '100%', display: 'flex' }}>
+                    <div className="segmented backfill-segmented">
                       {[
                         { count: 0, label: 'Seed only (Future uploads)' },
                         { count: 1, label: '1 latest video' },
@@ -451,7 +451,6 @@ export default function WatchModal({
                         <button
                           key={b.count}
                           type="button"
-                          style={{ flex: 1, fontSize: 12, padding: '6px 4px' }}
                           className={backfillCount === b.count ? 'active' : ''}
                           onClick={() => setBackfillCount(b.count)}
                         >

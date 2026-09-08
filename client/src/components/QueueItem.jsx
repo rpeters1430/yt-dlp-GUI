@@ -70,27 +70,26 @@ export default function QueueItem({ job, onDeleted }) {
             </div>
           )}
           {job.status === 'queued' && (
-            <div className="muted small" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            <div className="muted small queue-item-status-line">
               <Clock size={12} />
               <span>{job.stage || 'Waiting in queue…'}</span>
             </div>
           )}
           {job.status === 'completed' && job.filepath && (
-            <div className="muted small" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }} title={job.filepath}>
-              <CheckCircle2 size={13} style={{ color: 'var(--success)' }} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.filepath.split(/[\\/]/).pop()}</span>
+            <div className="muted small queue-item-status-line" title={job.filepath}>
+              <CheckCircle2 size={13} className="success-icon" />
+              <span className="queue-item-filename">{job.filepath.split(/[\\/]/).pop()}</span>
             </div>
           )}
           {job.status === 'failed' && (
-            <div className="alert alert-error" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div className="alert alert-error queue-item-failed-row">
+              <div className="queue-item-failed-msg">
                 <XCircle size={13} />
                 <span>{job.error || 'Download failed'}</span>
               </div>
               <button
                 type="button"
-                className="btn-ghost btn-sm"
-                style={{ padding: '2px 6px', fontSize: '11px', textDecoration: 'underline' }}
+                className="btn-ghost btn-sm btn-link-sm"
                 onClick={() => setShowLogs((prev) => !prev)}
               >
                 {showLogs ? 'Hide details' : 'View error log'}
@@ -122,8 +121,7 @@ export default function QueueItem({ job, onDeleted }) {
             <span>Command &amp; Logs</span>
             <button
               type="button"
-              className="btn-ghost btn-sm"
-              style={{ padding: '2px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: 4 }}
+              className="btn-ghost btn-sm log-copy-btn"
               onClick={handleCopy}
             >
               {copied ? <Check size={12} /> : <Copy size={12} />}
@@ -132,7 +130,7 @@ export default function QueueItem({ job, onDeleted }) {
           </div>
           {job.command_args && (
             <div className="command-box">
-              <div style={{ color: 'var(--text-tertiary)', fontSize: '10px', marginBottom: '3px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <div className="command-box-label">
                 Command &amp; Arguments
               </div>
               <code>{job.command_args}</code>

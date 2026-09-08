@@ -675,7 +675,7 @@ export default function Twitch() {
                   <p><strong>{selectedVod.title}</strong></p>
                   <p className="muted small">Download only a specific segment instead of the entire VOD.</p>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, margin: '14px 0' }}>
+                  <div className="trim-time-grid">
                     <label className="field-label">
                       Start Time (HH:MM:SS)
                       <input
