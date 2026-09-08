@@ -1,7 +1,7 @@
 const path = require('path');
 const express = require('express');
 const session = require('express-session');
-const SqliteStoreFactory = require('better-sqlite3-session-store');
+const SqliteStoreFactory = require('connect-sqlite3');
 const http = require('http');
 const { Server } = require('socket.io');
 
@@ -9,6 +9,64 @@ const db = require('./db');
 const auth = require('./auth');
 const queue = require('./services/queue');
 const scheduler = require('./services/scheduler');
+
+const sqliteSessionDb = {
+  exec(sql, callback) {
+    try {
+      db.exec(sql);
+      if (callback) callback(null);
+    } catch (error) {
+      if (callback) callback(error);
+      else throw error;
+    }
+  },
+  run(sql, params, callback) {
+    try {
+      if (typeof params === 'function') {
+        callback = params;
+        params = [];
+      }
+      const values = Array.isArray(params) ? params : params == null ? [] : [params];
+      const result = db.prepare(sql).run(...values);
+      if (callback) callback(null, result);
+    } catch (error) {
+      if (callback) callback(error);
+      else throw error;
+    }
+  },
+  get(sql, params, callback) {
+    try {
+      if (typeof params === 'function') {
+        callback = params;
+        params = [];
+      }
+      const values = Array.isArray(params) ? params : params == null ? [] : [params];
+      const row = db.prepare(sql).get(...values);
+      if (callback) callback(null, row);
+    } catch (error) {
+      if (callback) callback(error);
+      else throw error;
+    }
+  },
+  all(sql, params, callback) {
+    try {
+      if (typeof params === 'function') {
+        callback = params;
+        params = [];
+      }
+      const values = Array.isArray(params) ? params : params == null ? [] : [params];
+      const isWrite = /^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(sql);
+      const rows = isWrite ? [] : db.prepare(sql).all(...values);
+      if (isWrite) {
+        db.prepare(sql).run(...values);
+      }
+      if (callback) callback(null, rows);
+    } catch (error) {
+      if (callback) callback(error);
+      else throw error;
+    }
+  },
+};
 
 const authRoutes = require('./routes/auth');
 const downloadsRoutes = require('./routes/downloads');
@@ -35,7 +93,7 @@ const cookieSecure = process.env.COOKIE_SECURE === '1' || process.env.COOKIE_SEC
 // Held in its own variable (rather than inline in app.use) so socket.io can run the same
 // middleware over its handshake below and see the same req.session as the HTTP API.
 const sessionMiddleware = session({
-  store: new SqliteStore({ client: db, expired: { clear: true, intervalMs: 900000 } }),
+  store: new SqliteStore({ db: sqliteSessionDb, table: 'sessions', concurrentDb: true }),
   // Falls back to a secret persisted in the DB (generated once, on first boot) rather than
   // a hardcoded string, so an unset SESSION_SECRET env var can no longer let anyone forge
   // a session cookie against a known signing key.
