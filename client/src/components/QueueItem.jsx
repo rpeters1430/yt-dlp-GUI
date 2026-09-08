@@ -54,52 +54,43 @@ export default function QueueItem({ job, onDeleted }) {
             </span>
           </div>
           {job.status === 'downloading' && (
-            <div className="progress-section">
-              <div className="progress-header">
-                <div className="progress-stage">
-                  <span className="pulse-dot" />
-                  <span>{job.stage || 'Downloading…'}</span>
-                </div>
-                <div className="progress-percent-badge">
-                  {(job.percent != null ? Number(job.percent).toFixed(1) : '0.0')}%
-                </div>
-              </div>
+            <div>
               <div className="progress-bar">
                 <div
                   className="progress-fill"
                   style={{ width: `${Math.min(100, Math.max(0, job.percent || 0))}%` }}
-                >
-                  <div className="progress-glow" />
-                </div>
+                />
               </div>
               <div className="progress-meta">
-                {job.speed && <span className="meta-chip speed-chip">⚡ {job.speed}</span>}
-                {job.eta && <span className="meta-chip eta-chip">⏱️ ETA {job.eta}</span>}
+                <span>{Math.round(job.percent || 0)}%</span>
+                {job.stage && <span>· {job.stage}</span>}
+                {job.speed && <span>· {job.speed}</span>}
+                {job.eta && <span>· ETA {job.eta}</span>}
               </div>
             </div>
           )}
           {job.status === 'queued' && (
-            <div className="queue-pending-notice">
+            <div className="muted small" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
               <Clock size={12} />
               <span>{job.stage || 'Waiting in queue…'}</span>
             </div>
           )}
           {job.status === 'completed' && job.filepath && (
-            <div className="completed-filepath" title={job.filepath}>
-              <CheckCircle2 size={13} className="text-success" />
-              <span>{job.filepath.split(/[\\/]/).pop()}</span>
+            <div className="muted small" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }} title={job.filepath}>
+              <CheckCircle2 size={13} style={{ color: 'var(--success)' }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.filepath.split(/[\\/]/).pop()}</span>
             </div>
           )}
           {job.status === 'failed' && (
             <div className="alert alert-error" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <XCircle size={14} />
+                <XCircle size={13} />
                 <span>{job.error || 'Download failed'}</span>
               </div>
               <button
                 type="button"
                 className="btn-ghost btn-sm"
-                style={{ padding: '2px 8px', fontSize: '11.5px', textDecoration: 'underline' }}
+                style={{ padding: '2px 6px', fontSize: '11px', textDecoration: 'underline' }}
                 onClick={() => setShowLogs((prev) => !prev)}
               >
                 {showLogs ? 'Hide details' : 'View error log'}
