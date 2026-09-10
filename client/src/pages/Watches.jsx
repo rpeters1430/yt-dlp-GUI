@@ -21,6 +21,8 @@ import {
   Play,
   Pause,
   Sparkles,
+  Shield,
+  ShieldOff,
 } from 'lucide-react';
 import { api } from '../api.js';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
@@ -97,6 +99,15 @@ export default function Watches() {
       setWatches((prev) => prev.map((w) => (w.id === watch.id ? updated : w)));
     } catch (err) {
       console.error('Failed to toggle watch:', err);
+    }
+  }
+
+  async function handleToggleCleanupExempt(watch) {
+    try {
+      const updated = await api.toggleWatchCleanupExempt(watch.id);
+      setWatches((prev) => prev.map((w) => (w.id === watch.id ? updated : w)));
+    } catch (err) {
+      console.error('Failed to toggle cleanup exemption:', err);
     }
   }
 
@@ -486,6 +497,12 @@ export default function Watches() {
                       &gt; {w.min_duration}s
                     </span>
                   ) : null}
+
+                  {w.cleanup_exempt ? (
+                    <span className="watch-chip filter" title="This watch's downloads are never auto-deleted">
+                      <Shield size={11} /> Auto-delete exempt
+                    </span>
+                  ) : null}
                 </div>
 
                 {/* Error Banner if last check failed */}
@@ -556,6 +573,15 @@ export default function Watches() {
                       title="Edit watch settings"
                     >
                       <Edit3 size={14} />
+                    </button>
+
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => handleToggleCleanupExempt(w)}
+                      title={w.cleanup_exempt ? 'Allow auto-delete for this watch again' : 'Exclude this watch from auto-delete'}
+                    >
+                      {w.cleanup_exempt ? <Shield size={14} /> : <ShieldOff size={14} />}
                     </button>
 
                     <button

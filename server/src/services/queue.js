@@ -1,6 +1,12 @@
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const ytdlp = require('./ytdlp');
+const nfo = require('./nfo');
+
+function isNfoEnabled() {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'nfo_enabled'").get();
+  return !row || row.value !== '0'; // opt-out, defaults to enabled
+}
 
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_DOWNLOADS || '2', 10);
 
@@ -144,6 +150,7 @@ async function runJob(job) {
 
   try {
     let title = null, thumbnail = null, extractor = null, videoId = null;
+    let nfoInfo = null;
     try {
       appendLog(`Resolving metadata...`);
       updateJob(job.id, { stage: 'Fetching metadata…', log: logLines.join('\n') });
@@ -152,6 +159,17 @@ async function runJob(job) {
       thumbnail = info.thumbnail || null;
       extractor = info.extractor || null;
       videoId = info.id || null;
+      nfoInfo = {
+        title,
+        description: info.description || '',
+        uploader: info.uploader || info.channel || null,
+        uploadDate: info.upload_date || null,
+        duration: info.duration || null,
+        tags: info.tags || info.categories || [],
+        thumbnailUrl: thumbnail,
+        videoId,
+        sourceUrl: info.webpage_url || job.url,
+      };
       appendLog(`Metadata: "${title || 'Unknown'}" (${extractor || 'extractor'}) [ID: ${videoId || 'unknown'}]`);
       updateJob(job.id, { title, thumbnail, extractor, video_id: videoId, stage: 'Ready to download', log: logLines.join('\n') });
     } catch (e) {
@@ -204,6 +222,11 @@ async function runJob(job) {
       pid: null,
       log: logLines.join('\n'),
     });
+
+    if (nfoInfo && result.filepath && isNfoEnabled()) {
+      nfo.writeSidecarFiles(result.filepath, nfoInfo)
+        .catch((e) => console.error(`[queue] [job:${job.id}] Failed to write .nfo/poster: ${e.message}`));
+    }
   } catch (err) {
     appendLog(`ERROR: ${err.message}`);
     console.error(`[queue] [job:${job.id}] Failed: ${err.message}`);

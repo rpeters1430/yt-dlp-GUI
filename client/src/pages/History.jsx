@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Search, Film, X, Archive, Terminal, Copy, Check } from 'lucide-react';
+import { Search, Film, X, Archive, Terminal, Copy, Check, Shield, ShieldOff } from 'lucide-react';
 import { api } from '../api.js';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 
-const STATUS_FILTERS = ['all', 'completed', 'downloading', 'queued', 'failed'];
+const STATUS_FILTERS = ['all', 'completed', 'downloading', 'queued', 'failed', 'deleted'];
 
 export default function History() {
   const [jobs, setJobs] = useState([]);
@@ -27,6 +27,11 @@ export default function History() {
     setPendingDelete(null);
     await api.deleteDownload(id);
     setJobs((prev) => prev.filter((j) => j.id !== id));
+  }
+
+  async function handleToggleProtect(job) {
+    const updated = await api.toggleDownloadProtect(job.id, !job.protected);
+    setJobs((prev) => prev.map((j) => (j.id === job.id ? updated : j)));
   }
 
   function handleCopy(job) {
@@ -117,6 +122,15 @@ export default function History() {
                       <td className="muted small">{new Date(job.created_at + 'Z').toLocaleString()}</td>
                       <td>
                         <div style={{ display: 'flex', gap: 6 }}>
+                          {job.watch_id && job.status === 'completed' && (
+                            <button
+                              className="icon-btn"
+                              onClick={() => handleToggleProtect(job)}
+                              title={job.protected ? 'Protected from auto-delete — click to allow it again' : 'Protect this video from auto-delete'}
+                            >
+                              {job.protected ? <Shield size={14} /> : <ShieldOff size={14} />}
+                            </button>
+                          )}
                           <button
                             className={`icon-btn ${expandedId === job.id ? 'active' : ''}`}
                             title="View command & logs"

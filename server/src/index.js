@@ -9,6 +9,7 @@ const db = require('./db');
 const auth = require('./auth');
 const queue = require('./services/queue');
 const scheduler = require('./services/scheduler');
+const cleanup = require('./services/cleanup');
 
 const sqliteSessionDb = {
   exec(sql, callback) {
@@ -73,6 +74,7 @@ const downloadsRoutes = require('./routes/downloads');
 const watchesRoutes = require('./routes/watches');
 const settingsRoutes = require('./routes/settings');
 const twitchRoutes = require('./routes/twitch');
+const cleanupRoutes = require('./routes/cleanup');
 
 const PORT = process.env.PORT || 3000;
 const SqliteStore = SqliteStoreFactory(session);
@@ -120,6 +122,7 @@ app.use('/api/downloads', downloadsRoutes);
 app.use('/api/watches', watchesRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/twitch', twitchRoutes);
+app.use('/api/cleanup', cleanupRoutes);
 
 const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
 app.use(express.static(clientDist));
@@ -147,6 +150,8 @@ io.on('connection', (socket) => {
 queue.init(io);
 scheduler.init(io);
 scheduler.start();
+cleanup.init(io);
+cleanup.start();
 
 server.listen(PORT, () => {
   console.log(`yt-dlp GUI server listening on port ${PORT}`);
