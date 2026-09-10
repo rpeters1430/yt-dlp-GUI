@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload } from 'lucide-react';
+import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
 
 export default function Settings() {
@@ -25,6 +25,17 @@ export default function Settings() {
   const [ffmpegMessage, setFfmpegMessage] = useState('');
   const [ffmpegError, setFfmpegError] = useState('');
 
+  const [cleanupSettings, setCleanupSettings] = useState(null);
+  const [jellyfinApiKeyInput, setJellyfinApiKeyInput] = useState('');
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupMessage, setCleanupMessage] = useState('');
+  const [cleanupError, setCleanupError] = useState('');
+  const [testBusy, setTestBusy] = useState(false);
+  const [testMessage, setTestMessage] = useState('');
+  const [testError, setTestError] = useState('');
+  const [runNowBusy, setRunNowBusy] = useState(false);
+  const [runNowMessage, setRunNowMessage] = useState('');
+
   function refreshCookiesStatus() {
     api.getCookiesStatus().then((s) => setCookiesConfigured(s.configured)).catch(() => {});
   }
@@ -39,6 +50,9 @@ export default function Settings() {
     api.getSettings().then((s) => {
       if (s.ytdlpChannel) setChannel(s.ytdlpChannel);
     }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    api.getCleanupSettings().then(setCleanupSettings).catch(() => {});
   }, []);
 
   async function handleChangePassword(e) {
@@ -138,6 +152,65 @@ export default function Settings() {
       setFfmpegError(err.message);
     } finally {
       setFfmpegBusy(false);
+    }
+  }
+
+  function updateCleanupField(field, value) {
+    setCleanupSettings((prev) => ({ ...prev, [field]: value }));
+  }
+
+  async function handleSaveCleanup(e) {
+    e.preventDefault();
+    setCleanupMessage('');
+    setCleanupError('');
+    setCleanupBusy(true);
+    try {
+      const payload = {
+        ageEnabled: !!cleanupSettings.ageEnabled,
+        ageDays: parseInt(cleanupSettings.ageDays, 10) || 30,
+        jellyfinEnabled: !!cleanupSettings.jellyfinEnabled,
+        jellyfinUrl: cleanupSettings.jellyfinUrl || '',
+        jellyfinUserId: cleanupSettings.jellyfinUserId || '',
+      };
+      if (jellyfinApiKeyInput) payload.jellyfinApiKey = jellyfinApiKeyInput;
+      const updated = await api.updateCleanupSettings(payload);
+      setCleanupSettings(updated);
+      setJellyfinApiKeyInput('');
+      setCleanupMessage('Auto-delete settings saved.');
+    } catch (err) {
+      setCleanupError(err.message);
+    } finally {
+      setCleanupBusy(false);
+    }
+  }
+
+  async function handleTestJellyfin() {
+    setTestMessage('');
+    setTestError('');
+    setTestBusy(true);
+    try {
+      const payload = {};
+      if (cleanupSettings?.jellyfinUrl) payload.url = cleanupSettings.jellyfinUrl;
+      if (jellyfinApiKeyInput) payload.apiKey = jellyfinApiKeyInput;
+      const result = await api.testJellyfinConnection(payload);
+      setTestMessage(`Connected to ${result.serverName}${result.version ? ` (v${result.version})` : ''}.`);
+    } catch (err) {
+      setTestError(err.message);
+    } finally {
+      setTestBusy(false);
+    }
+  }
+
+  async function handleRunCleanupNow() {
+    setRunNowMessage('');
+    setRunNowBusy(true);
+    try {
+      const result = await api.runCleanupNow();
+      setRunNowMessage(`Checked ${result.checked} video(s), deleted ${result.deleted}.`);
+    } catch (err) {
+      setRunNowMessage(err.message);
+    } finally {
+      setRunNowBusy(false);
     }
   }
 
@@ -283,6 +356,95 @@ export default function Settings() {
             {ffmpegError && <div className="alert alert-error" style={{ marginTop: '10px' }}><AlertCircle size={15} />{ffmpegError}</div>}
           </div>
         </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2><Trash2 size={16} /> Auto-delete watched downloads</h2>
+        </div>
+        <p className="panel-description">
+          Applies only to videos downloaded automatically by a Watch (manual downloads are
+          never touched). Runs once a night. Both rules below can be turned on at the same
+          time — a video is deleted as soon as either one matches.
+        </p>
+        {!cleanupSettings ? (
+          <div className="empty-state"><div className="spinner" /></div>
+        ) : (
+          <form onSubmit={handleSaveCleanup} className="settings-form">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={!!cleanupSettings.ageEnabled}
+                onChange={(e) => updateCleanupField('ageEnabled', e.target.checked)}
+              />
+              <span>Delete after</span>
+              <input
+                type="number"
+                min="1"
+                style={{ width: '70px' }}
+                value={cleanupSettings.ageDays}
+                onChange={(e) => updateCleanupField('ageDays', e.target.value)}
+                disabled={!cleanupSettings.ageEnabled}
+              />
+              <span>days</span>
+            </label>
+
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={!!cleanupSettings.jellyfinEnabled}
+                onChange={(e) => updateCleanupField('jellyfinEnabled', e.target.checked)}
+              />
+              Delete once watched in Jellyfin
+            </label>
+
+            <label className="field-label">
+              Jellyfin server URL
+              <input
+                type="text"
+                placeholder="http://jellyfin.local:8096"
+                value={cleanupSettings.jellyfinUrl || ''}
+                onChange={(e) => updateCleanupField('jellyfinUrl', e.target.value)}
+              />
+            </label>
+            <label className="field-label">
+              Jellyfin API key
+              <input
+                type="password"
+                placeholder={cleanupSettings.jellyfinApiKeyConfigured ? '••••••••  (saved — enter a new key to replace)' : 'Paste an API key from Jellyfin Dashboard → API Keys'}
+                value={jellyfinApiKeyInput}
+                onChange={(e) => setJellyfinApiKeyInput(e.target.value)}
+                autoComplete="off"
+              />
+            </label>
+            <label className="field-label">
+              Jellyfin user (optional)
+              <input
+                type="text"
+                placeholder="Leave blank to count a video as watched if any user has watched it"
+                value={cleanupSettings.jellyfinUserId || ''}
+                onChange={(e) => updateCleanupField('jellyfinUserId', e.target.value)}
+              />
+            </label>
+
+            <div className="options-row" style={{ marginTop: 0 }}>
+              <button type="submit" disabled={cleanupBusy}>
+                {cleanupBusy ? 'Saving…' : 'Save auto-delete settings'}
+              </button>
+              <button type="button" className="btn-secondary" onClick={handleTestJellyfin} disabled={testBusy}>
+                {testBusy ? 'Testing…' : 'Test Jellyfin connection'}
+              </button>
+              <button type="button" className="btn-secondary" onClick={handleRunCleanupNow} disabled={runNowBusy}>
+                {runNowBusy ? 'Running…' : 'Run cleanup now'}
+              </button>
+            </div>
+            {cleanupMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{cleanupMessage}</div>}
+            {cleanupError && <div className="alert alert-error"><AlertCircle size={15} />{cleanupError}</div>}
+            {testMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{testMessage}</div>}
+            {testError && <div className="alert alert-error"><AlertCircle size={15} />{testError}</div>}
+            {runNowMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{runNowMessage}</div>}
+          </form>
+        )}
       </section>
     </>
   );

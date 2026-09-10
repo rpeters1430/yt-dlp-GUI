@@ -9,6 +9,7 @@ A self-hosted web app for downloading videos/audio from any site [yt-dlp](https:
 - Audio-only (MP3) and subtitle download options, plus embedded thumbnail/metadata/chapters and SponsorBlock auto-remove
 - Download history with thumbnails, file paths, and the exact yt-dlp command/log per job
 - "Watches" — point it at a playlist or channel URL and it checks every 30 minutes for new videos, auto-downloading them, with failures surfaced in the UI instead of only in server logs
+- Auto-delete for watch-downloaded videos (Settings page) — delete after N days, delete once watched in Jellyfin (via URL + API key), or both at once; runs nightly, with a "run now" button for testing
 - **Twitch hub** — record a live channel (including auto-record when it goes live), browse and download a channel's VODs, trim a VOD/clip to a time range, and track active recordings in real time
 - Simple username/password login (single admin account), with rate-limited login attempts and session invalidation on password change
 - Cookie support (Settings page) for any site — YouTube, Twitch, or others — for age-restricted/members-only/private/subscriber-only content
@@ -159,3 +160,4 @@ You'll also need `yt-dlp`, `ffmpeg`, and `deno` installed locally and on your `P
 - **Backend**: Node.js + Express, `better-sqlite3` for storage, `socket.io` for live progress, `node-cron` for the watch scheduler. yt-dlp is invoked via `child_process.spawn`, not a library binding, so any yt-dlp version/site support works without code changes.
 - **Frontend**: React (Vite), built and served as static files by the Express server — one container, one port.
 - **Watches**: the first check on a new watch only records existing videos (no bulk backfill); subsequent checks auto-queue anything new.
+- **Auto-delete**: runs nightly at 03:00 server time, evaluating only watch-downloaded videos. The Jellyfin-watched check matches by filename (not full path), since this app's download folder and Jellyfin's library mount may differ; it counts a video as watched if any Jellyfin user has marked it played, unless a specific user ID is set in Settings.

@@ -724,6 +724,7 @@ button.theme-toggle-switch.active {
 .status-tag.status-failed { color: var(--danger); border-color: transparent; background: var(--danger-soft); }
 .status-tag.status-downloading { color: var(--accent); border-color: transparent; background: var(--accent-soft); }
 .status-tag.status-queued { color: var(--warning); border-color: transparent; background: var(--warning-soft); }
+.status-tag.status-deleted { color: var(--text-tertiary); border-color: transparent; background: var(--surface-hover); }
 
 .progress-bar {
   position: relative;

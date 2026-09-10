@@ -3,7 +3,7 @@ import { Search, Film, X, Archive, Terminal, Copy, Check } from 'lucide-react';
 import { api } from '../api.js';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 
-const STATUS_FILTERS = ['all', 'completed', 'downloading', 'queued', 'failed'];
+const STATUS_FILTERS = ['all', 'completed', 'downloading', 'queued', 'failed', 'deleted'];
 
 export default function History() {
   const [jobs, setJobs] = useState([]);

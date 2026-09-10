@@ -57,6 +57,12 @@ export const api = {
   updateYtdlp: (channel) => request('/settings/ytdlp/update', { method: 'POST', body: JSON.stringify({ channel }) }),
   updateFfmpeg: () => request('/settings/ffmpeg/update', { method: 'POST' }),
 
+  // Auto-delete / Jellyfin cleanup
+  getCleanupSettings: () => request('/cleanup/settings'),
+  updateCleanupSettings: (payload) => request('/cleanup/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  testJellyfinConnection: (payload) => request('/cleanup/test-jellyfin', { method: 'POST', body: JSON.stringify(payload || {}) }),
+  runCleanupNow: () => request('/cleanup/run', { method: 'POST' }),
+
   // Twitch
   getTwitchChannel: (channel) => request(`/twitch/channel/${encodeURIComponent(channel)}`),
   getTwitchVods: (channel) => request(`/twitch/vods/${encodeURIComponent(channel)}`),
