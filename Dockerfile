@@ -7,7 +7,7 @@ COPY client/ ./
 RUN npm run build
 
 # --- Final image ---
-FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+FROM node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553
 
 # python3-pip is kept in the final image (not purged after install) so the Settings page's
 # "Update yt-dlp" action can run `pip3 install -U [--pre] yt-dlp` at runtime.
