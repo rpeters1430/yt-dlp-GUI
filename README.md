@@ -9,7 +9,8 @@ A self-hosted web app for downloading videos/audio from any site [yt-dlp](https:
 - Audio-only (MP3) and subtitle download options, plus embedded thumbnail/metadata/chapters and SponsorBlock auto-remove
 - Download history with thumbnails, file paths, and the exact yt-dlp command/log per job
 - "Watches" — point it at a playlist or channel URL and it checks every 30 minutes for new videos, auto-downloading them, with failures surfaced in the UI instead of only in server logs
-- Auto-delete for watch-downloaded videos (Settings page) — delete after N days, delete once watched in Jellyfin (via URL + API key), or both at once; runs nightly, with a "run now" button for testing
+- Auto-delete for watch-downloaded videos (Settings page) — delete after N days, delete once watched in Jellyfin (via URL + API key), or both at once; runs nightly, with a dry-run preview, a "run now" button, and safety guards (per-video protect, per-watch exemption, "always keep newest N")
+- Writes a Kodi/Jellyfin/Emby-compatible `.nfo` + poster image next to every download, so title/description/artwork scrape reliably (toggle in Settings)
 - **Twitch hub** — record a live channel (including auto-record when it goes live), browse and download a channel's VODs, trim a VOD/clip to a time range, and track active recordings in real time
 - Simple username/password login (single admin account), with rate-limited login attempts and session invalidation on password change
 - Cookie support (Settings page) for any site — YouTube, Twitch, or others — for age-restricted/members-only/private/subscriber-only content

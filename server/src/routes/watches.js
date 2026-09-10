@@ -105,6 +105,7 @@ router.post('/', (req, res) => {
     thumbnail,
     channelName,
     backfillCount,
+    cleanupExempt,
   } = req.body || {};
 
   if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
@@ -134,13 +135,13 @@ router.post('/', (req, res) => {
       quality, container, subtitles, sub_langs, embed_thumbnail,
       embed_metadata, embed_chapters, sponsorblock, sponsorblock_categories,
       match_title, reject_title, min_duration, max_duration,
-      download_limit, max_scan_entries, thumbnail, channel_name, enabled
+      download_limit, max_scan_entries, thumbnail, channel_name, cleanup_exempt, enabled
     ) VALUES (
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?, ?, ?, ?,
-      ?, ?, ?, ?, 1
+      ?, ?, ?, ?, ?, 1
     )
   `).run(
     url,
@@ -164,7 +165,8 @@ router.post('/', (req, res) => {
     dlLimit,
     scanDepth,
     thumbnail || null,
-    channelName || null
+    channelName || null,
+    cleanupExempt ? 1 : 0
   );
 
   const watch = db.prepare(`
@@ -207,6 +209,7 @@ router.put('/:id', (req, res) => {
     downloadLimit,
     maxScanEntries,
     enabled,
+    cleanupExempt,
   } = req.body || {};
 
   if (formatSelector && (typeof formatSelector !== 'string' || !FORMAT_SELECTOR_RE.test(formatSelector))) {
@@ -228,6 +231,7 @@ router.put('/:id', (req, res) => {
   const sponsorCats = sponsorblockCategories !== undefined
     ? (Array.isArray(sponsorblockCategories) ? sponsorblockCategories.join(',') : (sponsorblockCategories || null))
     : watch.sponsorblock_categories;
+  const isCleanupExempt = cleanupExempt !== undefined ? (cleanupExempt ? 1 : 0) : watch.cleanup_exempt;
 
   db.prepare(`
     UPDATE watches SET
@@ -250,7 +254,8 @@ router.put('/:id', (req, res) => {
       max_duration = ?,
       download_limit = ?,
       max_scan_entries = ?,
-      enabled = ?
+      enabled = ?,
+      cleanup_exempt = ?
     WHERE id = ?
   `).run(
     name !== undefined ? (name || null) : watch.name,
@@ -273,6 +278,7 @@ router.put('/:id', (req, res) => {
     dlLimit,
     scanDepth,
     isEnabled,
+    isCleanupExempt,
     watch.id
   );
 
@@ -293,6 +299,24 @@ router.patch('/:id/toggle', (req, res) => {
 
   const nextEnabled = watch.enabled ? 0 : 1;
   db.prepare('UPDATE watches SET enabled = ? WHERE id = ?').run(nextEnabled, watch.id);
+
+  const updated = db.prepare(`
+    SELECT w.*,
+      (SELECT COUNT(*) FROM watch_seen_ids WHERE watch_id = w.id) AS seen_count,
+      (SELECT COUNT(*) FROM downloads WHERE watch_id = w.id) AS download_count
+    FROM watches w WHERE w.id = ?
+  `).get(watch.id);
+
+  res.json(updated);
+});
+
+// Toggle whether this watch's downloads are exempt from the nightly auto-delete job
+router.patch('/:id/toggle-cleanup-exempt', (req, res) => {
+  const watch = db.prepare('SELECT * FROM watches WHERE id = ?').get(req.params.id);
+  if (!watch) return res.status(404).json({ error: 'Watch not found' });
+
+  const nextExempt = watch.cleanup_exempt ? 0 : 1;
+  db.prepare('UPDATE watches SET cleanup_exempt = ? WHERE id = ?').run(nextExempt, watch.id);
 
   const updated = db.prepare(`
     SELECT w.*,

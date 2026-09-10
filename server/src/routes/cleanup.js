@@ -25,13 +25,14 @@ router.get('/settings', (req, res) => {
     jellyfinUrl: config.jellyfinUrl,
     jellyfinUserId: config.jellyfinUserId,
     jellyfinApiKeyConfigured: !!config.jellyfinApiKey,
+    keepRecentPerWatch: config.keepRecentPerWatch,
   });
 });
 
 // jellyfinApiKey is only written when present in the body at all, so leaving it blank on
 // subsequent saves doesn't wipe out a previously configured key.
 router.put('/settings', (req, res) => {
-  const { ageEnabled, ageDays, jellyfinEnabled, jellyfinUrl, jellyfinUserId, jellyfinApiKey } = req.body || {};
+  const { ageEnabled, ageDays, jellyfinEnabled, jellyfinUrl, jellyfinUserId, jellyfinApiKey, keepRecentPerWatch } = req.body || {};
 
   if (ageEnabled !== undefined) setSetting('cleanup_age_enabled', ageEnabled ? '1' : '0');
   if (ageDays !== undefined) {
@@ -54,6 +55,13 @@ router.put('/settings', (req, res) => {
     if (typeof jellyfinApiKey !== 'string') return res.status(400).json({ error: 'jellyfinApiKey must be a string' });
     setSetting('jellyfin_api_key', jellyfinApiKey.trim());
   }
+  if (keepRecentPerWatch !== undefined) {
+    const keep = parseInt(keepRecentPerWatch, 10);
+    if (!Number.isFinite(keep) || keep < 0) {
+      return res.status(400).json({ error: 'keepRecentPerWatch must be zero or a positive number' });
+    }
+    setSetting('cleanup_keep_recent', keep);
+  }
 
   const config = cleanup.getCleanupConfig();
   res.json({
@@ -63,6 +71,7 @@ router.put('/settings', (req, res) => {
     jellyfinUrl: config.jellyfinUrl,
     jellyfinUserId: config.jellyfinUserId,
     jellyfinApiKeyConfigured: !!config.jellyfinApiKey,
+    keepRecentPerWatch: config.keepRecentPerWatch,
   });
 });
 
@@ -77,6 +86,17 @@ router.post('/test-jellyfin', async (req, res) => {
     res.json({ ok: true, ...result });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// Dry-run: shows exactly what the nightly job would delete and what it would protect,
+// without touching any file. Always safe to call.
+router.post('/preview', async (req, res) => {
+  try {
+    const plan = await cleanup.computeCleanupPlan();
+    res.json(plan);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

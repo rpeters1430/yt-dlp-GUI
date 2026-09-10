@@ -78,7 +78,7 @@ router.get('/', (req, res) => {
 // allow-list keeps it from becoming an arbitrary authenticated-write-to-any-key endpoint,
 // since the settings table also stores the Twitch client id and the session-signing secret
 // under keys of its own.
-const ALLOWED_SETTINGS_KEYS = new Set(['ytdlpChannel']);
+const ALLOWED_SETTINGS_KEYS = new Set(['ytdlpChannel', 'nfo_enabled']);
 
 router.put('/', (req, res) => {
   const entries = Object.entries(req.body || {});

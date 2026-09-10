@@ -34,12 +34,14 @@ export const api = {
   enqueue: (payload) => request('/downloads', { method: 'POST', body: JSON.stringify(payload) }),
   listDownloads: () => request('/downloads'),
   deleteDownload: (id) => request(`/downloads/${id}`, { method: 'DELETE' }),
+  toggleDownloadProtect: (id, protectedFlag) => request(`/downloads/${id}/protect`, { method: 'PATCH', body: JSON.stringify({ protected: protectedFlag }) }),
 
   listWatches: () => request('/watches'),
   inspectWatch: (url) => request('/watches/inspect', { method: 'POST', body: JSON.stringify({ url }) }),
   addWatch: (payload) => request('/watches', { method: 'POST', body: JSON.stringify(payload) }),
   updateWatch: (id, payload) => request(`/watches/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   toggleWatch: (id) => request(`/watches/${id}/toggle`, { method: 'PATCH' }),
+  toggleWatchCleanupExempt: (id) => request(`/watches/${id}/toggle-cleanup-exempt`, { method: 'PATCH' }),
   deleteWatch: (id) => request(`/watches/${id}`, { method: 'DELETE' }),
   checkWatch: (id) => request(`/watches/${id}/check`, { method: 'POST' }),
   checkAllWatches: () => request('/watches/check-all', { method: 'POST' }),
@@ -61,6 +63,7 @@ export const api = {
   getCleanupSettings: () => request('/cleanup/settings'),
   updateCleanupSettings: (payload) => request('/cleanup/settings', { method: 'PUT', body: JSON.stringify(payload) }),
   testJellyfinConnection: (payload) => request('/cleanup/test-jellyfin', { method: 'POST', body: JSON.stringify(payload || {}) }),
+  previewCleanup: () => request('/cleanup/preview', { method: 'POST' }),
   runCleanupNow: () => request('/cleanup/run', { method: 'POST' }),
 
   // Twitch

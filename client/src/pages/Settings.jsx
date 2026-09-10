@@ -35,6 +35,13 @@ export default function Settings() {
   const [testError, setTestError] = useState('');
   const [runNowBusy, setRunNowBusy] = useState(false);
   const [runNowMessage, setRunNowMessage] = useState('');
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewResult, setPreviewResult] = useState(null);
+  const [previewError, setPreviewError] = useState('');
+
+  const [nfoEnabled, setNfoEnabled] = useState(true);
+  const [nfoBusy, setNfoBusy] = useState(false);
+  const [nfoMessage, setNfoMessage] = useState('');
 
   function refreshCookiesStatus() {
     api.getCookiesStatus().then((s) => setCookiesConfigured(s.configured)).catch(() => {});
@@ -49,6 +56,7 @@ export default function Settings() {
   useEffect(() => {
     api.getSettings().then((s) => {
       if (s.ytdlpChannel) setChannel(s.ytdlpChannel);
+      setNfoEnabled(s.nfo_enabled !== '0');
     }).catch(() => {});
   }, []);
   useEffect(() => {
@@ -206,11 +214,39 @@ export default function Settings() {
     setRunNowBusy(true);
     try {
       const result = await api.runCleanupNow();
-      setRunNowMessage(`Checked ${result.checked} video(s), deleted ${result.deleted}.`);
+      setRunNowMessage(`Checked ${result.checked} video(s), deleted ${result.deleted}, kept ${result.kept || 0} protected.`);
     } catch (err) {
       setRunNowMessage(err.message);
     } finally {
       setRunNowBusy(false);
+    }
+  }
+
+  async function handlePreviewCleanup() {
+    setPreviewError('');
+    setPreviewBusy(true);
+    try {
+      const result = await api.previewCleanup();
+      setPreviewResult(result);
+    } catch (err) {
+      setPreviewError(err.message);
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
+
+  async function handleToggleNfo(checked) {
+    setNfoEnabled(checked);
+    setNfoMessage('');
+    setNfoBusy(true);
+    try {
+      await api.updateSettings({ nfo_enabled: checked ? '1' : '0' });
+      setNfoMessage(checked ? 'Enabled — new downloads will get a .nfo + poster.' : 'Disabled — new downloads will skip .nfo/poster generation.');
+    } catch (err) {
+      setNfoMessage(err.message);
+      setNfoEnabled(!checked);
+    } finally {
+      setNfoBusy(false);
     }
   }
 
@@ -427,12 +463,35 @@ export default function Settings() {
               />
             </label>
 
+            <label className="field-label">
+              Always keep newest videos per watch
+              <input
+                type="number"
+                min="0"
+                style={{ width: '90px' }}
+                value={cleanupSettings.keepRecentPerWatch}
+                onChange={(e) => updateCleanupField('keepRecentPerWatch', e.target.value)}
+              />
+              <span className="muted small">
+                A safety guard — even if a video matches a rule above, the N most recent videos
+                per watch are never deleted. 0 disables this guard.
+              </span>
+            </label>
+
+            <p className="panel-description" style={{ margin: 0 }}>
+              You can also protect an individual video from a download's list, or exclude a
+              whole watch from auto-delete on its Edit → Safety &amp; Limits tab.
+            </p>
+
             <div className="options-row" style={{ marginTop: 0 }}>
               <button type="submit" disabled={cleanupBusy}>
                 {cleanupBusy ? 'Saving…' : 'Save auto-delete settings'}
               </button>
               <button type="button" className="btn-secondary" onClick={handleTestJellyfin} disabled={testBusy}>
                 {testBusy ? 'Testing…' : 'Test Jellyfin connection'}
+              </button>
+              <button type="button" className="btn-secondary" onClick={handlePreviewCleanup} disabled={previewBusy}>
+                {previewBusy ? 'Checking…' : 'Preview (dry run)'}
               </button>
               <button type="button" className="btn-secondary" onClick={handleRunCleanupNow} disabled={runNowBusy}>
                 {runNowBusy ? 'Running…' : 'Run cleanup now'}
@@ -443,8 +502,73 @@ export default function Settings() {
             {testMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{testMessage}</div>}
             {testError && <div className="alert alert-error"><AlertCircle size={15} />{testError}</div>}
             {runNowMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{runNowMessage}</div>}
+            {previewError && <div className="alert alert-error"><AlertCircle size={15} />{previewError}</div>}
+
+            {previewResult && (
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {previewResult.jellyfinError && (
+                  <div className="alert alert-warning">
+                    <AlertCircle size={14} />
+                    <span>Jellyfin check failed for this preview: {previewResult.jellyfinError}</span>
+                  </div>
+                )}
+                <div>
+                  <strong style={{ fontSize: 13 }}>Would delete ({previewResult.toDelete.length})</strong>
+                  {previewResult.toDelete.length === 0 ? (
+                    <p className="muted small" style={{ margin: '4px 0 0' }}>Nothing matches the current rules right now.</p>
+                  ) : (
+                    <ul className="cleanup-preview-list">
+                      {previewResult.toDelete.map((item) => (
+                        <li key={item.id}>
+                          <span className="cleanup-preview-title">{item.title}</span>
+                          <span className="muted small">{item.matchedReasons.join(', ')}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <strong style={{ fontSize: 13 }}>Protected ({previewResult.toKeep.length})</strong>
+                  {previewResult.toKeep.length === 0 ? (
+                    <p className="muted small" style={{ margin: '4px 0 0' }}>Nothing is currently shielded from a matching rule.</p>
+                  ) : (
+                    <ul className="cleanup-preview-list">
+                      {previewResult.toKeep.map((item) => (
+                        <li key={item.id}>
+                          <span className="cleanup-preview-title">{item.title}</span>
+                          <span className="muted small">{item.matchedReasons.join(', ')} — {item.protectedReason}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            )}
           </form>
         )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2><PackageCheck size={16} /> Media server metadata (.nfo)</h2>
+        </div>
+        <p className="panel-description">
+          Writes a Kodi/Jellyfin/Emby-compatible <code>.nfo</code> file and a matching poster
+          image next to every new download, so title, description, and artwork get scraped
+          reliably instead of depending on each media server's support for reading metadata
+          embedded inside the video file itself. Only affects downloads made after this is
+          turned on.
+        </p>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={nfoEnabled}
+            onChange={(e) => handleToggleNfo(e.target.checked)}
+            disabled={nfoBusy}
+          />
+          Write .nfo + poster files for new downloads
+        </label>
+        {nfoMessage && <div className="alert alert-success" style={{ marginTop: 10 }}><CheckCircle2 size={15} />{nfoMessage}</div>}
       </section>
     </>
   );
