@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Clock, Loader2, CheckCircle2, XCircle, Film, X, Terminal, Copy, Check } from 'lucide-react';
+import { Clock, Loader2, CheckCircle2, XCircle, Film, X, Terminal, Copy, Check, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
 import ConfirmDialog from './ConfirmDialog.jsx';
 
@@ -8,6 +8,7 @@ const STATUS_META = {
   downloading: { label: 'Downloading', icon: Loader2 },
   completed: { label: 'Completed', icon: CheckCircle2 },
   failed: { label: 'Failed', icon: XCircle },
+  deleted: { label: 'Auto-deleted', icon: Trash2 },
 };
 
 export default function QueueItem({ job, onDeleted }) {
@@ -79,6 +80,12 @@ export default function QueueItem({ job, onDeleted }) {
             <div className="muted small queue-item-status-line" title={job.filepath}>
               <CheckCircle2 size={13} className="success-icon" />
               <span className="queue-item-filename">{job.filepath.split(/[\\/]/).pop()}</span>
+            </div>
+          )}
+          {job.status === 'deleted' && (
+            <div className="muted small queue-item-status-line">
+              <Trash2 size={12} />
+              <span>File removed by auto-delete</span>
             </div>
           )}
           {job.status === 'failed' && (

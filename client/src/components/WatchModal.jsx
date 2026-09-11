@@ -98,6 +98,7 @@ export default function WatchModal({
   // Limits
   const [downloadLimit, setDownloadLimit] = useState(5);
   const [maxScanEntries, setMaxScanEntries] = useState(30);
+  const [cleanupExempt, setCleanupExempt] = useState(false);
 
   // Inspect state
   const [inspecting, setInspecting] = useState(false);
@@ -139,6 +140,7 @@ export default function WatchModal({
       setMaxDuration(watch.max_duration ? String(watch.max_duration) : '');
       setDownloadLimit(watch.download_limit || 5);
       setMaxScanEntries(watch.max_scan_entries || 30);
+      setCleanupExempt(!!watch.cleanup_exempt);
       setInspectData(null);
     } else {
       setUrl('');
@@ -162,6 +164,7 @@ export default function WatchModal({
       setMaxDuration('');
       setDownloadLimit(5);
       setMaxScanEntries(30);
+      setCleanupExempt(false);
       setInspectData(null);
     }
   }, [open, watch]);
@@ -229,6 +232,7 @@ export default function WatchModal({
       maxDuration: maxDuration ? parseInt(maxDuration, 10) : null,
       downloadLimit: Number(downloadLimit) || 5,
       maxScanEntries: Number(maxScanEntries) || 30,
+      cleanupExempt: !!cleanupExempt,
       thumbnail: inspectData?.thumbnail || watch?.thumbnail || null,
       channelName: inspectData?.channelName || watch?.channel_name || null,
       backfillCount: !isEdit ? Number(backfillCount) || 0 : undefined,
@@ -729,6 +733,21 @@ export default function WatchModal({
                       How many recent uploads to check per tick (Default: 30).
                     </span>
                   </div>
+                </div>
+
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={cleanupExempt}
+                      onChange={(e) => setCleanupExempt(e.target.checked)}
+                    />
+                    Exclude this watch's downloads from auto-delete
+                  </label>
+                  <span className="muted small" style={{ marginTop: 2, display: 'block', paddingLeft: 26 }}>
+                    Overrides the age/Jellyfin-watched auto-delete rules in Settings — videos
+                    from this watch are never removed automatically.
+                  </span>
                 </div>
               </div>
             )}

@@ -331,7 +331,11 @@ function buildDownloadArgs(url, options = {}) {
   ];
 
   if (audioOnly) {
-    args.push('-x', '--audio-format', 'mp3', '-f', buildFormatSelector({ audioOnly }));
+    // The Watch modal (and any future caller) offers mp3/m4a/opus/flac as the audio
+    // container, but this previously always hardcoded mp3 — silently ignoring the choice.
+    const AUDIO_FORMATS = ['mp3', 'm4a', 'opus', 'flac'];
+    const audioFormat = AUDIO_FORMATS.includes(container) ? container : 'mp3';
+    args.push('-x', '--audio-format', audioFormat, '-f', buildFormatSelector({ audioOnly }));
   } else {
     args.push('-f', buildFormatSelector({ formatSelector, quality }));
     if (container === 'ts') {

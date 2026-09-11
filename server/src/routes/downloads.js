@@ -1,4 +1,5 @@
 const express = require('express');
+const db = require('../db');
 const queue = require('../services/queue');
 const ytdlp = require('../services/ytdlp');
 const { requireAuth } = require('../auth');
@@ -140,6 +141,20 @@ router.get('/', (req, res) => {
 router.delete('/:id', (req, res) => {
   queue.removeJob(req.params.id);
   res.json({ ok: true });
+});
+
+// Protects (or un-protects) a single download from the nightly auto-delete job — see
+// services/cleanup.js. Purely a flag; never touches the file itself.
+router.patch('/:id/protect', (req, res) => {
+  const download = db.prepare('SELECT * FROM downloads WHERE id = ?').get(req.params.id);
+  if (!download) return res.status(404).json({ error: 'Download not found' });
+
+  const { protected: protectedFlag } = req.body || {};
+  const next = protectedFlag !== undefined ? (protectedFlag ? 1 : 0) : (download.protected ? 0 : 1);
+  db.prepare('UPDATE downloads SET protected = ? WHERE id = ?').run(next, download.id);
+
+  const updated = db.prepare('SELECT * FROM downloads WHERE id = ?').get(download.id);
+  res.json(updated);
 });
 
 module.exports = router;

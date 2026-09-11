@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Download, Film, Loader2, Archive, ExternalLink, AlertCircle } from 'lucide-react';
+import { X, Download, Film, Loader2, Archive, ExternalLink, AlertCircle, Shield, ShieldOff } from 'lucide-react';
 import { api } from '../api.js';
 import { useModalA11y } from '../hooks/useModalA11y.js';
 
@@ -22,6 +22,15 @@ export default function WatchDownloadsModal({
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [open, watch]);
+
+  async function handleToggleProtect(download) {
+    try {
+      const updated = await api.toggleDownloadProtect(download.id, !download.protected);
+      setDownloads((prev) => prev.map((d) => (d.id === download.id ? updated : d)));
+    } catch (err) {
+      console.error('Failed to toggle protection:', err);
+    }
+  }
 
   if (!open || !watch) return null;
 
@@ -73,6 +82,7 @@ export default function WatchDownloadsModal({
                     <th>Title</th>
                     <th>Status</th>
                     <th>Downloaded</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -107,6 +117,18 @@ export default function WatchDownloadsModal({
                       </td>
                       <td className="muted small" style={{ whiteSpace: 'nowrap' }}>
                         {new Date(d.created_at + 'Z').toLocaleDateString()}
+                      </td>
+                      <td style={{ width: 40 }}>
+                        {d.status === 'completed' && (
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            onClick={() => handleToggleProtect(d)}
+                            title={d.protected ? 'Protected from auto-delete — click to allow it again' : 'Protect this video from auto-delete'}
+                          >
+                            {d.protected ? <Shield size={14} /> : <ShieldOff size={14} />}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}

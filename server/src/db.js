@@ -105,6 +105,8 @@ ensureColumn('watches', 'max_scan_entries', 'INTEGER DEFAULT 30');
 ensureColumn('watches', 'thumbnail', 'TEXT');
 ensureColumn('watches', 'channel_name', 'TEXT');
 ensureColumn('watches', 'last_new_count', 'INTEGER DEFAULT 0');
+ensureColumn('watches', 'cleanup_exempt', 'INTEGER DEFAULT 0');
+ensureColumn('downloads', 'protected', 'INTEGER DEFAULT 0');
 ensureColumn('watch_seen_ids', 'title', 'TEXT');
 ensureColumn('watch_seen_ids', 'created_at', "TEXT DEFAULT (datetime('now'))");
 

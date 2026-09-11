@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload } from 'lucide-react';
+import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
 
 export default function Settings() {
@@ -25,6 +25,24 @@ export default function Settings() {
   const [ffmpegMessage, setFfmpegMessage] = useState('');
   const [ffmpegError, setFfmpegError] = useState('');
 
+  const [cleanupSettings, setCleanupSettings] = useState(null);
+  const [jellyfinApiKeyInput, setJellyfinApiKeyInput] = useState('');
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupMessage, setCleanupMessage] = useState('');
+  const [cleanupError, setCleanupError] = useState('');
+  const [testBusy, setTestBusy] = useState(false);
+  const [testMessage, setTestMessage] = useState('');
+  const [testError, setTestError] = useState('');
+  const [runNowBusy, setRunNowBusy] = useState(false);
+  const [runNowMessage, setRunNowMessage] = useState('');
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewResult, setPreviewResult] = useState(null);
+  const [previewError, setPreviewError] = useState('');
+
+  const [nfoEnabled, setNfoEnabled] = useState(true);
+  const [nfoBusy, setNfoBusy] = useState(false);
+  const [nfoMessage, setNfoMessage] = useState('');
+
   function refreshCookiesStatus() {
     api.getCookiesStatus().then((s) => setCookiesConfigured(s.configured)).catch(() => {});
   }
@@ -38,7 +56,11 @@ export default function Settings() {
   useEffect(() => {
     api.getSettings().then((s) => {
       if (s.ytdlpChannel) setChannel(s.ytdlpChannel);
+      setNfoEnabled(s.nfo_enabled !== '0');
     }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    api.getCleanupSettings().then(setCleanupSettings).catch(() => {});
   }, []);
 
   async function handleChangePassword(e) {
@@ -138,6 +160,93 @@ export default function Settings() {
       setFfmpegError(err.message);
     } finally {
       setFfmpegBusy(false);
+    }
+  }
+
+  function updateCleanupField(field, value) {
+    setCleanupSettings((prev) => ({ ...prev, [field]: value }));
+  }
+
+  async function handleSaveCleanup(e) {
+    e.preventDefault();
+    setCleanupMessage('');
+    setCleanupError('');
+    setCleanupBusy(true);
+    try {
+      const payload = {
+        ageEnabled: !!cleanupSettings.ageEnabled,
+        ageDays: parseInt(cleanupSettings.ageDays, 10) || 30,
+        jellyfinEnabled: !!cleanupSettings.jellyfinEnabled,
+        jellyfinUrl: cleanupSettings.jellyfinUrl || '',
+        jellyfinUserId: cleanupSettings.jellyfinUserId || '',
+      };
+      if (jellyfinApiKeyInput) payload.jellyfinApiKey = jellyfinApiKeyInput;
+      const updated = await api.updateCleanupSettings(payload);
+      setCleanupSettings(updated);
+      setJellyfinApiKeyInput('');
+      setCleanupMessage('Auto-delete settings saved.');
+    } catch (err) {
+      setCleanupError(err.message);
+    } finally {
+      setCleanupBusy(false);
+    }
+  }
+
+  async function handleTestJellyfin() {
+    setTestMessage('');
+    setTestError('');
+    setTestBusy(true);
+    try {
+      const payload = {};
+      if (cleanupSettings?.jellyfinUrl) payload.url = cleanupSettings.jellyfinUrl;
+      if (jellyfinApiKeyInput) payload.apiKey = jellyfinApiKeyInput;
+      const result = await api.testJellyfinConnection(payload);
+      setTestMessage(`Connected to ${result.serverName}${result.version ? ` (v${result.version})` : ''}.`);
+    } catch (err) {
+      setTestError(err.message);
+    } finally {
+      setTestBusy(false);
+    }
+  }
+
+  async function handleRunCleanupNow() {
+    setRunNowMessage('');
+    setRunNowBusy(true);
+    try {
+      const result = await api.runCleanupNow();
+      setRunNowMessage(`Checked ${result.checked} video(s), deleted ${result.deleted}, kept ${result.kept || 0} protected.`);
+    } catch (err) {
+      setRunNowMessage(err.message);
+    } finally {
+      setRunNowBusy(false);
+    }
+  }
+
+  async function handlePreviewCleanup() {
+    setPreviewError('');
+    setPreviewBusy(true);
+    try {
+      const result = await api.previewCleanup();
+      setPreviewResult(result);
+    } catch (err) {
+      setPreviewError(err.message);
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
+
+  async function handleToggleNfo(checked) {
+    setNfoEnabled(checked);
+    setNfoMessage('');
+    setNfoBusy(true);
+    try {
+      await api.updateSettings({ nfo_enabled: checked ? '1' : '0' });
+      setNfoMessage(checked ? 'Enabled — new downloads will get a .nfo + poster.' : 'Disabled — new downloads will skip .nfo/poster generation.');
+    } catch (err) {
+      setNfoMessage(err.message);
+      setNfoEnabled(!checked);
+    } finally {
+      setNfoBusy(false);
     }
   }
 
@@ -283,6 +392,183 @@ export default function Settings() {
             {ffmpegError && <div className="alert alert-error" style={{ marginTop: '10px' }}><AlertCircle size={15} />{ffmpegError}</div>}
           </div>
         </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2><Trash2 size={16} /> Auto-delete watched downloads</h2>
+        </div>
+        <p className="panel-description">
+          Applies only to videos downloaded automatically by a Watch (manual downloads are
+          never touched). Runs once a night. Both rules below can be turned on at the same
+          time — a video is deleted as soon as either one matches.
+        </p>
+        {!cleanupSettings ? (
+          <div className="empty-state"><div className="spinner" /></div>
+        ) : (
+          <form onSubmit={handleSaveCleanup} className="settings-form">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={!!cleanupSettings.ageEnabled}
+                onChange={(e) => updateCleanupField('ageEnabled', e.target.checked)}
+              />
+              <span>Delete after</span>
+              <input
+                type="number"
+                min="1"
+                style={{ width: '70px' }}
+                value={cleanupSettings.ageDays}
+                onChange={(e) => updateCleanupField('ageDays', e.target.value)}
+                disabled={!cleanupSettings.ageEnabled}
+              />
+              <span>days</span>
+            </label>
+
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={!!cleanupSettings.jellyfinEnabled}
+                onChange={(e) => updateCleanupField('jellyfinEnabled', e.target.checked)}
+              />
+              Delete once watched in Jellyfin
+            </label>
+
+            <label className="field-label">
+              Jellyfin server URL
+              <input
+                type="text"
+                placeholder="http://jellyfin.local:8096"
+                value={cleanupSettings.jellyfinUrl || ''}
+                onChange={(e) => updateCleanupField('jellyfinUrl', e.target.value)}
+              />
+            </label>
+            <label className="field-label">
+              Jellyfin API key
+              <input
+                type="password"
+                placeholder={cleanupSettings.jellyfinApiKeyConfigured ? '••••••••  (saved — enter a new key to replace)' : 'Paste an API key from Jellyfin Dashboard → API Keys'}
+                value={jellyfinApiKeyInput}
+                onChange={(e) => setJellyfinApiKeyInput(e.target.value)}
+                autoComplete="off"
+              />
+            </label>
+            <label className="field-label">
+              Jellyfin user (optional)
+              <input
+                type="text"
+                placeholder="Leave blank to count a video as watched if any user has watched it"
+                value={cleanupSettings.jellyfinUserId || ''}
+                onChange={(e) => updateCleanupField('jellyfinUserId', e.target.value)}
+              />
+            </label>
+
+            <label className="field-label">
+              Always keep newest videos per watch
+              <input
+                type="number"
+                min="0"
+                style={{ width: '90px' }}
+                value={cleanupSettings.keepRecentPerWatch}
+                onChange={(e) => updateCleanupField('keepRecentPerWatch', e.target.value)}
+              />
+              <span className="muted small">
+                A safety guard — even if a video matches a rule above, the N most recent videos
+                per watch are never deleted. 0 disables this guard.
+              </span>
+            </label>
+
+            <p className="panel-description" style={{ margin: 0 }}>
+              You can also protect an individual video from a download's list, or exclude a
+              whole watch from auto-delete on its Edit → Safety &amp; Limits tab.
+            </p>
+
+            <div className="options-row" style={{ marginTop: 0 }}>
+              <button type="submit" disabled={cleanupBusy}>
+                {cleanupBusy ? 'Saving…' : 'Save auto-delete settings'}
+              </button>
+              <button type="button" className="btn-secondary" onClick={handleTestJellyfin} disabled={testBusy}>
+                {testBusy ? 'Testing…' : 'Test Jellyfin connection'}
+              </button>
+              <button type="button" className="btn-secondary" onClick={handlePreviewCleanup} disabled={previewBusy}>
+                {previewBusy ? 'Checking…' : 'Preview (dry run)'}
+              </button>
+              <button type="button" className="btn-secondary" onClick={handleRunCleanupNow} disabled={runNowBusy}>
+                {runNowBusy ? 'Running…' : 'Run cleanup now'}
+              </button>
+            </div>
+            {cleanupMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{cleanupMessage}</div>}
+            {cleanupError && <div className="alert alert-error"><AlertCircle size={15} />{cleanupError}</div>}
+            {testMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{testMessage}</div>}
+            {testError && <div className="alert alert-error"><AlertCircle size={15} />{testError}</div>}
+            {runNowMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{runNowMessage}</div>}
+            {previewError && <div className="alert alert-error"><AlertCircle size={15} />{previewError}</div>}
+
+            {previewResult && (
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {previewResult.jellyfinError && (
+                  <div className="alert alert-warning">
+                    <AlertCircle size={14} />
+                    <span>Jellyfin check failed for this preview: {previewResult.jellyfinError}</span>
+                  </div>
+                )}
+                <div>
+                  <strong style={{ fontSize: 13 }}>Would delete ({previewResult.toDelete.length})</strong>
+                  {previewResult.toDelete.length === 0 ? (
+                    <p className="muted small" style={{ margin: '4px 0 0' }}>Nothing matches the current rules right now.</p>
+                  ) : (
+                    <ul className="cleanup-preview-list">
+                      {previewResult.toDelete.map((item) => (
+                        <li key={item.id}>
+                          <span className="cleanup-preview-title">{item.title}</span>
+                          <span className="muted small">{item.matchedReasons.join(', ')}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <strong style={{ fontSize: 13 }}>Protected ({previewResult.toKeep.length})</strong>
+                  {previewResult.toKeep.length === 0 ? (
+                    <p className="muted small" style={{ margin: '4px 0 0' }}>Nothing is currently shielded from a matching rule.</p>
+                  ) : (
+                    <ul className="cleanup-preview-list">
+                      {previewResult.toKeep.map((item) => (
+                        <li key={item.id}>
+                          <span className="cleanup-preview-title">{item.title}</span>
+                          <span className="muted small">{item.matchedReasons.join(', ')} — {item.protectedReason}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            )}
+          </form>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2><PackageCheck size={16} /> Media server metadata (.nfo)</h2>
+        </div>
+        <p className="panel-description">
+          Writes a Kodi/Jellyfin/Emby-compatible <code>.nfo</code> file and a matching poster
+          image next to every new download, so title, description, and artwork get scraped
+          reliably instead of depending on each media server's support for reading metadata
+          embedded inside the video file itself. Only affects downloads made after this is
+          turned on.
+        </p>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={nfoEnabled}
+            onChange={(e) => handleToggleNfo(e.target.checked)}
+            disabled={nfoBusy}
+          />
+          Write .nfo + poster files for new downloads
+        </label>
+        {nfoMessage && <div className="alert alert-success" style={{ marginTop: 10 }}><CheckCircle2 size={15} />{nfoMessage}</div>}
       </section>
     </>
   );
