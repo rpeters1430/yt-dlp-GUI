@@ -1,18 +1,35 @@
 const path = require('path');
 
 function normalizeBaseUrl(url) {
-  return String(url || '').trim().replace(/\/+$/, '');
+  let u = String(url || '').trim().replace(/\/+$/, '');
+  if (u && !/^https?:\/\//i.test(u)) {
+    u = `http://${u}`;
+  }
+  return u;
 }
 
-// Jellyfin accepts the API key either as a query param or via the X-Emby-Token header;
-// the header keeps it out of server access logs.
+// Jellyfin authentication:
+// Modern Jellyfin servers (10.9+) require the standard Authorization: MediaBrowser header.
+// We also include X-Emby-Token and X-MediaBrowser-Token for backwards compatibility with older servers.
+function getAuthHeaders(apiKey) {
+  const headers = {};
+  if (apiKey) {
+    const key = String(apiKey).trim();
+    headers['Authorization'] = `MediaBrowser Client="yt-dlp-gui", Device="Server", DeviceId="yt-dlp-gui", Version="1.0.0", Token="${key}"`;
+    headers['X-Emby-Token'] = key;
+    headers['X-MediaBrowser-Token'] = key;
+  }
+  return headers;
+}
+
 async function jellyfinFetch(baseUrl, apiKey, requestPath) {
-  const url = `${normalizeBaseUrl(baseUrl)}${requestPath}`;
+  const normBase = normalizeBaseUrl(baseUrl);
+  const url = `${normBase}${requestPath}`;
   let res;
   try {
-    res = await fetch(url, { headers: { 'X-Emby-Token': apiKey } });
+    res = await fetch(url, { headers: getAuthHeaders(apiKey) });
   } catch (err) {
-    throw new Error(`Could not reach Jellyfin at ${normalizeBaseUrl(baseUrl)}: ${err.message}`);
+    throw new Error(`Could not reach Jellyfin at ${normBase}: ${err.message}`);
   }
   if (!res.ok) {
     if (res.status === 401) throw new Error('Jellyfin rejected the API key (401 Unauthorized)');
@@ -53,9 +70,32 @@ async function fetchPlayedBasenames(baseUrl, apiKey, userId) {
 // Aggregates "played" filenames across every configured user (or just one, if userId is set)
 // since Jellyfin's watched status is tracked per-user, and there's no server-wide concept of it.
 async function getPlayedBasenames(baseUrl, apiKey, userId) {
-  const userIds = userId ? [userId] : (await getUsers(baseUrl, apiKey)).map((u) => u.Id).filter(Boolean);
+  let targetUserIds = [];
+  if (userId) {
+    const trimmed = String(userId).trim();
+    const isGuid = /^[0-9a-f]{32}$/i.test(trimmed) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed);
+    if (isGuid) {
+      targetUserIds = [trimmed];
+    } else {
+      try {
+        const users = await getUsers(baseUrl, apiKey);
+        const match = users.find((u) => u.Name && u.Name.toLowerCase() === trimmed.toLowerCase());
+        if (match && match.Id) {
+          targetUserIds = [match.Id];
+        } else {
+          targetUserIds = [trimmed];
+        }
+      } catch (err) {
+        console.error(`[jellyfin] Failed to resolve username "${trimmed}": ${err.message}`);
+        targetUserIds = [trimmed];
+      }
+    }
+  } else {
+    targetUserIds = (await getUsers(baseUrl, apiKey)).map((u) => u.Id).filter(Boolean);
+  }
+
   const combined = new Set();
-  for (const uid of userIds) {
+  for (const uid of targetUserIds) {
     try {
       const basenames = await fetchPlayedBasenames(baseUrl, apiKey, uid);
       for (const name of basenames) combined.add(name);
@@ -66,4 +106,4 @@ async function getPlayedBasenames(baseUrl, apiKey, userId) {
   return combined;
 }
 
-module.exports = { testConnection, getUsers, getPlayedBasenames };
+module.exports = { testConnection, getUsers, getPlayedBasenames, normalizeBaseUrl };
