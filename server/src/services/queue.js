@@ -2,6 +2,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const ytdlp = require('./ytdlp');
 const nfo = require('./nfo');
+const jellyfinSync = require('./jellyfinSync');
 
 function isNfoEnabled() {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'nfo_enabled'").get();
@@ -226,6 +227,16 @@ async function runJob(job) {
     if (nfoInfo && result.filepath && isNfoEnabled()) {
       nfo.writeSidecarFiles(result.filepath, nfoInfo)
         .catch((e) => console.error(`[queue] [job:${job.id}] Failed to write .nfo/poster: ${e.message}`));
+    }
+
+    // Best-effort: Jellyfin may not have scanned this file into its library yet, in which
+    // case this is a no-op and the periodic sync job (jellyfinSync.start) picks it up later.
+    if (job.watch_id) {
+      const syncConfig = jellyfinSync.getSyncConfig();
+      if (syncConfig.enabled) {
+        jellyfinSync.syncWatch(job.watch_id, { config: syncConfig })
+          .catch((e) => console.error(`[queue] [job:${job.id}] Jellyfin playlist sync failed: ${e.message}`));
+      }
     }
   } catch (err) {
     appendLog(`ERROR: ${err.message}`);

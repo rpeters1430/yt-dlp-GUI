@@ -47,6 +47,7 @@ export const api = {
   checkAllWatches: () => request('/watches/check-all', { method: 'POST' }),
   getWatchDownloads: (id) => request(`/watches/${id}/downloads`),
   resetWatchSeen: (id) => request(`/watches/${id}/reset-seen`, { method: 'POST' }),
+  syncWatchJellyfin: (id) => request(`/watches/${id}/sync-jellyfin`, { method: 'POST' }),
 
   getSettings: () => request('/settings'),
   updateSettings: (payload) => request('/settings', { method: 'PUT', body: JSON.stringify(payload) }),
@@ -65,6 +66,11 @@ export const api = {
   testJellyfinConnection: (payload) => request('/cleanup/test-jellyfin', { method: 'POST', body: JSON.stringify(payload || {}) }),
   previewCleanup: () => request('/cleanup/preview', { method: 'POST' }),
   runCleanupNow: () => request('/cleanup/run', { method: 'POST' }),
+
+  // Jellyfin playlist sync — builds a playlist per watch out of its downloaded videos
+  getJellyfinSyncSettings: () => request('/jellyfin/settings'),
+  updateJellyfinSyncSettings: (payload) => request('/jellyfin/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  syncJellyfinPlaylists: () => request('/jellyfin/sync', { method: 'POST' }),
 
   // Twitch
   getTwitchChannel: (channel) => request(`/twitch/channel/${encodeURIComponent(channel)}`),
