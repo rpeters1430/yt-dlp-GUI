@@ -10,6 +10,7 @@ const auth = require('./auth');
 const queue = require('./services/queue');
 const scheduler = require('./services/scheduler');
 const cleanup = require('./services/cleanup');
+const jellyfinSync = require('./services/jellyfinSync');
 
 const sqliteSessionDb = {
   exec(sql, callback) {
@@ -75,6 +76,7 @@ const watchesRoutes = require('./routes/watches');
 const settingsRoutes = require('./routes/settings');
 const twitchRoutes = require('./routes/twitch');
 const cleanupRoutes = require('./routes/cleanup');
+const jellyfinRoutes = require('./routes/jellyfin');
 
 const PORT = process.env.PORT || 3000;
 const SqliteStore = SqliteStoreFactory(session);
@@ -123,6 +125,7 @@ app.use('/api/watches', watchesRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/twitch', twitchRoutes);
 app.use('/api/cleanup', cleanupRoutes);
+app.use('/api/jellyfin', jellyfinRoutes);
 
 const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
 app.use(express.static(clientDist));
@@ -152,6 +155,7 @@ scheduler.init(io);
 scheduler.start();
 cleanup.init(io);
 cleanup.start();
+jellyfinSync.start();
 
 server.listen(PORT, () => {
   console.log(`yt-dlp GUI server listening on port ${PORT}`);

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload, Trash2 } from 'lucide-react';
+import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload, Trash2, ListMusic } from 'lucide-react';
 import { api } from '../api.js';
 
 export default function Settings() {
@@ -43,6 +43,13 @@ export default function Settings() {
   const [nfoBusy, setNfoBusy] = useState(false);
   const [nfoMessage, setNfoMessage] = useState('');
 
+  const [jellyfinSync, setJellyfinSync] = useState(null);
+  const [jellyfinSyncBusy, setJellyfinSyncBusy] = useState(false);
+  const [jellyfinSyncMessage, setJellyfinSyncMessage] = useState('');
+  const [jellyfinSyncNowBusy, setJellyfinSyncNowBusy] = useState(false);
+  const [jellyfinSyncNowResult, setJellyfinSyncNowResult] = useState(null);
+  const [jellyfinSyncNowError, setJellyfinSyncNowError] = useState('');
+
   function refreshCookiesStatus() {
     api.getCookiesStatus().then((s) => setCookiesConfigured(s.configured)).catch(() => {});
   }
@@ -61,6 +68,9 @@ export default function Settings() {
   }, []);
   useEffect(() => {
     api.getCleanupSettings().then(setCleanupSettings).catch(() => {});
+  }, []);
+  useEffect(() => {
+    api.getJellyfinSyncSettings().then(setJellyfinSync).catch(() => {});
   }, []);
 
   async function handleChangePassword(e) {
@@ -247,6 +257,46 @@ export default function Settings() {
       setNfoEnabled(!checked);
     } finally {
       setNfoBusy(false);
+    }
+  }
+
+  async function handleToggleJellyfinSync(checked) {
+    setJellyfinSync((prev) => ({ ...prev, syncEnabled: checked }));
+    setJellyfinSyncMessage('');
+    setJellyfinSyncBusy(true);
+    try {
+      const updated = await api.updateJellyfinSyncSettings({ syncEnabled: checked });
+      setJellyfinSync(updated);
+      setJellyfinSyncMessage(checked
+        ? 'Enabled — each watch gets its own Jellyfin playlist, kept up to date automatically.'
+        : 'Disabled — playlists already created in Jellyfin are left as-is.');
+    } catch (err) {
+      setJellyfinSyncMessage(err.message);
+      setJellyfinSync((prev) => ({ ...prev, syncEnabled: !checked }));
+    } finally {
+      setJellyfinSyncBusy(false);
+    }
+  }
+
+  async function handleSyncJellyfinNow() {
+    setJellyfinSyncNowError('');
+    setJellyfinSyncNowResult(null);
+    setJellyfinSyncNowBusy(true);
+    try {
+      const result = await api.syncJellyfinPlaylists();
+      if (result.skipped) {
+        setJellyfinSyncNowError(
+          result.reason === 'disabled'
+            ? 'Enable playlist sync above first.'
+            : 'Set a Jellyfin URL, API key, and user (above, in Auto-delete) first.'
+        );
+      } else {
+        setJellyfinSyncNowResult(result.results);
+      }
+    } catch (err) {
+      setJellyfinSyncNowError(err.message);
+    } finally {
+      setJellyfinSyncNowBusy(false);
     }
   }
 
@@ -545,6 +595,73 @@ export default function Settings() {
               </div>
             )}
           </form>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2><ListMusic size={16} /> Jellyfin playlist sync</h2>
+        </div>
+        <p className="panel-description">
+          Builds a Jellyfin playlist per Watch (named after the channel/playlist), keeping it
+          filled with every video that Watch has downloaded — so browsing playlists in Jellyfin
+          mirrors what's being auto-monitored here. Uses the same Jellyfin server URL, API key,
+          and user configured above in <em>Auto-delete watched downloads</em> — a specific
+          user is required here, since a playlist always belongs to one Jellyfin user. A video
+          only gets added once Jellyfin has scanned it into its library, so newly downloaded
+          videos may take one library scan before appearing in the playlist.
+        </p>
+        {!jellyfinSync ? (
+          <div className="empty-state"><div className="spinner" /></div>
+        ) : (
+          <div className="settings-form">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={!!jellyfinSync.syncEnabled}
+                onChange={(e) => handleToggleJellyfinSync(e.target.checked)}
+                disabled={jellyfinSyncBusy}
+              />
+              Automatically sync playlists (after each download, and every 15 minutes)
+            </label>
+
+            {jellyfinSync.syncEnabled && !jellyfinSync.userId && (
+              <div className="alert alert-warning">
+                <AlertCircle size={14} />
+                <span>No Jellyfin user set above — sync will do nothing until one is configured.</span>
+              </div>
+            )}
+
+            <div className="options-row" style={{ marginTop: 0 }}>
+              <button type="button" className="btn-secondary" onClick={handleSyncJellyfinNow} disabled={jellyfinSyncNowBusy}>
+                {jellyfinSyncNowBusy ? 'Syncing…' : 'Sync all playlists now'}
+              </button>
+            </div>
+
+            {jellyfinSyncMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{jellyfinSyncMessage}</div>}
+            {jellyfinSyncNowError && <div className="alert alert-error"><AlertCircle size={15} />{jellyfinSyncNowError}</div>}
+
+            {jellyfinSyncNowResult && (
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                {jellyfinSyncNowResult.length === 0 ? (
+                  <p className="muted small" style={{ margin: 0 }}>No watches have any completed downloads yet.</p>
+                ) : (
+                  <ul className="cleanup-preview-list">
+                    {jellyfinSyncNowResult.map((r) => (
+                      <li key={r.watchId}>
+                        <span className="cleanup-preview-title">{r.playlistName || `Watch #${r.watchId}`}</span>
+                        <span className="muted small">
+                          {r.error
+                            ? r.error
+                            : `+${r.added} added${r.alreadyPresent ? `, ${r.alreadyPresent} already present` : ''}${r.missingFromLibrary ? `, ${r.missingFromLibrary} not yet in Jellyfin` : ''}`}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </section>
 

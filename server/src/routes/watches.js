@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const scheduler = require('../services/scheduler');
 const ytdlp = require('../services/ytdlp');
+const jellyfinSync = require('../services/jellyfinSync');
 const { requireAuth } = require('../auth');
 
 const router = express.Router();
@@ -334,6 +335,20 @@ router.post('/:id/check', async (req, res) => {
   if (!watch) return res.status(404).json({ error: 'Watch not found' });
   const newCount = await scheduler.checkWatch(watch, { manual: true });
   res.json({ newCount });
+});
+
+// Build/update the Jellyfin playlist for this watch's downloaded videos right now, instead
+// of waiting for the periodic sync. Works regardless of the "auto-sync" toggle, as long as a
+// Jellyfin URL/API key/user are configured — same as the "Sync now" button on Settings.
+router.post('/:id/sync-jellyfin', async (req, res) => {
+  const watch = db.prepare('SELECT * FROM watches WHERE id = ?').get(req.params.id);
+  if (!watch) return res.status(404).json({ error: 'Watch not found' });
+  try {
+    const result = await jellyfinSync.syncWatch(watch.id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // Get downloads triggered by this watch

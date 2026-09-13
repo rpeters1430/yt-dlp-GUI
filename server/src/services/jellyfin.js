@@ -22,20 +22,40 @@ function getAuthHeaders(apiKey) {
   return headers;
 }
 
-async function jellyfinFetch(baseUrl, apiKey, requestPath) {
+async function jellyfinRequest(baseUrl, apiKey, requestPath, { method = 'GET', body } = {}) {
   const normBase = normalizeBaseUrl(baseUrl);
   const url = `${normBase}${requestPath}`;
+  const headers = getAuthHeaders(apiKey);
+  const init = { method, headers };
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+
   let res;
   try {
-    res = await fetch(url, { headers: getAuthHeaders(apiKey) });
+    res = await fetch(url, init);
   } catch (err) {
     throw new Error(`Could not reach Jellyfin at ${normBase}: ${err.message}`);
   }
   if (!res.ok) {
     if (res.status === 401) throw new Error('Jellyfin rejected the API key (401 Unauthorized)');
-    throw new Error(`Jellyfin request failed: ${res.status} ${res.statusText}`);
+    const err = new Error(`Jellyfin request failed: ${res.status} ${res.statusText}`);
+    err.status = res.status;
+    throw err;
   }
-  return res.json();
+  if (res.status === 204) return null;
+  const text = await res.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    return null;
+  }
+}
+
+async function jellyfinFetch(baseUrl, apiKey, requestPath) {
+  return jellyfinRequest(baseUrl, apiKey, requestPath);
 }
 
 async function testConnection(baseUrl, apiKey) {
@@ -48,6 +68,24 @@ async function testConnection(baseUrl, apiKey) {
 async function getUsers(baseUrl, apiKey) {
   const users = await jellyfinFetch(baseUrl, apiKey, '/Users');
   return Array.isArray(users) ? users : [];
+}
+
+// Accepts either a Jellyfin user GUID (passed through as-is) or a username (resolved to a
+// GUID via /Users) — the same "either works" convenience the Settings page's "Jellyfin user"
+// field has always offered.
+async function resolveUserId(baseUrl, apiKey, userId) {
+  const trimmed = String(userId || '').trim();
+  if (!trimmed) return null;
+  const isGuid = /^[0-9a-f]{32}$/i.test(trimmed) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed);
+  if (isGuid) return trimmed;
+  try {
+    const users = await getUsers(baseUrl, apiKey);
+    const match = users.find((u) => u.Name && u.Name.toLowerCase() === trimmed.toLowerCase());
+    if (match && match.Id) return match.Id;
+  } catch (err) {
+    console.error(`[jellyfin] Failed to resolve username "${trimmed}": ${err.message}`);
+  }
+  return trimmed;
 }
 
 // Returns the on-disk basenames of every video item marked "played" for the given user.
@@ -72,24 +110,7 @@ async function fetchPlayedBasenames(baseUrl, apiKey, userId) {
 async function getPlayedBasenames(baseUrl, apiKey, userId) {
   let targetUserIds = [];
   if (userId) {
-    const trimmed = String(userId).trim();
-    const isGuid = /^[0-9a-f]{32}$/i.test(trimmed) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed);
-    if (isGuid) {
-      targetUserIds = [trimmed];
-    } else {
-      try {
-        const users = await getUsers(baseUrl, apiKey);
-        const match = users.find((u) => u.Name && u.Name.toLowerCase() === trimmed.toLowerCase());
-        if (match && match.Id) {
-          targetUserIds = [match.Id];
-        } else {
-          targetUserIds = [trimmed];
-        }
-      } catch (err) {
-        console.error(`[jellyfin] Failed to resolve username "${trimmed}": ${err.message}`);
-        targetUserIds = [trimmed];
-      }
-    }
+    targetUserIds = [await resolveUserId(baseUrl, apiKey, userId)];
   } else {
     targetUserIds = (await getUsers(baseUrl, apiKey)).map((u) => u.Id).filter(Boolean);
   }
@@ -106,4 +127,77 @@ async function getPlayedBasenames(baseUrl, apiKey, userId) {
   return combined;
 }
 
-module.exports = { testConnection, getUsers, getPlayedBasenames, normalizeBaseUrl };
+// Maps every video library item's on-disk basename to its Jellyfin item ID, for the given
+// user's visible library. Used to translate a locally-downloaded file into the Jellyfin item
+// that (once the library has scanned it) represents it, so it can be added to a playlist.
+async function getLibraryItemsByBasename(baseUrl, apiKey, userId) {
+  const qs = new URLSearchParams({
+    Recursive: 'true',
+    IncludeItemTypes: 'Movie,Episode,Video',
+    Fields: 'Path',
+  });
+  const data = await jellyfinFetch(baseUrl, apiKey, `/Users/${encodeURIComponent(userId)}/Items?${qs}`);
+  const items = (data && data.Items) || [];
+  const map = new Map();
+  for (const item of items) {
+    if (item.Path && item.Id) map.set(path.basename(item.Path), item.Id);
+  }
+  return map;
+}
+
+// Playlists don't have a dedicated "find by name" endpoint — they're just items of type
+// Playlist in the user's view, so this searches like any other item.
+async function findPlaylistByName(baseUrl, apiKey, userId, name) {
+  const qs = new URLSearchParams({
+    Recursive: 'true',
+    IncludeItemTypes: 'Playlist',
+    SearchTerm: name,
+  });
+  const data = await jellyfinFetch(baseUrl, apiKey, `/Users/${encodeURIComponent(userId)}/Items?${qs}`);
+  const items = (data && data.Items) || [];
+  return items.find((i) => i.Name === name) || null;
+}
+
+// Returns null (rather than throwing) when the playlist ID no longer exists in Jellyfin, so
+// callers can treat that as "needs to be recreated" instead of a hard failure.
+async function getPlaylistItemIds(baseUrl, apiKey, userId, playlistId) {
+  try {
+    const data = await jellyfinRequest(
+      baseUrl,
+      apiKey,
+      `/Playlists/${encodeURIComponent(playlistId)}/Items?${new URLSearchParams({ userId })}`
+    );
+    const items = (data && data.Items) || [];
+    return new Set(items.map((i) => i.Id).filter(Boolean));
+  } catch (err) {
+    if (err.status === 404) return null;
+    throw err;
+  }
+}
+
+async function createPlaylist(baseUrl, apiKey, userId, name, itemIds) {
+  const data = await jellyfinRequest(baseUrl, apiKey, '/Playlists', {
+    method: 'POST',
+    body: { Name: name, Ids: itemIds, UserId: userId, MediaType: 'Video' },
+  });
+  return data && data.Id;
+}
+
+async function addPlaylistItems(baseUrl, apiKey, userId, playlistId, itemIds) {
+  if (!itemIds || itemIds.length === 0) return;
+  const qs = new URLSearchParams({ ids: itemIds.join(','), userId });
+  await jellyfinRequest(baseUrl, apiKey, `/Playlists/${encodeURIComponent(playlistId)}/Items?${qs}`, { method: 'POST' });
+}
+
+module.exports = {
+  testConnection,
+  getUsers,
+  resolveUserId,
+  getPlayedBasenames,
+  getLibraryItemsByBasename,
+  findPlaylistByName,
+  getPlaylistItemIds,
+  createPlaylist,
+  addPlaylistItems,
+  normalizeBaseUrl,
+};

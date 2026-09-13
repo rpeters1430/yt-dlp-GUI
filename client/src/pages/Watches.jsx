@@ -23,6 +23,7 @@ import {
   Sparkles,
   Shield,
   ShieldOff,
+  ListMusic,
 } from 'lucide-react';
 import { api } from '../api.js';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
@@ -50,6 +51,8 @@ export default function Watches() {
 
   const [busyId, setBusyId] = useState(null);
   const [checkingAll, setCheckingAll] = useState(false);
+  const [jellyfinSyncBusyId, setJellyfinSyncBusyId] = useState(null);
+  const [jellyfinSyncMsg, setJellyfinSyncMsg] = useState({}); // watchId -> { text, isError }
 
   // Modals
   const [modalOpen, setModalOpen] = useState(false);
@@ -120,6 +123,25 @@ export default function Watches() {
       console.error('Failed to check watch:', err);
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function handleSyncJellyfin(watch) {
+    setJellyfinSyncBusyId(watch.id);
+    setJellyfinSyncMsg((prev) => ({ ...prev, [watch.id]: null }));
+    try {
+      const result = await api.syncWatchJellyfin(watch.id);
+      const text = result.added > 0
+        ? `Added ${result.added} video(s) to "${result.playlistName}" in Jellyfin.`
+        : result.missingFromLibrary > 0
+          ? `Playlist up to date — ${result.missingFromLibrary} video(s) not yet scanned by Jellyfin.`
+          : 'Playlist already up to date.';
+      setJellyfinSyncMsg((prev) => ({ ...prev, [watch.id]: { text, isError: false } }));
+    } catch (err) {
+      setJellyfinSyncMsg((prev) => ({ ...prev, [watch.id]: { text: err.message, isError: true } }));
+    } finally {
+      setJellyfinSyncBusyId(null);
+      setTimeout(() => setJellyfinSyncMsg((prev) => ({ ...prev, [watch.id]: null })), 7000);
     }
   }
 
@@ -565,6 +587,17 @@ export default function Watches() {
 
                     <button
                       type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => handleSyncJellyfin(w)}
+                      disabled={jellyfinSyncBusyId === w.id || !w.download_count}
+                      title="Create/update a Jellyfin playlist with this watch's downloaded videos"
+                    >
+                      <ListMusic size={13} className={jellyfinSyncBusyId === w.id ? 'spin-icon' : ''} />
+                      <span>{jellyfinSyncBusyId === w.id ? 'Syncing…' : 'Sync to Jellyfin'}</span>
+                    </button>
+
+                    <button
+                      type="button"
                       className="icon-btn"
                       onClick={() => {
                         setEditingWatch(w);
@@ -603,6 +636,13 @@ export default function Watches() {
                     </button>
                   </div>
                 </div>
+
+                {jellyfinSyncMsg[w.id] && (
+                  <div className={`alert ${jellyfinSyncMsg[w.id].isError ? 'alert-error' : 'alert-success'}`} style={{ margin: 0, padding: '8px 12px', fontSize: 12.5 }}>
+                    {jellyfinSyncMsg[w.id].isError ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}
+                    <span>{jellyfinSyncMsg[w.id].text}</span>
+                  </div>
+                )}
               </div>
             );
           })}
