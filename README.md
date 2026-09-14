@@ -17,6 +17,7 @@ A self-hosted web app for downloading videos/audio from any site [yt-dlp](https:
 - Simple username/password login (single admin account), with rate-limited login attempts and session invalidation on password change
 - Cookie support (Settings page) for any site — YouTube, Twitch, or others — for age-restricted/members-only/private/subscriber-only content
 - Ships with modern static FFmpeg builds from [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds), with one-click in-app updates in Settings
+- Persists the selected yt-dlp stable/nightly channel across container recreation; Nightly selections are reapplied on startup and checked daily at 03:00, while FFmpeg is checked daily at 03:30 and downloaded only when its upstream build changes
 - Ships with the Deno JS runtime yt-dlp now requires to solve YouTube's JS challenges
 
 ## Quick start (Docker Compose)
@@ -141,6 +142,9 @@ All optional — set these in `.env` (or `environment:` in `docker-compose.yml`)
 | `ALLOW_LOCAL_URLS` | off | Set to `1` to disable the guard that rejects URLs pointing at loopback/private/link-local addresses (e.g. `127.0.0.1`, `192.168.x.x`) — only needed if you intentionally target an internal mirror or service. |
 | `YTDLP_BIN` | `yt-dlp` | Path to the yt-dlp binary, if not on `PATH`. |
 | `FFMPEG_DIR` | auto-detected | Directory containing `ffmpeg`/`ffprobe`, if not using the Settings-page-managed build. |
+| `YTDLP_UPDATE_CRON` | `0 3 * * *` | Cron schedule for automatic yt-dlp checks when the saved channel is Nightly. |
+| `FFMPEG_UPDATE_CRON` | `30 3 * * *` | Cron schedule for automatic FFmpeg build checks. |
+| `DEPENDENCY_UPDATE_STARTUP_DELAY_MS` | `30000` | Delay before restoring a saved Nightly yt-dlp channel after container startup. |
 
 ## Local development (without Docker)
 

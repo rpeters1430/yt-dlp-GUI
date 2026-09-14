@@ -11,6 +11,7 @@ const queue = require('./services/queue');
 const scheduler = require('./services/scheduler');
 const cleanup = require('./services/cleanup');
 const jellyfinSync = require('./services/jellyfinSync');
+const dependencyUpdater = require('./services/dependencyUpdater');
 
 const sqliteSessionDb = {
   exec(sql, callback) {
@@ -156,6 +157,7 @@ scheduler.start();
 cleanup.init(io);
 cleanup.start();
 jellyfinSync.start();
+dependencyUpdater.start();
 
 server.listen(PORT, () => {
   console.log(`yt-dlp GUI server listening on port ${PORT}`);

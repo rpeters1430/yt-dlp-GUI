@@ -11,6 +11,7 @@ const CONFIG_DIR = process.env.CONFIG_DIR || path.join(__dirname, '..', '..', 'c
 const COOKIES_FILE = path.join(CONFIG_DIR, 'cookies.txt');
 const YTDLP_CACHE_DIR = path.join(CONFIG_DIR, 'yt-dlp-cache');
 const CUSTOM_BIN_DIR = path.join(CONFIG_DIR, 'bin');
+const FFMPEG_BUILD_MARKER = path.join(CONFIG_DIR, 'ffmpeg-build-id');
 
 // Ensure custom/persisted bin dir is in process.env.PATH if it exists
 if (fs.existsSync(CUSTOM_BIN_DIR)) {
@@ -738,11 +739,17 @@ async function getVersions() {
 // Upgrades yt-dlp in place via pip. yt-dlp publishes its nightly/master builds to PyPI as
 // pre-releases, so `--pre` is all that's needed to switch channels (see yt-dlp's own README
 // "Update" section) — no separate index or package name required.
+let isUpdatingYtdlp = false;
+
 function updateYtdlp(channel) {
+  if (isUpdatingYtdlp) {
+    return Promise.reject(new Error('yt-dlp update is already in progress'));
+  }
   const args = ['install', '--no-cache-dir', '--break-system-packages', '-U'];
   if (channel === 'nightly') args.push('--pre');
   args.push('yt-dlp[default,curl-cffi]');
 
+  isUpdatingYtdlp = true;
   return new Promise((resolve, reject) => {
     const proc = spawn('pip3', args);
     let stdout = '';
@@ -750,10 +757,14 @@ function updateYtdlp(channel) {
     proc.stdout.on('data', (d) => (stdout += d));
     proc.stderr.on('data', (d) => (stderr += d));
     proc.on('close', (code) => {
+      isUpdatingYtdlp = false;
       if (code !== 0) return reject(new Error(stderr || `pip3 exited with code ${code}`));
       resolve(stdout);
     });
-    proc.on('error', reject);
+    proc.on('error', (err) => {
+      isUpdatingYtdlp = false;
+      reject(err);
+    });
   });
 }
 
@@ -882,13 +893,59 @@ function installBinary(srcPath, destDir, binName) {
 
 let isUpdatingFfmpeg = false;
 
-async function updateFfmpeg() {
+function ffmpegDownloadUrl() {
+  const { filename } = getFfmpegAssetInfo();
+  return `https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/${filename}`;
+}
+
+function ffmpegResponseIdentity(res) {
+  const etag = res.headers.get('etag');
+  if (etag) return `etag:${etag}`;
+  const modified = res.headers.get('last-modified');
+  const length = res.headers.get('content-length');
+  if (modified || length) return `metadata:${modified || ''}:${length || ''}`;
+  try {
+    const finalUrl = new URL(res.url);
+    return `url:${finalUrl.origin}${finalUrl.pathname}`;
+  } catch (_) {
+    return `url:${res.url}`;
+  }
+}
+
+async function getLatestFfmpegBuildIdentity() {
+  const res = await fetch(ffmpegDownloadUrl(), {
+    method: 'HEAD',
+    headers: { 'User-Agent': 'yt-dlp-gui' },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to check FFmpeg build (${res.status} ${res.statusText})`);
+  }
+  return ffmpegResponseIdentity(res);
+}
+
+function readInstalledFfmpegBuildIdentity() {
+  try {
+    return fs.readFileSync(FFMPEG_BUILD_MARKER, 'utf8').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+function writeInstalledFfmpegBuildIdentity(identity) {
+  if (!identity) return;
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  const tempPath = `${FFMPEG_BUILD_MARKER}.tmp-${process.pid}`;
+  fs.writeFileSync(tempPath, `${identity}\n`, { mode: 0o600 });
+  fs.renameSync(tempPath, FFMPEG_BUILD_MARKER);
+}
+
+async function updateFfmpeg(knownIdentity = null) {
   if (isUpdatingFfmpeg) {
     throw new Error('FFmpeg update is already in progress');
   }
 
   const { filename } = getFfmpegAssetInfo();
-  const downloadUrl = `https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/${filename}`;
+  const downloadUrl = ffmpegDownloadUrl();
 
   isUpdatingFfmpeg = true;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-ffmpeg-'));
@@ -902,6 +959,7 @@ async function updateFfmpeg() {
     if (!res.ok) {
       throw new Error(`Failed to download FFmpeg build (${res.status} ${res.statusText})`);
     }
+    const downloadedIdentity = knownIdentity || ffmpegResponseIdentity(res);
 
     await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(archivePath));
 
@@ -944,13 +1002,22 @@ async function updateFfmpeg() {
       process.env.PATH = `${CUSTOM_BIN_DIR}${path.delimiter}${process.env.PATH}`;
     }
 
-    return await getVersions();
+    writeInstalledFfmpegBuildIdentity(downloadedIdentity);
+    return { updated: true, ...(await getVersions()) };
   } finally {
     isUpdatingFfmpeg = false;
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
     } catch {}
   }
+}
+
+async function updateFfmpegIfAvailable() {
+  const latestIdentity = await getLatestFfmpegBuildIdentity();
+  if (latestIdentity === readInstalledFfmpegBuildIdentity()) {
+    return { updated: false, ...(await getVersions()) };
+  }
+  return updateFfmpeg(latestIdentity);
 }
 
 module.exports = {
@@ -961,6 +1028,7 @@ module.exports = {
   getVersions,
   updateYtdlp,
   updateFfmpeg,
+  updateFfmpegIfAvailable,
   getFfmpegDir,
   getFfmpegBin,
   COOKIES_FILE,

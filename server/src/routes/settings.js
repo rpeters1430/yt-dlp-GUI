@@ -9,6 +9,17 @@ const { COOKIES_FILE } = ytdlp;
 const router = express.Router();
 router.use(requireAuth);
 
+// Keep internal settings (including the persisted session secret) out of API responses and
+// prevent the general settings endpoint from becoming an arbitrary key/value writer.
+const ALLOWED_SETTINGS_KEYS = new Set(['ytdlpChannel', 'nfo_enabled']);
+
+function saveSetting(key, value) {
+  db.prepare(`
+    INSERT INTO settings (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(key, String(value));
+}
+
 router.get('/cookies', (req, res) => {
   res.json({ configured: fs.existsSync(COOKIES_FILE) });
 });
@@ -47,7 +58,13 @@ router.get('/ytdlp/version', async (req, res) => {
 // master builds); see ytdlp.updateYtdlp for how that maps to the pip invocation.
 router.post('/ytdlp/update', async (req, res) => {
   const channel = req.body && req.body.channel === 'nightly' ? 'nightly' : 'stable';
+  if (queue.getActiveCount && queue.getActiveCount() > 0) {
+    return res.status(409).json({ error: 'Cannot update yt-dlp while downloads are active. Please wait for them to complete.' });
+  }
   try {
+    // The update action is authoritative too. This closes the race where the user changes
+    // the select and immediately clicks Update before the separate settings PUT completes.
+    saveSetting('ytdlpChannel', channel);
     await ytdlp.updateYtdlp(channel);
     res.json({ ok: true, ...(await ytdlp.getVersions()) });
   } catch (err) {
@@ -68,23 +85,23 @@ router.post('/ffmpeg/update', async (req, res) => {
 });
 
 router.get('/', (req, res) => {
-  const rows = db.prepare('SELECT key, value FROM settings').all();
+  const rows = db.prepare(`SELECT key, value FROM settings WHERE key IN (${[...ALLOWED_SETTINGS_KEYS].map(() => '?').join(', ')})`)
+    .all(...ALLOWED_SETTINGS_KEYS);
   const settings = {};
   for (const r of rows) settings[r.key] = r.value;
+  settings.ytdlpChannel = settings.ytdlpChannel === 'nightly' ? 'nightly' : 'stable';
   res.json(settings);
 });
-
-// The only setting this route is actually meant to expose (see client Settings.jsx) — an
-// allow-list keeps it from becoming an arbitrary authenticated-write-to-any-key endpoint,
-// since the settings table also stores the Twitch client id and the session-signing secret
-// under keys of its own.
-const ALLOWED_SETTINGS_KEYS = new Set(['ytdlpChannel', 'nfo_enabled']);
 
 router.put('/', (req, res) => {
   const entries = Object.entries(req.body || {});
   const unknown = entries.filter(([key]) => !ALLOWED_SETTINGS_KEYS.has(key)).map(([key]) => key);
   if (unknown.length > 0) {
     return res.status(400).json({ error: `Unknown setting(s): ${unknown.join(', ')}` });
+  }
+  const invalidChannel = entries.some(([key, value]) => key === 'ytdlpChannel' && value !== 'stable' && value !== 'nightly');
+  if (invalidChannel) {
+    return res.status(400).json({ error: 'ytdlpChannel must be stable or nightly' });
   }
 
   const upsert = db.prepare(`

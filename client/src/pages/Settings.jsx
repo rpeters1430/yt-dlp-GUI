@@ -406,7 +406,9 @@ export default function Settings() {
             <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>yt-dlp</h3>
             <p className="panel-description" style={{ marginBottom: '10px' }}>
               Nightly builds get new site fixes sooner but are less tested. Switch channels here,
-              then use "Update yt-dlp" to pull the latest version.
+              then use "Update yt-dlp" to switch immediately. Your choice is saved across
+              restarts and app updates; when Nightly is selected, the app checks for a newer
+              nightly build automatically every night at 3:00 AM.
             </p>
             <div className="options-row" style={{ marginTop: 0 }}>
               <label className="field-inline">
@@ -432,6 +434,8 @@ export default function Settings() {
                 yt-dlp/FFmpeg-Builds
               </a>{' '}
               with updated codecs and fixes.
+              The app checks for a changed build every night at 3:30 AM and only downloads it
+              when an update is available.
             </p>
             <div className="options-row" style={{ marginTop: 0 }}>
               <button type="button" onClick={handleUpdateFfmpeg} disabled={ffmpegBusy}>
