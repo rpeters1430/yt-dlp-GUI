@@ -34,6 +34,7 @@ export const api = {
   enqueue: (payload) => request('/downloads', { method: 'POST', body: JSON.stringify(payload) }),
   listDownloads: () => request('/downloads'),
   deleteDownload: (id) => request(`/downloads/${id}`, { method: 'DELETE' }),
+  stopDownload: (id) => request(`/downloads/${id}/stop`, { method: 'POST' }),
   toggleDownloadProtect: (id, protectedFlag) => request(`/downloads/${id}/protect`, { method: 'PATCH', body: JSON.stringify({ protected: protectedFlag }) }),
 
   listWatches: () => request('/watches'),

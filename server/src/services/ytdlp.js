@@ -397,6 +397,14 @@ function buildDownloadArgs(url, options = {}) {
       const waitInterval = parseInt(options.waitInterval || '15', 10);
       args.push('--wait-for-video', String(waitInterval));
     }
+    // Joining a broadcast that's already in progress normally starts recording from the
+    // live edge (right now), losing everything broadcast before that point. YouTube (and a
+    // few other extractors) support fetching the full DASH manifest from the beginning of
+    // the stream instead, so a user adding an in-progress live stream can still capture it
+    // from the start rather than only from the moment it was added.
+    if (options.liveFromStart) {
+      args.push('--live-from-start');
+    }
   }
 
   if (options.downloadSections) {

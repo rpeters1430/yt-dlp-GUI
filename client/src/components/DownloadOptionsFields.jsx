@@ -1,5 +1,5 @@
 import React from 'react';
-import { Captions, Film, Music } from 'lucide-react';
+import { Captions, Film, Music, Radio, Clock } from 'lucide-react';
 
 export const SUBTITLE_LANG_OPTIONS = [
   { value: 'en.*', label: 'English' },
@@ -45,6 +45,9 @@ export function defaultDownloadOptions(overrides = {}) {
     embedChapters: true,
     sponsorblock: false,
     sponsorblockCategories: [],
+    liveFromStart: false,
+    waitForLive: true,
+    waitInterval: 15,
     ...overrides,
   };
 }
@@ -55,12 +58,15 @@ export function defaultDownloadOptions(overrides = {}) {
  * for the "apply to all" shared settings, so the same option set/behavior is available
  * everywhere instead of being duplicated and drifting.
  */
-export default function DownloadOptionsFields({ values, onChange, resolutions }) {
+export default function DownloadOptionsFields({ values, onChange, resolutions, liveInfo }) {
   const {
     audioOnly, quality, container, subtitles, subLangs,
     embedThumbnail, embedMetadata, embedChapters,
     sponsorblock, sponsorblockCategories,
+    liveFromStart, waitForLive, waitInterval,
   } = values;
+  const isLive = liveInfo?.liveStatus === 'is_live';
+  const isUpcoming = liveInfo?.liveStatus === 'is_upcoming';
 
   function set(patch) {
     onChange({ ...values, ...patch });
@@ -83,6 +89,49 @@ export default function DownloadOptionsFields({ values, onChange, resolutions })
 
   return (
     <div className="download-options-fields">
+      {isUpcoming && (
+        <div className="live-options-panel">
+          <div className="segmented-choice">
+            <button type="button" className={waitForLive ? 'active' : ''} onClick={() => set({ waitForLive: true })}>
+              <Clock size={14} /> Wait for it to start
+            </button>
+            <button type="button" className={!waitForLive ? 'active' : ''} onClick={() => set({ waitForLive: false })}>
+              <Radio size={14} /> Don't wait
+            </button>
+          </div>
+          {waitForLive ? (
+            <p className="muted small">
+              This broadcast hasn't started yet. Recording will begin automatically the moment it
+              goes live — yt-dlp checks every {waitInterval}s in the background, so this job can
+              sit queued for a while before it starts.
+            </p>
+          ) : (
+            <p className="muted small text-danger">
+              This broadcast hasn't started yet and has no video to download — the job will fail
+              immediately unless you enable "Wait for it to start".
+            </p>
+          )}
+        </div>
+      )}
+
+      {isLive && (
+        <div className="live-options-panel">
+          <div className="segmented-choice">
+            <button type="button" className={!liveFromStart ? 'active' : ''} onClick={() => set({ liveFromStart: false })}>
+              <Radio size={14} /> Join live now
+            </button>
+            <button type="button" className={liveFromStart ? 'active' : ''} onClick={() => set({ liveFromStart: true })}>
+              <Clock size={14} /> Record from broadcast start
+            </button>
+          </div>
+          <p className="muted small">
+            {liveFromStart
+              ? "Downloads the full broadcast from the moment it started, not just from now. May take a while to catch up to the live edge."
+              : 'Only what airs from now on will be recorded — anything already broadcast before this point is skipped.'}
+          </p>
+        </div>
+      )}
+
       <div className="preview-options-grid">
         <div className="segmented">
           <button type="button" className={!audioOnly ? 'active' : ''} onClick={() => set({ audioOnly: false })}>

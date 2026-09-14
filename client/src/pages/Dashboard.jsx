@@ -117,6 +117,10 @@ export default function Dashboard() {
           embedMetadata: opts.embedMetadata,
           embedChapters: opts.embedChapters,
           sponsorblockRemove: opts.sponsorblock ? opts.sponsorblockCategories : [],
+          isLive: opts.isLive,
+          liveFromStart: opts.liveFromStart,
+          waitForLive: opts.isLive && opts.liveStatus === 'is_upcoming' ? opts.waitForLive : false,
+          waitInterval: opts.waitInterval,
         });
       }
       setUrlText('');

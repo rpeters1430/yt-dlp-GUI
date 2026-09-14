@@ -2098,6 +2098,43 @@ button.chip-btn:hover:not(:disabled) {
   100% { transform: scale(0.9); opacity: 0.8; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
 }
 
+/* Live-stream options panel (Add downloads / batch analyze modal) */
+.live-options-panel {
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.06);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.live-options-panel .segmented-choice { align-self: flex-start; }
+.live-options-panel p { margin: 0; }
+
+/* Live-recording row inside a queue item (replaces the percent bar for indefinite streams) */
+.queue-item-live-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.queue-item-live-elapsed {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.live-pulsing-badge.upcoming-badge {
+  background: rgba(245, 158, 11, 0.9);
+}
+.live-pulsing-badge-sm.upcoming-badge {
+  background: rgba(245, 158, 11, 0.15);
+  color: #d97706;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+.live-pulsing-badge-sm.upcoming-badge .pulsing-dot { background: #d97706; animation: none; }
+
 .twitch-live-details {
   flex: 1;
   min-width: 0;

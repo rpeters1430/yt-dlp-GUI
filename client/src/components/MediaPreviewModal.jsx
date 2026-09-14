@@ -11,6 +11,8 @@ import {
   Tv,
   ChevronDown,
   ChevronRight,
+  Eye,
+  Radio,
 } from 'lucide-react';
 import { api } from '../api.js';
 import { useModalA11y } from '../hooks/useModalA11y.js';
@@ -28,6 +30,18 @@ function formatDuration(sec) {
   return `${mins}:${String(secs).padStart(2, '0')}`;
 }
 
+function formatReleaseTime(ts) {
+  if (!ts) return null;
+  try {
+    return new Date(ts * 1000).toLocaleString(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    });
+  } catch (_) {
+    return null;
+  }
+}
+
 function formatViews(num) {
   if (!num) return null;
   if (num >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(1)}B views`;
@@ -39,6 +53,16 @@ function formatViews(num) {
 function toResolutionOptions(data) {
   if (!data || !data.resolutions) return null;
   return data.resolutions;
+}
+
+function toLiveInfo(data) {
+  return data?.liveStatus ? { liveStatus: data.liveStatus } : null;
+}
+
+function aggregateLiveInfo(items) {
+  if (items.some((it) => it.data?.liveStatus === 'is_live')) return { liveStatus: 'is_live' };
+  if (items.some((it) => it.data?.liveStatus === 'is_upcoming')) return { liveStatus: 'is_upcoming' };
+  return null;
 }
 
 /**
@@ -122,17 +146,31 @@ export default function MediaPreviewModal({
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, settings: next } : it)));
   }
 
+  // Recording start/join behavior only makes sense for the videos that are actually live (or
+  // upcoming) — the "same options for all" batch panel is shared across every video in the
+  // batch, so its live status covers any video in that batch currently live/upcoming rather
+  // than requiring all of them to be.
+  function withLiveFlags(options, relevantItems) {
+    const anyLive = relevantItems.some((it) => it.data?.liveStatus === 'is_live');
+    const anyUpcoming = !anyLive && relevantItems.some((it) => it.data?.liveStatus === 'is_upcoming');
+    return {
+      ...options,
+      isLive: anyLive || (anyUpcoming && options.waitForLive),
+      liveStatus: anyLive ? 'is_live' : anyUpcoming ? 'is_upcoming' : null,
+    };
+  }
+
   async function handleDownload() {
     setError('');
     setDownloading(true);
     try {
       let groups;
       if (!isBatch) {
-        groups = [{ urls: [items[0].url.trim()], options: sharedSettings }];
+        groups = [{ urls: [items[0].url.trim()], options: withLiveFlags(sharedSettings, items) }];
       } else if (applySameToAll) {
-        groups = [{ urls: items.map((it) => it.url.trim()), options: sharedSettings }];
+        groups = [{ urls: items.map((it) => it.url.trim()), options: withLiveFlags(sharedSettings, items) }];
       } else {
-        groups = items.map((it) => ({ urls: [it.url.trim()], options: it.settings }));
+        groups = items.map((it) => ({ urls: [it.url.trim()], options: withLiveFlags(it.settings, [it]) }));
       }
       await onConfirmDownload(groups);
       onClose();
@@ -254,11 +292,23 @@ export default function MediaPreviewModal({
                           {it.error ? (
                             <span className="text-danger">{it.error}</span>
                           ) : it.data ? (
-                            [
-                              it.data.isPlaylist ? `${it.data.videoCount || it.data.entries?.length || 0} videos` : null,
-                              it.data.duration ? formatDuration(it.data.duration) : null,
-                              it.data.highestQuality,
-                            ].filter(Boolean).join(' · ')
+                            <>
+                              {it.data.liveStatus === 'is_live' && (
+                                <span className="live-pulsing-badge-sm" style={{ marginRight: 6 }}>
+                                  <span className="pulsing-dot" /> LIVE
+                                </span>
+                              )}
+                              {it.data.liveStatus === 'is_upcoming' && (
+                                <span className="live-pulsing-badge-sm upcoming-badge" style={{ marginRight: 6 }}>
+                                  <Clock size={10} /> UPCOMING
+                                </span>
+                              )}
+                              {[
+                                it.data.isPlaylist ? `${it.data.videoCount || it.data.entries?.length || 0} videos` : null,
+                                it.data.liveStatus === 'is_live' || it.data.liveStatus === 'is_upcoming' ? null : (it.data.duration ? formatDuration(it.data.duration) : null),
+                                it.data.highestQuality,
+                              ].filter(Boolean).join(' · ')}
+                            </>
                           ) : null}
                         </div>
                       </div>
@@ -270,6 +320,7 @@ export default function MediaPreviewModal({
                           values={it.settings}
                           onChange={(next) => updateItemSettings(idx, next)}
                           resolutions={toResolutionOptions(it.data)}
+                          liveInfo={toLiveInfo(it.data)}
                         />
                       </div>
                     )}
@@ -286,6 +337,7 @@ export default function MediaPreviewModal({
                 values={sharedSettings}
                 onChange={setSharedSettings}
                 resolutions={!isBatch ? toResolutionOptions(single?.data) : null}
+                liveInfo={!isBatch ? toLiveInfo(single?.data) : aggregateLiveInfo(items)}
               />
             </div>
           )}
@@ -300,7 +352,10 @@ export default function MediaPreviewModal({
           <button
             type="button"
             onClick={handleDownload}
-            disabled={(!isBatch && single?.loading) || downloading || items.length === 0}
+            disabled={
+              (!isBatch && single?.loading) || downloading || items.length === 0
+              || (!isBatch && single?.data?.liveStatus === 'is_upcoming' && !sharedSettings.waitForLive)
+            }
           >
             {downloading ? (
               <>
@@ -308,12 +363,16 @@ export default function MediaPreviewModal({
               </>
             ) : (
               <>
-                <Download size={15} />
+                {!isBatch && single?.data?.liveStatus === 'is_live' ? <Radio size={15} /> : <Download size={15} />}
                 {isBatch
                   ? `Download ${items.length} videos`
-                  : single?.data?.isPlaylist
-                    ? `Download Playlist (${single.data.videoCount || single.data.entries?.length || 0} videos)`
-                    : 'Download Video'}
+                  : single?.data?.liveStatus === 'is_live'
+                    ? (sharedSettings.liveFromStart ? 'Record Full Broadcast' : 'Start Recording Live')
+                    : single?.data?.liveStatus === 'is_upcoming'
+                      ? 'Wait & Auto-Record'
+                      : single?.data?.isPlaylist
+                        ? `Download Playlist (${single.data.videoCount || single.data.entries?.length || 0} videos)`
+                        : 'Download Video'}
               </>
             )}
           </button>
@@ -334,7 +393,15 @@ function SingleVideoDetails({ data }) {
               alt={data.title}
               className="preview-thumb-img"
             />
-            {data.duration ? (
+            {data.liveStatus === 'is_live' ? (
+              <span className="live-pulsing-badge">
+                <span className="pulsing-dot" /> LIVE NOW
+              </span>
+            ) : data.liveStatus === 'is_upcoming' ? (
+              <span className="live-pulsing-badge upcoming-badge">
+                <Clock size={11} /> UPCOMING
+              </span>
+            ) : data.duration ? (
               <span className="preview-duration-badge">
                 <Clock size={11} /> {formatDuration(data.duration)}
               </span>
@@ -358,9 +425,15 @@ function SingleVideoDetails({ data }) {
           {data.uploader && (
             <div className="preview-uploader">{data.uploader}</div>
           )}
+          {data.liveStatus === 'is_upcoming' && formatReleaseTime(data.releaseTimestamp) && (
+            <div className="muted small">Scheduled for {formatReleaseTime(data.releaseTimestamp)}</div>
+          )}
 
           <div className="preview-tags">
-            {data.viewCount != null && (
+            {data.liveStatus === 'is_live' && data.liveViewers != null && (
+              <span className="tag"><Eye size={11} /> {formatViews(data.liveViewers)} watching</span>
+            )}
+            {data.viewCount != null && data.liveStatus !== 'is_live' && (
               <span className="tag">{formatViews(data.viewCount)}</span>
             )}
             {data.extractor && (
@@ -368,7 +441,7 @@ function SingleVideoDetails({ data }) {
             )}
           </div>
 
-          {!data.isPlaylist && data.highestQuality && (
+          {!data.isPlaylist && data.highestQuality && data.liveStatus !== 'is_upcoming' && (
             <div className="preview-highest-quality-banner">
               <Sparkles size={16} className="sparkle-icon" />
               <div>
