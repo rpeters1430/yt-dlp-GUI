@@ -7,7 +7,6 @@ import {
   Clock,
   Sparkles,
   Download,
-  Square,
   CheckCircle2,
   AlertCircle,
   XCircle,
@@ -107,8 +106,6 @@ export default function Twitch() {
   const socketRef = useRef(null);
 
   const [vodMessage, setVodMessage] = useState(null); // { type: 'success' | 'error', text }
-  const [stopConfirmJobId, setStopConfirmJobId] = useState(null);
-  const [stopError, setStopError] = useState('');
 
   const trimModalRef = useModalA11y(!!selectedVod, () => setSelectedVod(null));
 
@@ -244,15 +241,6 @@ export default function Twitch() {
       setVodMessage({ type: 'error', text: `Download failed: ${err.message}` });
     }
     setTimeout(() => setVodMessage(null), 4000);
-  }
-
-  async function handleStopJob(id) {
-    setStopError('');
-    try {
-      await api.stopTwitchJob(id);
-    } catch (err) {
-      setStopError(`Failed to stop recording: ${err.message}`);
-    }
   }
 
   async function handleSaveSettings(e) {
@@ -872,18 +860,14 @@ export default function Twitch() {
         </section>
       )}
 
-      {/* Real-time Active Captures Tracker */}
+      {/* Real-time Active Captures Tracker — QueueItem itself now shows the live badge,
+          elapsed recording time, and a "Stop Recording" action for any is_live job, so this
+          just lists them the same way the Dashboard queue does. */}
       <section className="panel">
         <div className="panel-header">
           <h2><Radio size={16} /> Active Twitch Recordings & Queue</h2>
           {activeLiveJobs.length > 0 && <span className="count-badge">{activeLiveJobs.length}</span>}
         </div>
-
-        {stopError && (
-          <div className="alert alert-error" style={{ marginBottom: 12 }}>
-            <AlertCircle size={16} /> {stopError}
-          </div>
-        )}
 
         {activeLiveJobs.length === 0 ? (
           <div className="empty-state">
@@ -892,43 +876,9 @@ export default function Twitch() {
             <span className="empty-subtitle">Active live stream captures and VOD downloads will show up here in real time.</span>
           </div>
         ) : (
-          <div className="twitch-active-list">
+          <div className="queue-list">
             {activeLiveJobs.map((job) => (
-              <div key={job.id} className="twitch-active-card">
-                <div className="twitch-active-header">
-                  <div className="active-title-group">
-                    {job.is_live === 1 ? (
-                      <span className="live-pulsing-badge-sm">
-                        <span className="pulsing-dot" /> LIVE RECORDING
-                      </span>
-                    ) : (
-                      <span className="tag status-tag status-downloading">DOWNLOADING</span>
-                    )}
-                    <span className="active-job-title">{job.title || job.url}</span>
-                  </div>
-
-                  <div className="active-actions">
-                    {job.status === 'downloading' && (
-                      <button
-                        type="button"
-                        className="btn-danger btn-sm"
-                        onClick={() => setStopConfirmJobId(job.id)}
-                        title="Stop recording and save file to disk"
-                      >
-                        <Square size={13} /> Stop Recording
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="active-meta-line">
-                  <span className="muted small">URL: {job.url}</span>
-                  {job.speed && <span className="tag">Speed: {job.speed}</span>}
-                  {job.percent != null && job.percent > 0 && <span className="tag">{job.percent.toFixed(1)}%</span>}
-                </div>
-
-                <QueueItem job={job} onDeleted={() => {}} />
-              </div>
+              <QueueItem key={job.id} job={job} onDeleted={() => {}} />
             ))}
           </div>
         )}
@@ -956,18 +906,6 @@ export default function Twitch() {
         )}
       </section>
 
-      <ConfirmDialog
-        open={!!stopConfirmJobId}
-        title="Stop recording"
-        message="Stop recording and save the stream captured so far?"
-        confirmLabel="Stop recording"
-        onCancel={() => setStopConfirmJobId(null)}
-        onConfirm={() => {
-          const id = stopConfirmJobId;
-          setStopConfirmJobId(null);
-          handleStopJob(id);
-        }}
-      />
     </>
   );
 }

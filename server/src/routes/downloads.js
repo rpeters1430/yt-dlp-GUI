@@ -67,6 +67,11 @@ router.post('/info', async (req, res) => {
       acodec: f.acodec,
     }));
 
+    // live_status comes straight from yt-dlp: 'is_live' (broadcasting now), 'is_upcoming'
+    // (scheduled but not started — has no formats yet), 'was_live'/'post_live' (a finished
+    // broadcast now served as a VOD — downloads like any normal video), or unset/'not_live'.
+    const liveStatus = info.live_status || (info.is_live ? 'is_live' : null);
+
     res.json({
       isPlaylist: false,
       title: info.title,
@@ -81,6 +86,10 @@ router.post('/info', async (req, res) => {
         label: h >= 2160 ? `4K (${h}p)` : h >= 1440 ? `1440p (${h}p)` : h >= 1080 ? `1080p (${h}p)` : `${h}p`,
       })),
       formats,
+      isLive: liveStatus === 'is_live',
+      liveStatus,
+      liveViewers: info.concurrent_view_count || null,
+      releaseTimestamp: info.release_timestamp || null,
     });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -102,6 +111,10 @@ router.post('/', (req, res) => {
     embedMetadata,
     embedChapters,
     sponsorblockRemove,
+    isLive,
+    liveFromStart,
+    waitForLive,
+    waitInterval,
   } = req.body || {};
   const list = urls ? urls : url ? [url] : [];
   const cleaned = list.map((u) => String(u).trim()).filter(Boolean);
@@ -126,12 +139,28 @@ router.post('/', (req, res) => {
     embedMetadata: !!embedMetadata,
     embedChapters: !!embedChapters,
     sponsorblockRemove: sponsorblockRemove || '',
+    liveFromStart: !!liveFromStart,
+    waitForLive: !!waitForLive,
+    waitInterval: parseInt(waitInterval, 10) || 15,
   };
 
   const ids = cleaned.map((u) =>
-    queue.enqueue(u, { formatSelector, audioOnly, quality, container, subtitles, subLangs, optionsJson })
+    queue.enqueue(u, {
+      formatSelector, audioOnly, quality, container, subtitles, subLangs,
+      isLive: !!isLive || !!waitForLive,
+      optionsJson,
+    })
   );
   res.json({ ids });
+});
+
+// Stops a running download/recording gracefully — the process is sent SIGINT so yt-dlp/ffmpeg
+// finalize the output file, and the job goes on to a normal 'completed' state (see queue.js)
+// instead of being removed. This is the "Stop recording" action for an indefinite live
+// capture; use DELETE /:id instead to abandon a job and remove it from the list entirely.
+router.post('/:id/stop', (req, res) => {
+  const stopped = queue.stopJob(req.params.id);
+  res.json({ ok: true, stopped });
 });
 
 router.get('/', (req, res) => {
