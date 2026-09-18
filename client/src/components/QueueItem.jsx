@@ -58,15 +58,21 @@ export default function QueueItem({ job, onDeleted }) {
   const isLive = job.is_live === 1 || job.is_live === true;
   const isRecording = isLive && job.status === 'downloading';
   const elapsed = useElapsed(isRecording, parseUtc(job.created_at));
+  // The stop request only sends a signal and returns — yt-dlp can take several seconds (longer
+  // if it has to be escalated to SIGTERM/SIGKILL) to actually finish and flip job.status away
+  // from 'downloading'. `stage` is pushed by the server the moment a stop is requested, so any
+  // client watching this job sees "stopping" even if it wasn't the one that clicked the button.
+  const isStopping = stopping || job.stage === 'Stopping recording…';
 
   async function handleStop() {
     setStopping(true);
     setStopError('');
     try {
       await api.stopDownload(job.id);
+      // Left true: the recording isn't actually stopped yet, just requested. job.status/stage
+      // updates (via socket) will move this row out of the "recording" view once it really is.
     } catch (err) {
       setStopError(err.message || 'Failed to stop recording');
-    } finally {
       setStopping(false);
     }
   }
@@ -113,17 +119,25 @@ export default function QueueItem({ job, onDeleted }) {
           </div>
           {isRecording ? (
             <div className="queue-item-live-row">
-              <span className="queue-item-live-elapsed"><Clock size={12} /> {elapsed || '0:00'} recorded</span>
-              {job.stage && <span className="muted small">· {job.stage}</span>}
-              {job.speed && <span className="muted small">· {job.speed}</span>}
+              {isStopping ? (
+                <span className="muted small">
+                  <Loader2 size={12} className="spin-icon" /> Stopping — finishing the saved file…
+                </span>
+              ) : (
+                <>
+                  <span className="queue-item-live-elapsed"><Clock size={12} /> {elapsed || '0:00'} recorded</span>
+                  {job.stage && <span className="muted small">· {job.stage}</span>}
+                  {job.speed && <span className="muted small">· {job.speed}</span>}
+                </>
+              )}
               <button
                 type="button"
                 className="btn-danger btn-sm"
                 onClick={() => setConfirmStop(true)}
-                disabled={stopping}
+                disabled={isStopping}
                 title="Stop recording and save the file captured so far"
               >
-                <Square size={12} /> {stopping ? 'Stopping…' : 'Stop Recording'}
+                <Square size={12} /> {isStopping ? 'Stopping…' : 'Stop Recording'}
               </button>
             </div>
           ) : job.status === 'downloading' && (
