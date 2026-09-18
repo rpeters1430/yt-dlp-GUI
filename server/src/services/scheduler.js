@@ -150,7 +150,10 @@ async function checkWatch(watch, { manual = false, forceDownloadCount = 0 } = {}
           const resolvedMusicDir = path.isAbsolute(musicFolder)
             ? musicFolder
             : path.join(ytdlp.DOWNLOAD_DIR, musicFolder);
-          outputTemplate = `${resolvedMusicDir}/%(artist,uploader)s/%(album,playlist_title,uploader)s/%(playlist_index&{:02d} - |)s%(title)s.%(ext)s`;
+          // No album/playlist tag (a single, not part of a release) leaves this segment empty;
+          // yt-dlp collapses the resulting "//" so the file lands directly in the artist
+          // folder instead of a redundant subfolder that just repeats the artist's name.
+          outputTemplate = `${resolvedMusicDir}/%(artist,uploader)s/%(album,playlist_title|)s/%(playlist_index&{:02d} - |)s%(title)s.%(ext)s`;
           audioQuality = watch.audio_quality || '320k';
         }
 

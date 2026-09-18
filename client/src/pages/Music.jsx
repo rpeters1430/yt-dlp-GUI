@@ -376,7 +376,6 @@ export default function MusicPage() {
           track: {
             title: directInfo.title,
             artist: directInfo.uploader || 'YouTube',
-            album: 'Singles',
             trackNumber: 1,
             youtubeUrl: directUrl,
             artwork: directInfo.thumbnail,
