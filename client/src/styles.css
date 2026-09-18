@@ -428,7 +428,9 @@ button.icon-btn-neutral:hover:not(:disabled) { color: var(--text); background: v
   display: flex;
   flex-direction: column;
   gap: 22px;
+  min-width: 0;
 }
+.content > * { min-width: 0; width: 100%; }
 
 .page-header {
   display: flex;
