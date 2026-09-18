@@ -224,9 +224,18 @@ async function runJob(job) {
       log: logLines.join('\n'),
     });
 
-    if (nfoInfo && result.filepath && isNfoEnabled()) {
+    // Music tracks get their own metadata/artwork handling below; the generic .nfo/poster
+    // sidecar uses a Kodi <movie> schema and the raw YouTube thumbnail, which is meaningless
+    // (and visually wrong) clutter next to a song file.
+    if (nfoInfo && result.filepath && isNfoEnabled() && !extraOptions.isMusicDownload) {
       nfo.writeSidecarFiles(result.filepath, nfoInfo)
         .catch((e) => console.error(`[queue] [job:${job.id}] Failed to write .nfo/poster: ${e.message}`));
+    }
+
+    if (result.filepath && extraOptions.musicMetadata && extraOptions.musicMetadata.artworkUrl) {
+      const music = require('./music');
+      music.embedCoverArt(result.filepath, extraOptions.musicMetadata.artworkUrl)
+        .catch((e) => console.error(`[queue] [job:${job.id}] Failed to embed cover art: ${e.message}`));
     }
 
     // Best-effort: Jellyfin may not have scanned this file into its library yet, in which

@@ -1,16 +1,25 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
 const ytdlp = require('./ytdlp');
 const queue = require('./queue');
 const db = require('../db');
 
+// Only replacing path separators/reserved characters isn't enough: a name that sanitizes to
+// exactly ".." (or ".") is still a valid path segment that walks up a directory when joined
+// (enqueueMusicDownload uses artist/album names as raw path segments), and both album/artist
+// names here can come straight from a client-submitted track object, not just iTunes search
+// results. Collapsing an all-dots result to a safe placeholder closes that off.
 function sanitizeFilename(name) {
   if (!name) return 'Unknown';
-  return String(name)
+  const cleaned = String(name)
     .replace(/[\/\\:*?"<>|]/g, '_')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 120);
+  if (!cleaned || /^\.+$/.test(cleaned)) return 'Unknown';
+  return cleaned;
 }
 
 function escapeFfmpegMeta(val) {
@@ -248,6 +257,68 @@ async function saveCoverArt(targetDir, artworkUrl) {
   }
 }
 
+async function fetchToTempFile(url) {
+  if (!url) return null;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    const tmpPath = path.join(os.tmpdir(), `music-art-${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`);
+    fs.writeFileSync(tmpPath, buf);
+    return tmpPath;
+  } catch (err) {
+    console.error(`[music] Failed to fetch artwork for embedding: ${err.message}`);
+    return null;
+  }
+}
+
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ytdlp.getFfmpegBin(), args);
+    let stderr = '';
+    proc.stderr.on('data', (d) => (stderr += d));
+    proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`))));
+    proc.on('error', reject);
+  });
+}
+
+// mp3/m4a/flac all reliably support an embedded "attached picture" via ffmpeg's generic
+// -disposition:v attached_pic path; opus (ogg) and wav don't, so those just keep relying on
+// the folder-level cover.jpg from saveCoverArt for media-server artwork.
+const EMBEDDABLE_ARTWORK_FORMATS = new Set(['mp3', 'm4a', 'flac']);
+
+// yt-dlp's own --embed-thumbnail only has access to the matched YouTube video's own
+// thumbnail (a video frame/channel avatar), not the real album art this feature already
+// resolved via iTunes — so cover art is embedded here as its own post-download ffmpeg step
+// using the exact artwork URL the track was matched against, instead of relying on that flag.
+async function embedCoverArt(filepath, artworkUrl) {
+  if (!filepath || !artworkUrl || !fs.existsSync(filepath)) return;
+  const ext = path.extname(filepath).slice(1).toLowerCase();
+  if (!EMBEDDABLE_ARTWORK_FORMATS.has(ext)) return;
+
+  const coverPath = await fetchToTempFile(artworkUrl);
+  if (!coverPath) return;
+
+  const tempOut = `${filepath}.artwork-tmp${path.extname(filepath)}`;
+  try {
+    await runFfmpeg([
+      '-y', '-i', filepath, '-i', coverPath,
+      '-map', '0:a', '-map', '1:v',
+      '-c', 'copy', '-id3v2_version', '3',
+      '-metadata:s:v', 'title=Album cover',
+      '-metadata:s:v', 'comment=Cover (front)',
+      '-disposition:v', 'attached_pic',
+      tempOut,
+    ]);
+    fs.renameSync(tempOut, filepath);
+  } catch (err) {
+    console.error(`[music] Failed to embed cover art into ${filepath}: ${err.message}`);
+    try { fs.unlinkSync(tempOut); } catch (_) {}
+  } finally {
+    try { fs.unlinkSync(coverPath); } catch (_) {}
+  }
+}
+
 function getMusicSettings() {
   const keys = ['music_folder', 'music_format', 'music_quality', 'music_save_cover'];
   const rows = db.prepare(`SELECT key, value FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).all(...keys);
@@ -336,8 +407,13 @@ async function enqueueMusicDownload({
     optionsJson: {
       audioQuality: audioQuality || '320k',
       outputTemplate,
-      embedThumbnail: true,
-      embedMetadata: true,
+      // Deliberately NOT embedThumbnail/embedMetadata: yt-dlp's FFmpegMetadata/EmbedThumbnail
+      // postprocessors run *after* the ExtractAudio postprocessor-args below (see yt-dlp's
+      // get_postprocessors() ordering) and would stomp the clean iTunes-sourced tags with the
+      // raw YouTube title/uploader, and embed the video's own thumbnail instead of real album
+      // art. The metadata is fully handled by postprocessorArgs; artwork is embedded separately
+      // in queue.js via embedCoverArt() using the actual matched artwork URL.
+      isMusicDownload: true,
       postprocessorArgs: [ppa],
       musicMetadata: {
         title: track.title,
@@ -370,6 +446,7 @@ module.exports = {
   matchTrackToYouTube,
   inspectUrl,
   saveCoverArt,
+  embedCoverArt,
   getMusicSettings,
   updateMusicSettings,
   enqueueMusicDownload,
