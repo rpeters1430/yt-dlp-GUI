@@ -78,6 +78,7 @@ const settingsRoutes = require('./routes/settings');
 const twitchRoutes = require('./routes/twitch');
 const cleanupRoutes = require('./routes/cleanup');
 const jellyfinRoutes = require('./routes/jellyfin');
+const musicRoutes = require('./routes/music');
 
 const PORT = process.env.PORT || 3000;
 const SqliteStore = SqliteStoreFactory(session);
@@ -127,6 +128,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/twitch', twitchRoutes);
 app.use('/api/cleanup', cleanupRoutes);
 app.use('/api/jellyfin', jellyfinRoutes);
+app.use('/api/music', musicRoutes);
 
 const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
 app.use(express.static(clientDist));

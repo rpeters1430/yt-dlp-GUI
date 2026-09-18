@@ -142,19 +142,33 @@ async function checkWatch(watch, { manual = false, forceDownloadCount = 0 } = {}
           ? (watch.sponsorblock_categories ? watch.sponsorblock_categories.split(',').map((s) => s.trim()).filter(Boolean) : ['sponsor'])
           : [];
 
+        let outputTemplate = null;
+        let audioQuality = null;
+        if (watch.is_music) {
+          const path = require('path');
+          const musicFolder = watch.music_folder || 'Music';
+          const resolvedMusicDir = path.isAbsolute(musicFolder)
+            ? musicFolder
+            : path.join(ytdlp.DOWNLOAD_DIR, musicFolder);
+          outputTemplate = `${resolvedMusicDir}/%(artist,uploader)s/%(album,playlist_title,uploader)s/%(playlist_index&{:02d} - |)s%(title)s.%(ext)s`;
+          audioQuality = watch.audio_quality || '320k';
+        }
+
         queue.enqueue(entryUrl, {
           formatSelector: watch.format_selector,
-          audioOnly: !!watch.audio_only,
+          audioOnly: !!watch.audio_only || !!watch.is_music,
           quality: watch.quality || null,
-          container: watch.container || 'mp4',
+          container: watch.container || (watch.is_music ? 'mp3' : 'mp4'),
           subtitles: !!watch.subtitles,
           subLangs: watch.sub_langs || 'en.*',
           watchId: watch.id,
           optionsJson: {
-            embedThumbnail: !!watch.embed_thumbnail,
-            embedMetadata: !!watch.embed_metadata,
+            embedThumbnail: !!watch.embed_thumbnail || !!watch.is_music,
+            embedMetadata: !!watch.embed_metadata || !!watch.is_music,
             embedChapters: !!watch.embed_chapters,
             sponsorblockCategories,
+            outputTemplate,
+            audioQuality,
           },
         });
         enqueuedCount++;

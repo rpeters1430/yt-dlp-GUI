@@ -9,9 +9,14 @@ const { COOKIES_FILE } = ytdlp;
 const router = express.Router();
 router.use(requireAuth);
 
-// Keep internal settings (including the persisted session secret) out of API responses and
-// prevent the general settings endpoint from becoming an arbitrary key/value writer.
-const ALLOWED_SETTINGS_KEYS = new Set(['ytdlpChannel', 'nfo_enabled']);
+const ALLOWED_SETTINGS_KEYS = new Set([
+  'ytdlpChannel',
+  'nfo_enabled',
+  'music_folder',
+  'music_format',
+  'music_quality',
+  'music_save_cover',
+]);
 
 function saveSetting(key, value) {
   db.prepare(`

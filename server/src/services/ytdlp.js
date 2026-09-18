@@ -173,6 +173,7 @@ function isPrivateOrLoopbackIp(host) {
 
 function assertPublicUrl(url) {
   if (process.env.ALLOW_LOCAL_URLS === '1') return;
+  if (typeof url === 'string' && /^ytsearch/i.test(url)) return;
   let parsed;
   try {
     parsed = new URL(url);
@@ -319,7 +320,12 @@ function buildDownloadArgs(url, options = {}) {
     embedMetadata = false,
     embedChapters = false,
     sponsorblockRemove = '',
+    outputTemplate = null,
+    audioQuality = null,
+    postprocessorArgs = null,
   } = options;
+
+  const targetOutput = outputTemplate || `${DOWNLOAD_DIR}/%(uploader,extractor)s/%(title)s [%(id)s].%(ext)s`;
 
   const args = [
     '--newline',
@@ -327,16 +333,17 @@ function buildDownloadArgs(url, options = {}) {
     ...commonArgs(),
     '--progress-template', 'download:YTDLP_PROGRESS %(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s',
     '--progress-template', 'postprocess:YTDLP_POSTPROCESS %(progress._percent_str)s',
-    '-o', `${DOWNLOAD_DIR}/%(uploader,extractor)s/%(title)s [%(id)s].%(ext)s`,
+    '-o', targetOutput,
     '--print', 'after_move:FILEPATH %(filepath)s',
   ];
 
   if (audioOnly) {
-    // The Watch modal (and any future caller) offers mp3/m4a/opus/flac as the audio
-    // container, but this previously always hardcoded mp3 — silently ignoring the choice.
-    const AUDIO_FORMATS = ['mp3', 'm4a', 'opus', 'flac'];
+    const AUDIO_FORMATS = ['mp3', 'm4a', 'opus', 'flac', 'wav', 'alac', 'vorbis', 'aac'];
     const audioFormat = AUDIO_FORMATS.includes(container) ? container : 'mp3';
     args.push('-x', '--audio-format', audioFormat, '-f', buildFormatSelector({ audioOnly }));
+    if (audioQuality) {
+      args.push('--audio-quality', String(audioQuality));
+    }
   } else {
     args.push('-f', buildFormatSelector({ formatSelector, quality }));
     if (container === 'ts') {
@@ -414,6 +421,14 @@ function buildDownloadArgs(url, options = {}) {
 
   if (options.twitchChat) {
     args.push('--write-subs', '--sub-langs', 'rechat,all');
+  }
+
+  if (Array.isArray(postprocessorArgs)) {
+    for (const ppa of postprocessorArgs) {
+      if (ppa) args.push('--postprocessor-args', ppa);
+    }
+  } else if (typeof postprocessorArgs === 'string' && postprocessorArgs.trim()) {
+    args.push('--postprocessor-args', postprocessorArgs.trim());
   }
 
   args.push(url);
@@ -1020,8 +1035,33 @@ async function updateFfmpegIfAvailable() {
   return updateFfmpeg(latestIdentity);
 }
 
+async function searchYouTube(query, limit = 1) {
+  const cleanLimit = Math.max(1, Math.min(10, parseInt(limit, 10) || 1));
+  const cleanQuery = String(query || '').trim();
+  if (!cleanQuery) return [];
+  const searchUrl = `ytsearch${cleanLimit}:${cleanQuery}`;
+  const info = await getInfo(searchUrl, { flatPlaylist: true });
+  const entries = [];
+  if (info && Array.isArray(info.entries)) {
+    for (const e of info.entries) {
+      if (e && (e.id || e.url)) {
+        entries.push({
+          id: e.id,
+          url: e.url || (e.id ? `https://www.youtube.com/watch?v=${e.id}` : null),
+          title: e.title,
+          duration: typeof e.duration === 'number' ? e.duration : null,
+          uploader: e.uploader || e.channel || null,
+          thumbnail: e.thumbnails?.[0]?.url || e.thumbnail || null,
+        });
+      }
+    }
+  }
+  return entries;
+}
+
 module.exports = {
   getInfo,
+  searchYouTube,
   download,
   buildDownloadArgs,
   formatCommand,
@@ -1031,6 +1071,7 @@ module.exports = {
   updateFfmpegIfAvailable,
   getFfmpegDir,
   getFfmpegBin,
+  DOWNLOAD_DIR,
   COOKIES_FILE,
   stopDownload,
   assertPublicUrl,

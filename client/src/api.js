@@ -82,4 +82,16 @@ export const api = {
   getTwitchSettings: () => request('/twitch/settings'),
   saveTwitchSettings: (payload) => request('/twitch/settings', { method: 'POST', body: JSON.stringify(payload) }),
   listTwitchJobs: () => request('/twitch/jobs'),
+
+  // Music Hub
+  searchMusic: (q, type = 'album') => request(`/music/search?q=${encodeURIComponent(q)}&type=${encodeURIComponent(type)}`),
+  getMusicAlbum: (id) => request(`/music/album/${encodeURIComponent(id)}`),
+  matchMusicTrack: (track) => request('/music/match-track', { method: 'POST', body: JSON.stringify({ track }) }),
+  matchMusicBatch: (tracks) => request('/music/match-batch', { method: 'POST', body: JSON.stringify({ tracks }) }),
+  inspectMusicUrl: (url) => request('/music/inspect-url', { method: 'POST', body: JSON.stringify({ url }) }),
+  downloadMusic: (payload) => request('/music/download', { method: 'POST', body: JSON.stringify(payload) }),
+  listMusicWatches: () => request('/music/watches'),
+  createMusicWatch: (payload) => request('/music/watches', { method: 'POST', body: JSON.stringify(payload) }),
+  getMusicSettings: () => request('/music/settings'),
+  updateMusicSettings: (payload) => request('/music/settings', { method: 'PUT', body: JSON.stringify(payload) }),
 };
