@@ -436,6 +436,13 @@ function buildDownloadArgs(url, options = {}) {
 }
 
 const activeProcesses = new Map();
+// yt-dlp catches SIGINT itself (KeyboardInterrupt) and exits cleanly via sys.exit(1) rather
+// than letting the OS terminate it — so Node's child_process 'close' event reports signal:
+// null, code: 1 for the common "stop recording" case, indistinguishable from a real failure
+// by signal/code alone. Tracking the jobId here lets download() recognize a user-requested
+// stop regardless of how the process actually exits (clean self-exit, or SIGTERM/SIGKILL if
+// it doesn't respond to SIGINT in time).
+const userStoppedJobs = new Set();
 
 // yt-dlp spawns ffmpeg (merge/postprocess) as its own child process. Signaling only the
 // direct child (proc.kill()) leaves ffmpeg running as an orphan after "stop". Processes are
@@ -460,6 +467,7 @@ function killProcessTree(proc, signal) {
 function stopDownload(jobId) {
   const proc = activeProcesses.get(jobId);
   if (!proc) return false;
+  userStoppedJobs.add(jobId);
   console.log(`[ytdlp] Gracefully stopping download for job ${jobId} via SIGINT`);
   try {
     killProcessTree(proc, 'SIGINT');
@@ -692,13 +700,18 @@ function download(url, options = {}, onProgress, onLog) {
       if (stdoutRemainder.trim()) processLines([stdoutRemainder], false);
       if (stderrRemainder.trim()) processLines([stderrRemainder], true);
       if (idleTimer) clearTimeout(idleTimer);
+      const wasStoppedByUser = !!options.jobId && userStoppedJobs.has(options.jobId);
       if (options.jobId) {
         activeProcesses.delete(options.jobId);
+        userStoppedJobs.delete(options.jobId);
       }
       if (timedOut) {
         return reject(new Error(`Download stalled: no output for ${Math.round(DOWNLOAD_IDLE_TIMEOUT_MS / 60000)} minutes`));
       }
-      const stoppedByUser = signal === 'SIGINT' || signal === 'SIGTERM';
+      // Covers both the common case (yt-dlp catches SIGINT itself and exits with a non-zero
+      // code, so signal is null here) and the escalated-kill case (SIGTERM/SIGKILL actually
+      // terminates it, so Node reports the real signal).
+      const stoppedByUser = wasStoppedByUser || signal === 'SIGINT' || signal === 'SIGTERM' || signal === 'SIGKILL';
       if (code !== 0 && !stoppedByUser) {
         const errMsg = stderr.trim() || `yt-dlp exited with code ${code}`;
         console.error(`[${jobId}] Failed with exit code ${code}: ${errMsg}`);
@@ -719,6 +732,7 @@ function download(url, options = {}, onProgress, onLog) {
       if (idleTimer) clearTimeout(idleTimer);
       if (options.jobId) {
         activeProcesses.delete(options.jobId);
+        userStoppedJobs.delete(options.jobId);
       }
       console.error(`[${jobId}] Process spawn error: ${err.message}`);
       onLog && onLog(`[error] Process spawn error: ${err.message}`);

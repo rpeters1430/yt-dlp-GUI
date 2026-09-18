@@ -368,8 +368,13 @@ async function enqueueMusicDownload({
     : path.join(ytdlp.DOWNLOAD_DIR, baseFolder);
 
   const artistDir = sanitizeFilename(track.artist || 'Unknown Artist');
-  const albumDir = sanitizeFilename(track.album || 'Single');
-  const targetDir = path.join(resolvedBaseDir, artistDir, albumDir);
+  const albumName = track.album && String(track.album).trim();
+  // A track with no real album (a single) goes straight into the artist folder rather than
+  // an extra "Single" subfolder, matching how album tracks are only nested when there's an
+  // actual album to group them under.
+  const targetDir = albumName
+    ? path.join(resolvedBaseDir, artistDir, sanitizeFilename(albumName))
+    : path.join(resolvedBaseDir, artistDir);
 
   if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true });
