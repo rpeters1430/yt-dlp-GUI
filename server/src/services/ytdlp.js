@@ -542,6 +542,13 @@ function download(url, options = {}, onProgress, onLog) {
     const isMultiFormat = !options.audioOnly && (!options.formatSelector || options.formatSelector.includes('+'));
     let currentPass = 1;
     let highestPassPercent = 0;
+    // Previously assigned without a declaration, which made these accidental globals shared
+    // across every concurrent download() call (a race under MAX_CONCURRENT_DOWNLOADS > 1) and
+    // risked a ReferenceError if a "[download] Destination:" line arrived before any
+    // "Downloading N format(s):" line had ever been seen process-wide.
+    let totalFormats = 1;
+    let formatIndex = 0;
+    let currentStage = null;
 
     function reportProgress(rawPercent, speed, eta, explicitStage) {
       if (Number.isNaN(rawPercent)) return;

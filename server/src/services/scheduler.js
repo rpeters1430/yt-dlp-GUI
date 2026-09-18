@@ -169,6 +169,7 @@ async function checkWatch(watch, { manual = false, forceDownloadCount = 0 } = {}
             sponsorblockCategories,
             outputTemplate,
             audioQuality,
+            isMusicDownload: !!watch.is_music,
           },
         });
         enqueuedCount++;
