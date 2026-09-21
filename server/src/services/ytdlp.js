@@ -508,7 +508,7 @@ function isPlaylistUrl(url) {
     const parsed = new URL(normalized, 'https://example.invalid');
     const host = parsed.hostname.toLowerCase();
     const isYouTubeHost = /(^|\.)youtube\.com$/i.test(host) || host === 'youtu.be';
-    if (/\/playlist(?:\/|$)/i.test(parsed.pathname)) return true;
+    if (/\/playlist(?:\/|$)/i.test(parsed.pathname) && isYouTubeHost) return true;
     if (parsed.searchParams.get('list') && isYouTubeHost) return true;
     return false;
   } catch (_) {

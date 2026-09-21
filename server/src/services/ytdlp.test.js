@@ -6,6 +6,7 @@ test('isPlaylistUrl detects playlist URLs across supported URL forms', () => {
   assert.equal(isPlaylistUrl('https://www.youtube.com/playlist?list=PL123'), true);
   assert.equal(isPlaylistUrl('www.youtube.com/playlist?list=PL123'), true);
   assert.equal(isPlaylistUrl('//www.youtube.com/playlist?list=PL123'), true);
+  assert.equal(isPlaylistUrl('https://youtu.be/abc123?list=PL123'), true);
 });
 
 test('isPlaylistUrl does not treat arbitrary list query params as playlist', () => {
