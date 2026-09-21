@@ -495,6 +495,17 @@ function stopDownload(jobId) {
 // Disabled for --wait-for-video jobs, which are *supposed* to sit idle while polling for a
 // stream to go live.
 const DOWNLOAD_IDLE_TIMEOUT_MS = parseInt(process.env.DOWNLOAD_IDLE_TIMEOUT_MS || String(15 * 60 * 1000), 10);
+const PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS = parseInt(process.env.PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS || String(60 * 60 * 1000), 10);
+
+function isPlaylistUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.searchParams.get('list')) return true;
+    return /\/playlist(?:\/|$)/i.test(parsed.pathname);
+  } catch (_) {
+    return false;
+  }
+}
 
 // Downloads a single URL, streaming progress updates via onProgress({percent, speed, eta})
 // and log messages via onLog(line).
@@ -504,6 +515,7 @@ function download(url, options = {}, onProgress, onLog) {
   const commandStr = formatCommand(YTDLP_BIN, args);
   const jobId = options.jobId ? `job:${options.jobId}` : 'download';
   const ffmpegDir = getFfmpegDir();
+  const idleTimeoutMs = isPlaylistUrl(url) ? PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS : DOWNLOAD_IDLE_TIMEOUT_MS;
 
   console.log(`[${jobId}] Starting download: ${url}`);
   console.log(`[${jobId}] Command: ${commandStr}`);
@@ -537,11 +549,11 @@ function download(url, options = {}, onProgress, onLog) {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
         timedOut = true;
-        const msg = `No output for ${Math.round(DOWNLOAD_IDLE_TIMEOUT_MS / 60000)} min — terminating as hung`;
+        const msg = `No output for ${Math.round(idleTimeoutMs / 60000)} min — terminating as hung`;
         console.error(`[${jobId}] ${msg}`);
         onLog && onLog(`[error] ${msg}`);
         killProcessTree(proc, 'SIGKILL');
-      }, DOWNLOAD_IDLE_TIMEOUT_MS);
+      }, idleTimeoutMs);
     }
     resetIdleTimer();
 
@@ -706,7 +718,7 @@ function download(url, options = {}, onProgress, onLog) {
         userStoppedJobs.delete(options.jobId);
       }
       if (timedOut) {
-        return reject(new Error(`Download stalled: no output for ${Math.round(DOWNLOAD_IDLE_TIMEOUT_MS / 60000)} minutes`));
+        return reject(new Error(`Download stalled: no output for ${Math.round(idleTimeoutMs / 60000)} minutes`));
       }
       // Covers both the common case (yt-dlp catches SIGINT itself and exits with a non-zero
       // code, so signal is null here) and the escalated-kill case (SIGTERM/SIGKILL actually
