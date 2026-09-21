@@ -502,7 +502,8 @@ function isPlaylistUrl(url) {
   if (!raw) return false;
   if (/[?&]list=/i.test(raw) || /\/playlist(?:\/|$|\?)/i.test(raw)) return true;
   try {
-    const parsed = new URL(raw);
+    const looksLikeHostWithoutScheme = !/^[a-z][a-z0-9+.-]*:/i.test(raw) && /^[\w.-]+\.[a-z]{2,}(?:\/|$)/i.test(raw);
+    const parsed = new URL(looksLikeHostWithoutScheme ? `https://${raw}` : raw);
     if (parsed.searchParams.get('list')) return true;
     return /\/playlist(?:\/|$)/i.test(parsed.pathname);
   } catch (_) {
