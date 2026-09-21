@@ -53,7 +53,21 @@ WORKDIR /app
 # build-essential above lets native deps (better-sqlite3) compile from source when no
 # prebuilt binary exists yet for the current Node version.
 COPY server/package.json ./server/
-RUN cd server && npm install --omit=dev
+#
+# --omit=optional drops connect-sqlite3's optional `sqlite3` dependency (and the node-gyp/
+# tar/http-proxy-agent toolchain it pulls in to build from source). It's dead weight here:
+# index.js always passes connect-sqlite3 a `db` option backed by better-sqlite3, so the
+# store never falls back to requiring the `sqlite3` package. Skipping its install removes a
+# long-unpatched, unused native dependency chain from the final image.
+#
+# build-essential is then purged: it was only needed above to compile better-sqlite3, and
+# it hard-depends on libc6-dev, which hard-depends on the linux-libc-dev kernel headers —
+# together the single largest CVE surface in this image. Nothing at runtime needs a
+# compiler: the "Update yt-dlp" pip install pulls curl-cffi's prebuilt manylinux/musllinux
+# wheels for amd64/arm64, never a source build.
+RUN cd server && npm install --omit=dev --omit=optional \
+    && apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY server/ ./server/
 COPY --from=client-build /app/client/dist ./client/dist
