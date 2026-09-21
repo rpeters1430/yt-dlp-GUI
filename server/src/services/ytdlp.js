@@ -500,15 +500,17 @@ const PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS = parseInt(process.env.PLAYLIST_DOWNLOAD
 function isPlaylistUrl(url) {
   const raw = String(url || '').trim();
   if (!raw) return false;
-  if (/[?&]list=/i.test(raw) || /\/playlist(?:\/|$|\?)/i.test(raw)) return true;
   try {
     const looksLikeHostWithoutScheme = !/^[a-z][a-z0-9+.-]*:/i.test(raw) && /^[\w.-]+\.[a-z]{2,}(?:\/|$)/i.test(raw);
     const normalized = raw.startsWith('//')
       ? `https:${raw}`
       : (looksLikeHostWithoutScheme ? `https://${raw}` : raw);
-    const parsed = new URL(normalized);
-    if (parsed.searchParams.get('list')) return true;
-    return /\/playlist(?:\/|$)/i.test(parsed.pathname);
+    const parsed = new URL(normalized, 'https://example.invalid');
+    const host = parsed.hostname.toLowerCase();
+    const isYouTubeHost = /(^|\.)youtube\.com$/i.test(host) || host === 'youtu.be';
+    if (/\/playlist(?:\/|$)/i.test(parsed.pathname)) return true;
+    if (parsed.searchParams.get('list') && isYouTubeHost) return true;
+    return false;
   } catch (_) {
     return false;
   }
@@ -1119,4 +1121,5 @@ module.exports = {
   hasTwitchAuthCookie,
   getTwitchAuthTokenMasked,
   writeCookiesFilePreservingTwitchAuth,
+  isPlaylistUrl,
 };
