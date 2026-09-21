@@ -139,6 +139,7 @@ All optional — set these in `.env` (or `environment:` in `docker-compose.yml`)
 | `COOKIE_SECURE` | off | Set to `1` once the app is reachable over HTTPS; restricts the login cookie to HTTPS requests. |
 | `MAX_CONCURRENT_DOWNLOADS` | `2` | How many downloads run at once. |
 | `DOWNLOAD_IDLE_TIMEOUT_MS` | `900000` (15 min) | Kills a download if yt-dlp produces no output for this long (a hung/stalled job would otherwise occupy a queue slot forever). Skipped for "wait for stream to go live" jobs, which are supposed to sit idle. |
+| `PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS` | `3600000` (60 min) | Same watchdog, but only for playlist URLs (e.g. `...?list=...`), which can legitimately spend much longer preparing before the first per-item progress line appears. |
 | `GETINFO_TIMEOUT_MS` | `120000` (2 min) | Same idea, for metadata-only lookups (the format picker, watch checks, pre-download info fetch). |
 | `ALLOW_LOCAL_URLS` | off | Set to `1` to disable the guard that rejects URLs pointing at loopback/private/link-local addresses (e.g. `127.0.0.1`, `192.168.x.x`) — only needed if you intentionally target an internal mirror or service. |
 | `YTDLP_BIN` | `yt-dlp` | Path to the yt-dlp binary, if not on `PATH`. |
