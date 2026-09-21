@@ -498,8 +498,11 @@ const DOWNLOAD_IDLE_TIMEOUT_MS = parseInt(process.env.DOWNLOAD_IDLE_TIMEOUT_MS |
 const PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS = parseInt(process.env.PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS || String(60 * 60 * 1000), 10);
 
 function isPlaylistUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return false;
+  if (/[?&]list=/i.test(raw) || /\/playlist(?:\/|$|\?)/i.test(raw)) return true;
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(raw);
     if (parsed.searchParams.get('list')) return true;
     return /\/playlist(?:\/|$)/i.test(parsed.pathname);
   } catch (_) {
