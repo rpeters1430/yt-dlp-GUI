@@ -86,6 +86,7 @@ export const api = {
   // Music Hub
   searchMusic: (q, type = 'album') => request(`/music/search?q=${encodeURIComponent(q)}&type=${encodeURIComponent(type)}`),
   getMusicAlbum: (id) => request(`/music/album/${encodeURIComponent(id)}`),
+  getMusicArtist: (id) => request(`/music/artist/${encodeURIComponent(id)}`),
   matchMusicTrack: (track) => request('/music/match-track', { method: 'POST', body: JSON.stringify({ track }) }),
   matchMusicBatch: (tracks) => request('/music/match-batch', { method: 'POST', body: JSON.stringify({ tracks }) }),
   inspectMusicUrl: (url) => request('/music/inspect-url', { method: 'POST', body: JSON.stringify({ url }) }),

@@ -21,12 +21,27 @@ router.get('/search', async (req, res) => {
     if (type === 'track' || type === 'song') {
       const results = await music.searchTracks(query, limit);
       res.json({ results, type: 'track' });
+    } else if (type === 'artist') {
+      const results = await music.searchArtists(query, limit);
+      res.json({ results, type: 'artist' });
     } else {
-      const results = await music.searchAlbums(query, limit);
-      res.json({ results, type: 'album' });
+      const data = await music.searchAlbums(query, limit);
+      res.json({ results: data.results, matchedArtist: data.matchedArtist, type: 'album' });
     }
   } catch (err) {
     console.error('[music:search] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get artist discography with albums and singles separated
+router.get('/artist/:id', async (req, res) => {
+  const artistId = req.params.id;
+  try {
+    const data = await music.getArtistDiscography(artistId);
+    res.json(data);
+  } catch (err) {
+    console.error('[music:artist] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

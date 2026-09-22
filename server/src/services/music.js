@@ -53,25 +53,195 @@ async function fetchJson(url, options = {}) {
   }
 }
 
-async function searchAlbums(query, limit = 20) {
+function classifyRelease(collectionName, trackCount, collectionType) {
+  const nameLower = (collectionName || '').toLowerCase();
+  const isSingle =
+    /\s*-\s*single$/i.test(nameLower) ||
+    /\s*-\s*ep$/i.test(nameLower) ||
+    (typeof trackCount === 'number' && trackCount > 0 && trackCount <= 3) ||
+    collectionType === 'Single';
+  return isSingle ? 'single' : 'album';
+}
+
+async function getArtistDiscography(artistId) {
+  if (!artistId) throw new Error('Artist ID is required');
+  const url = `https://itunes.apple.com/lookup?id=${encodeURIComponent(artistId)}&entity=album&limit=200`;
+  const data = await fetchJson(url);
+  const items = data.results || [];
+  if (items.length === 0) throw new Error('Artist not found');
+
+  const artistItem = items.find((i) => i.wrapperType === 'artist') || {
+    artistId,
+    artistName: 'Unknown Artist',
+  };
+
+  const rawCollections = items.filter((i) => i.wrapperType === 'collection');
+
+  const seenKeys = new Set();
+  const allReleases = [];
+  const albums = [];
+  const singles = [];
+
+  for (const c of rawCollections) {
+    if (!c.collectionName) continue;
+    const normName = c.collectionName.toLowerCase().replace(/\s+/g, ' ').trim();
+    const dedupKey = `${normName}|${c.trackCount || 0}`;
+    if (seenKeys.has(dedupKey)) continue;
+    seenKeys.add(dedupKey);
+
+    const releaseType = classifyRelease(c.collectionName, c.trackCount, c.collectionType);
+    const isSingle = releaseType === 'single';
+
+    const item = {
+      id: c.collectionId,
+      name: c.collectionName,
+      artist: c.artistName,
+      artistId: c.artistId,
+      artwork: upgradeArtworkUrl(c.artworkUrl100 || c.artworkUrl60, 600),
+      thumbnail: c.artworkUrl100 || c.artworkUrl60,
+      releaseYear: c.releaseDate ? c.releaseDate.slice(0, 4) : null,
+      releaseDate: c.releaseDate || null,
+      trackCount: c.trackCount || 0,
+      genre: c.primaryGenreName || artistItem.primaryGenreName || null,
+      copyright: c.copyright || null,
+      isSingle,
+      releaseType,
+      explicitness: c.collectionExplicitness || null,
+    };
+
+    allReleases.push(item);
+    if (isSingle) {
+      singles.push(item);
+    } else {
+      albums.push(item);
+    }
+  }
+
+  const sortByDateDesc = (a, b) => {
+    const da = a.releaseDate ? new Date(a.releaseDate).getTime() : 0;
+    const db = b.releaseDate ? new Date(b.releaseDate).getTime() : 0;
+    return db - da;
+  };
+
+  allReleases.sort(sortByDateDesc);
+  albums.sort(sortByDateDesc);
+  singles.sort(sortByDateDesc);
+
+  const topArtwork = albums[0]?.artwork || singles[0]?.artwork || allReleases[0]?.artwork || null;
+
+  return {
+    artist: {
+      id: artistItem.artistId,
+      name: artistItem.artistName,
+      genre: artistItem.primaryGenreName || null,
+      artwork: topArtwork,
+      url: artistItem.artistLinkUrl || null,
+    },
+    counts: {
+      albums: albums.length,
+      singles: singles.length,
+      total: allReleases.length,
+    },
+    albums,
+    singles,
+    all: allReleases,
+  };
+}
+
+async function searchArtists(query, limit = 20) {
   const q = String(query || '').trim();
   if (!q) return [];
-  const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=album&limit=${Math.min(50, Math.max(1, limit))}`;
+  const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=musicArtist&limit=${Math.min(50, Math.max(1, limit))}`;
   const data = await fetchJson(url);
   const results = data.results || [];
-  return results.map((r) => ({
-    id: r.collectionId,
-    name: r.collectionName,
-    artist: r.artistName,
-    artistId: r.artistId,
-    artwork: upgradeArtworkUrl(r.artworkUrl100 || r.artworkUrl60, 600),
-    thumbnail: r.artworkUrl100 || r.artworkUrl60,
-    releaseYear: r.releaseDate ? r.releaseDate.slice(0, 4) : null,
-    releaseDate: r.releaseDate || null,
-    trackCount: r.trackCount || 0,
-    genre: r.primaryGenreName || null,
-    copyright: r.copyright || null,
-  }));
+
+  return await Promise.all(
+    results.map(async (a) => {
+      let artwork = null;
+      try {
+        const lookup = await fetchJson(`https://itunes.apple.com/lookup?id=${a.artistId}&entity=album&limit=2`);
+        const col = (lookup.results || []).find((x) => x.wrapperType === 'collection');
+        if (col) {
+          artwork = upgradeArtworkUrl(col.artworkUrl100 || col.artworkUrl60, 600);
+        }
+      } catch (_) {}
+      return {
+        id: a.artistId,
+        name: a.artistName,
+        genre: a.primaryGenreName || null,
+        linkUrl: a.artistLinkUrl || null,
+        artwork,
+      };
+    })
+  );
+}
+
+async function searchAlbums(query, limit = 50) {
+  const q = String(query || '').trim();
+  if (!q) return { results: [], matchedArtist: null };
+
+  const albumUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=album&limit=${Math.min(50, Math.max(1, limit))}`;
+  const artistUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=musicArtist&limit=3`;
+
+  const [albumData, artistData] = await Promise.all([
+    fetchJson(albumUrl).catch(() => ({ results: [] })),
+    fetchJson(artistUrl).catch(() => ({ results: [] })),
+  ]);
+
+  const rawResults = albumData.results || [];
+  const results = rawResults.map((r) => {
+    const releaseType = classifyRelease(r.collectionName, r.trackCount, r.collectionType);
+    const isSingle = releaseType === 'single';
+    return {
+      id: r.collectionId,
+      name: r.collectionName,
+      artist: r.artistName,
+      artistId: r.artistId,
+      artwork: upgradeArtworkUrl(r.artworkUrl100 || r.artworkUrl60, 600),
+      thumbnail: r.artworkUrl100 || r.artworkUrl60,
+      releaseYear: r.releaseDate ? r.releaseDate.slice(0, 4) : null,
+      releaseDate: r.releaseDate || null,
+      trackCount: r.trackCount || 0,
+      genre: r.primaryGenreName || null,
+      copyright: r.copyright || null,
+      isSingle,
+      releaseType,
+    };
+  });
+
+  const cleanQ = q.toLowerCase().replace(/[^a-z0-9]/g, '');
+  let matchedArtist = null;
+  const artists = artistData.results || [];
+
+  for (const a of artists) {
+    if (!a.artistName) continue;
+    const cleanName = a.artistName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const isExact = cleanName === cleanQ;
+    const isClose = cleanName.length >= 3 && cleanQ.length >= 3 && (cleanName.includes(cleanQ) || cleanQ.includes(cleanName));
+
+    if (isExact || isClose) {
+      matchedArtist = {
+        id: a.artistId,
+        name: a.artistName,
+        genre: a.primaryGenreName || null,
+        isExact,
+      };
+      break;
+    }
+  }
+
+  if (matchedArtist) {
+    try {
+      const disco = await getArtistDiscography(matchedArtist.id);
+      matchedArtist.counts = disco.counts;
+      matchedArtist.artwork = disco.artist.artwork;
+      matchedArtist.albums = disco.albums;
+      matchedArtist.singles = disco.singles;
+      matchedArtist.all = disco.all;
+    } catch (_) {}
+  }
+
+  return { results, matchedArtist };
 }
 
 async function getAlbumDetails(collectionId) {
@@ -446,6 +616,9 @@ async function enqueueMusicDownload({
 
 module.exports = {
   searchAlbums,
+  searchArtists,
+  getArtistDiscography,
+  classifyRelease,
   getAlbumDetails,
   searchTracks,
   matchTrackToYouTube,
