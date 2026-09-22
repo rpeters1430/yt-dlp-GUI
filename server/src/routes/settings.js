@@ -89,6 +89,18 @@ router.post('/ffmpeg/update', async (req, res) => {
   }
 });
 
+router.post('/deno/update', async (req, res) => {
+  if (queue.getActiveCount && queue.getActiveCount() > 0) {
+    return res.status(409).json({ error: 'Cannot update Deno while downloads are active. Please wait for them to complete.' });
+  }
+  try {
+    const versions = await ytdlp.updateDeno();
+    res.json({ ok: true, ...versions });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/', (req, res) => {
   const rows = db.prepare(`SELECT key, value FROM settings WHERE key IN (${[...ALLOWED_SETTINGS_KEYS].map(() => '?').join(', ')})`)
     .all(...ALLOWED_SETTINGS_KEYS);

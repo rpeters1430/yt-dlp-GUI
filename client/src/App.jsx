@@ -10,6 +10,8 @@ import Settings from './pages/Settings.jsx';
 import Twitch from './pages/Twitch.jsx';
 import Music from './pages/Music.jsx';
 import Sidebar from './components/Sidebar.jsx';
+import QueueStatusWidget from './components/QueueStatusWidget.jsx';
+import { DownloadsProvider } from './context/DownloadsContext.jsx';
 
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined = loading, null = logged out
@@ -57,38 +59,48 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
-      <Sidebar
-        open={sidebarOpen}
-        onNavigate={() => setSidebarOpen(false)}
-        onLogout={handleLogout}
-        username={user.username}
-      />
-      <div className={`sidebar-backdrop${sidebarOpen ? ' open' : ''}`} onClick={() => setSidebarOpen(false)} />
+    <DownloadsProvider isAuthenticated={Boolean(user)}>
+      <div className="app-shell">
+        <Sidebar
+          open={sidebarOpen}
+          onNavigate={() => setSidebarOpen(false)}
+          onLogout={handleLogout}
+          username={user.username}
+        />
+        <div className={`sidebar-backdrop${sidebarOpen ? ' open' : ''}`} onClick={() => setSidebarOpen(false)} />
 
-      <div className="main-area">
-        <div className="topbar">
-          <button type="button" className="icon-btn-neutral" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
-            <Menu size={20} />
-          </button>
-          <div className="brand">
-            <Download size={15} style={{ marginRight: 6, verticalAlign: -2 }} />
-            yt-dlp GUI
+        <div className="main-area">
+          <div className="topbar">
+            <button
+              type="button"
+              className="icon-btn-neutral sidebar-toggle"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open menu"
+            >
+              <Menu size={20} />
+            </button>
+            <div className="brand">
+              <Download size={15} style={{ marginRight: 6, verticalAlign: -2 }} />
+              yt-dlp GUI
+            </div>
+            <div className="topbar-right">
+              <QueueStatusWidget />
+            </div>
           </div>
-        </div>
 
-        <main className="content">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/music" element={<Music />} />
-            <Route path="/twitch" element={<Twitch />} />
-            <Route path="/history" element={<History />} />
-            <Route path="/watches" element={<Watches />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </main>
+          <main className="content">
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/music" element={<Music />} />
+              <Route path="/twitch" element={<Twitch />} />
+              <Route path="/history" element={<History />} />
+              <Route path="/watches" element={<Watches />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </main>
+        </div>
       </div>
-    </div>
+    </DownloadsProvider>
   );
 }

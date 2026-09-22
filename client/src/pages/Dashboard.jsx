@@ -1,5 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
+import React, { useMemo, useState } from 'react';
 import {
   ListChecks, CheckCircle2, XCircle, AlertCircle,
   Inbox, PartyPopper, Sparkles, SlidersHorizontal, ChevronDown,
@@ -8,54 +7,33 @@ import { api } from '../api.js';
 import QueueItem from '../components/QueueItem.jsx';
 import MediaPreviewModal from '../components/MediaPreviewModal.jsx';
 import DownloadOptionsFields, { defaultDownloadOptions } from '../components/DownloadOptionsFields.jsx';
+import { useDownloads } from '../context/DownloadsContext.jsx';
 
 export default function Dashboard() {
   const [urlText, setUrlText] = useState('');
   const [options, setOptions] = useState(() => defaultDownloadOptions());
-  const [jobs, setJobs] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [previewUrls, setPreviewUrls] = useState([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const socketRef = useRef(null);
+
+  const {
+    jobs,
+    setJobs,
+    activeJobs,
+    downloadingJobs,
+    queuedJobs,
+    completedCount,
+    failedCount,
+  } = useDownloads();
 
   const {
     audioOnly, subtitles, embedThumbnail, embedMetadata, embedChapters, sponsorblock,
   } = options;
 
-  useEffect(() => {
-    api.listDownloads().then(setJobs).catch(() => {});
-
-    const socket = io({ path: '/socket.io' });
-    socketRef.current = socket;
-
-    socket.on('jobs:init', (initialJobs) => setJobs(initialJobs));
-    socket.on('job:update', (job) => {
-      setJobs((prev) => {
-        const exists = prev.some((j) => j.id === job.id);
-        if (exists) return prev.map((j) => (j.id === job.id ? job : j));
-        return [job, ...prev];
-      });
-    });
-
-    return () => socket.disconnect();
-  }, []);
-
-  // Polling fallback to guarantee continuous updates even if socket drops
-  useEffect(() => {
-    const hasActive = jobs.some((j) => j.status === 'queued' || j.status === 'downloading');
-    if (!hasActive) return;
-
-    const interval = setInterval(() => {
-      api.listDownloads().then(setJobs).catch(() => {});
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [jobs]);
-
   const parsedUrls = useMemo(
-    () => urlText.split('\n').map((u) => u.trim()).filter(Boolean),
+    () => urlText.split(/[\r\n]+/).flatMap((line) => line.trim().split(/\s+/)).filter(Boolean),
     [urlText]
   );
   const validUrls = useMemo(
@@ -66,30 +44,12 @@ export default function Dashboard() {
   const advancedActiveCount = [subtitles, embedThumbnail, embedMetadata, embedChapters, sponsorblock]
     .filter(Boolean).length;
 
-  const activeJobs = useMemo(
-    () => jobs.filter((j) => j.status === 'queued' || j.status === 'downloading'),
-    [jobs]
-  );
   const recentFinished = useMemo(
     () => jobs.filter((j) => j.status === 'completed' || j.status === 'failed').slice(0, 10),
     [jobs]
   );
-  const completedCount = useMemo(() => jobs.filter((j) => j.status === 'completed').length, [jobs]);
-  const failedCount = useMemo(() => jobs.filter((j) => j.status === 'failed').length, [jobs]);
 
-  function handlePaste(e) {
-    const text = e.clipboardData?.getData('text') || '';
-    const trimmed = text.trim();
-    if (/^https?:\/\/[^\s]+$/i.test(trimmed)) {
-      // Single URL pasted - populate and auto-open the analyze popup
-      setUrlText(trimmed);
-      setPreviewUrls([trimmed]);
-      setPreviewModalOpen(true);
-    }
-  }
-
-  // Always analyzes every entered URL (one or many) before enqueueing, so the user can review
-  // details and choose shared or per-video options first instead of downloading blind.
+  // Analyzes all entered URLs when the user clicks Analyze, allowing multiple links to be added first
   function handleAnalyze(e) {
     e.preventDefault();
     setError('');
@@ -156,6 +116,13 @@ export default function Dashboard() {
             <span className="stat-icon"><ListChecks size={16} /></span>
           </div>
           <span className="stat-value">{activeJobs.length}</span>
+          {activeJobs.length > 0 && (
+            <div className="stat-subtext" style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+              {downloadingJobs.length > 0
+                ? `${downloadingJobs.length} active · ${queuedJobs.length} waiting`
+                : `${activeJobs.length} waiting in line`}
+            </div>
+          )}
         </div>
         <div className="stat-card success">
           <div className="stat-top">
@@ -175,15 +142,19 @@ export default function Dashboard() {
 
       <section className="panel">
         <div className="panel-header">
-          <h2>Add downloads</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <h2>Add downloads</h2>
+            {validUrls.length > 0 && (
+              <span className="count-badge accent">{validUrls.length} link{validUrls.length > 1 ? 's' : ''} ready</span>
+            )}
+          </div>
         </div>
         <form onSubmit={handleAnalyze}>
           <textarea
-            placeholder="Paste one or more URLs, one per line (any site yt-dlp supports)"
+            placeholder="Paste or enter one or more URLs (one per line). You can add as many links as you want, then click Analyze."
             rows={4}
             value={urlText}
             onChange={(e) => setUrlText(e.target.value)}
-            onPaste={handlePaste}
           />
           <div className="options-row">
             <button
@@ -200,14 +171,18 @@ export default function Dashboard() {
 
             <div className="spacer">
               <button type="submit" disabled={submitting || validUrls.length === 0}>
-                {submitting
-                  ? 'Adding…'
-                  : (
-                    <>
-                      <Sparkles size={14} />
-                      {validUrls.length > 1 ? `Analyze ${validUrls.length} videos` : 'Analyze & Download'}
-                    </>
-                  )}
+                {submitting ? (
+                  'Analyzing…'
+                ) : (
+                  <>
+                    <Sparkles size={14} />
+                    {validUrls.length > 1
+                      ? `Analyze ${validUrls.length} videos`
+                      : validUrls.length === 1
+                        ? 'Analyze video'
+                        : 'Analyze videos'}
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -233,8 +208,23 @@ export default function Dashboard() {
 
       <section className="panel">
         <div className="panel-header">
-          <h2><ListChecks size={16} /> Queue</h2>
-          {activeJobs.length > 0 && <span className="count-badge">{activeJobs.length}</span>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <h2><ListChecks size={16} /> Queue</h2>
+            {activeJobs.length > 0 && <span className="count-badge accent">{activeJobs.length}</span>}
+          </div>
+          {activeJobs.length > 0 && (
+            <div className="queue-header-status-pill">
+              <span className="queue-live-indicator-sm">
+                <span className="queue-live-ping" />
+                <span className="queue-live-dot" />
+              </span>
+              <span>
+                {downloadingJobs.length > 0
+                  ? `${downloadingJobs.length} downloading · ${queuedJobs.length} waiting`
+                  : `${activeJobs.length} waiting in queue`}
+              </span>
+            </div>
+          )}
         </div>
         {activeJobs.length === 0 ? (
           <div className="empty-state">

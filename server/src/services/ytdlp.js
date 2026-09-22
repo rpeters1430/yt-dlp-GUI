@@ -12,6 +12,7 @@ const COOKIES_FILE = path.join(CONFIG_DIR, 'cookies.txt');
 const YTDLP_CACHE_DIR = path.join(CONFIG_DIR, 'yt-dlp-cache');
 const CUSTOM_BIN_DIR = path.join(CONFIG_DIR, 'bin');
 const FFMPEG_BUILD_MARKER = path.join(CONFIG_DIR, 'ffmpeg-build-id');
+const DENO_BUILD_MARKER = path.join(CONFIG_DIR, 'deno-build-id');
 
 // Ensure custom/persisted bin dir is in process.env.PATH if it exists
 if (fs.existsSync(CUSTOM_BIN_DIR)) {
@@ -19,6 +20,14 @@ if (fs.existsSync(CUSTOM_BIN_DIR)) {
   if (!paths.includes(CUSTOM_BIN_DIR)) {
     process.env.PATH = `${CUSTOM_BIN_DIR}${path.delimiter}${process.env.PATH}`;
   }
+}
+
+function getDenoBin() {
+  const binName = process.platform === 'win32' ? 'deno.exe' : 'deno';
+  if (fs.existsSync(path.join(CUSTOM_BIN_DIR, binName))) {
+    return path.join(CUSTOM_BIN_DIR, binName);
+  }
+  return 'deno';
 }
 
 function getFfmpegDir() {
@@ -780,10 +789,11 @@ function firstLine(output) {
 
 async function getVersions() {
   const ffmpegBin = getFfmpegBin();
+  const denoBin = getDenoBin();
   const [ytdlpOut, ffmpegOut, denoOut] = await Promise.all([
     runCommand(YTDLP_BIN, ['--version']),
     runCommand(ffmpegBin, ['-version']),
-    runCommand('deno', ['--version']),
+    runCommand(denoBin, ['--version']),
   ]);
   return {
     ytdlp: firstLine(ytdlpOut),
@@ -853,49 +863,55 @@ function getFfmpegAssetInfo() {
 
 function extractArchive(archivePath, outDir) {
   return new Promise((resolve, reject) => {
+    if (archivePath.endsWith('.zip')) {
+      if (process.platform === 'win32') {
+        const psProc = spawn('powershell.exe', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `Expand-Archive -LiteralPath "${archivePath}" -DestinationPath "${outDir}" -Force`,
+        ]);
+        let psStderr = '';
+        psProc.stderr.on('data', (d) => (psStderr += d));
+        psProc.on('close', (psCode) => {
+          if (psCode === 0) return resolve();
+          const tarProc = spawn('tar', ['-xf', archivePath, '-C', outDir]);
+          tarProc.on('close', (tCode) => (tCode === 0 ? resolve() : reject(new Error(`Extraction failed: ${psStderr || `code ${psCode}`}`))));
+          tarProc.on('error', () => reject(new Error(`Extraction failed: ${psStderr}`)));
+        });
+        psProc.on('error', () => {
+          const tarProc = spawn('tar', ['-xf', archivePath, '-C', outDir]);
+          tarProc.on('close', (tCode) => (tCode === 0 ? resolve() : reject(new Error(`Extraction failed for ${archivePath}`))));
+          tarProc.on('error', (err) => reject(err));
+        });
+        return;
+      }
+      // Linux/macOS: try unzip first (standard for .zip), fallback to tar
+      const unzipProc = spawn('unzip', ['-o', '-q', archivePath, '-d', outDir]);
+      let unzipStderr = '';
+      unzipProc.stderr.on('data', (d) => (unzipStderr += d));
+      unzipProc.on('close', (code) => {
+        if (code === 0) return resolve();
+        const tarProc = spawn('tar', ['-xf', archivePath, '-C', outDir]);
+        tarProc.on('close', (tCode) => (tCode === 0 ? resolve() : reject(new Error(unzipStderr || `unzip exited with code ${code}`))));
+        tarProc.on('error', () => reject(new Error(`unzip failed with code ${code}: ${unzipStderr}`)));
+      });
+      unzipProc.on('error', () => {
+        const tarProc = spawn('tar', ['-xf', archivePath, '-C', outDir]);
+        tarProc.on('close', (tCode) => (tCode === 0 ? resolve() : reject(new Error(`Extraction failed for ${archivePath}`))));
+        tarProc.on('error', (err) => reject(err));
+      });
+      return;
+    }
+
     const tarProc = spawn('tar', ['-xf', archivePath, '-C', outDir]);
     let stderr = '';
     tarProc.stderr.on('data', (d) => (stderr += d));
     tarProc.on('close', (code) => {
       if (code === 0) return resolve();
-      // On Windows, fallback to PowerShell Expand-Archive if tar failed on a zip
-      if (process.platform === 'win32' && archivePath.endsWith('.zip')) {
-        const psProc = spawn('powershell.exe', [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          `Expand-Archive -LiteralPath "${archivePath}" -DestinationPath "${outDir}" -Force`,
-        ]);
-        let psStderr = '';
-        psProc.stderr.on('data', (d) => (psStderr += d));
-        psProc.on('close', (psCode) => {
-          if (psCode === 0) return resolve();
-          reject(new Error(`Extraction failed: ${stderr || psStderr || `code ${psCode}`}`));
-        });
-        psProc.on('error', () => reject(new Error(`Extraction failed: ${stderr}`)));
-      } else {
-        reject(new Error(stderr || `tar exited with code ${code}`));
-      }
+      reject(new Error(stderr || `tar exited with code ${code}`));
     });
-    tarProc.on('error', (err) => {
-      if (process.platform === 'win32' && archivePath.endsWith('.zip')) {
-        const psProc = spawn('powershell.exe', [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          `Expand-Archive -LiteralPath "${archivePath}" -DestinationPath "${outDir}" -Force`,
-        ]);
-        let psStderr = '';
-        psProc.stderr.on('data', (d) => (psStderr += d));
-        psProc.on('close', (psCode) => {
-          if (psCode === 0) return resolve();
-          reject(new Error(`Extraction failed: ${err.message}; ${psStderr}`));
-        });
-        psProc.on('error', () => reject(err));
-      } else {
-        reject(err);
-      }
-    });
+    tarProc.on('error', (err) => reject(err));
   });
 }
 
@@ -1077,6 +1093,142 @@ async function updateFfmpegIfAvailable() {
   return updateFfmpeg(latestIdentity);
 }
 
+function getDenoAssetInfo() {
+  const platform = process.platform;
+  const arch = process.arch;
+
+  if (platform === 'linux') {
+    if (arch === 'x64') return { filename: 'deno-x86_64-unknown-linux-gnu.zip' };
+    if (arch === 'arm64') return { filename: 'deno-aarch64-unknown-linux-gnu.zip' };
+  } else if (platform === 'win32') {
+    if (arch === 'x64') return { filename: 'deno-x86_64-pc-windows-msvc.zip' };
+    if (arch === 'arm64') return { filename: 'deno-aarch64-pc-windows-msvc.zip' };
+  } else if (platform === 'darwin') {
+    if (arch === 'x64') return { filename: 'deno-x86_64-apple-darwin.zip' };
+    if (arch === 'arm64') return { filename: 'deno-aarch64-apple-darwin.zip' };
+  }
+
+  throw new Error(`Deno builds are not available for platform '${platform}' (${arch}).`);
+}
+
+function denoDownloadUrl() {
+  const { filename } = getDenoAssetInfo();
+  return `https://github.com/denoland/deno/releases/latest/download/${filename}`;
+}
+
+let isUpdatingDeno = false;
+
+async function getLatestDenoBuildIdentity() {
+  const res = await fetch(denoDownloadUrl(), {
+    method: 'HEAD',
+    headers: { 'User-Agent': 'yt-dlp-gui' },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to check Deno build (${res.status} ${res.statusText})`);
+  }
+  return ffmpegResponseIdentity(res);
+}
+
+function readInstalledDenoBuildIdentity() {
+  try {
+    return fs.readFileSync(DENO_BUILD_MARKER, 'utf8').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+function writeInstalledDenoBuildIdentity(identity) {
+  if (!identity) return;
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  const tempPath = `${DENO_BUILD_MARKER}.tmp-${process.pid}`;
+  fs.writeFileSync(tempPath, `${identity}\n`, { mode: 0o600 });
+  fs.renameSync(tempPath, DENO_BUILD_MARKER);
+}
+
+async function updateDeno(knownIdentity = null) {
+  if (isUpdatingDeno) {
+    throw new Error('Deno update is already in progress');
+  }
+
+  const { filename } = getDenoAssetInfo();
+  const downloadUrl = denoDownloadUrl();
+
+  isUpdatingDeno = true;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-deno-'));
+  const archivePath = path.join(tempDir, filename);
+  const extractDir = path.join(tempDir, 'extracted');
+
+  try {
+    const res = await fetch(downloadUrl, {
+      headers: { 'User-Agent': 'yt-dlp-gui' },
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to download Deno build (${res.status} ${res.statusText})`);
+    }
+    const downloadedIdentity = knownIdentity || ffmpegResponseIdentity(res);
+
+    await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(archivePath));
+
+    fs.mkdirSync(extractDir, { recursive: true });
+    await extractArchive(archivePath, extractDir);
+
+    const binExt = process.platform === 'win32' ? '.exe' : '';
+    const denoTarget = `deno${binExt}`;
+
+    const denoSrc = findBinary(extractDir, denoTarget);
+    if (!denoSrc) {
+      throw new Error(`Extracted archive did not contain ${denoTarget}`);
+    }
+
+    // Always install to persistent CUSTOM_BIN_DIR (/config/bin)
+    installBinary(denoSrc, CUSTOM_BIN_DIR, denoTarget);
+
+    // Also update /usr/local/bin if running on Linux with write permissions (e.g. Docker)
+    if (process.platform === 'linux') {
+      try {
+        fs.accessSync('/usr/local/bin', fs.constants.W_OK);
+        installBinary(denoSrc, '/usr/local/bin', denoTarget);
+      } catch {
+        // Not writable, persistent custom bin dir in /config/bin is sufficient
+      }
+    }
+
+    // Ensure CUSTOM_BIN_DIR is prepended to process.env.PATH
+    const paths = (process.env.PATH || '').split(path.delimiter);
+    if (!paths.includes(CUSTOM_BIN_DIR)) {
+      process.env.PATH = `${CUSTOM_BIN_DIR}${path.delimiter}${process.env.PATH}`;
+    }
+
+    writeInstalledDenoBuildIdentity(downloadedIdentity);
+    return { updated: true, ...(await getVersions()) };
+  } finally {
+    isUpdatingDeno = false;
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+async function updateDenoIfAvailable() {
+  const latestIdentity = await getLatestDenoBuildIdentity();
+  const installedMarker = readInstalledDenoBuildIdentity();
+  if (latestIdentity && latestIdentity === installedMarker) {
+    return { updated: false, ...(await getVersions()) };
+  }
+
+  // If no marker stored yet, check if currently installed deno matches the latest tag
+  if (!installedMarker) {
+    const currentVersion = firstLine(await runCommand(getDenoBin(), ['--version']));
+    const versionMatch = latestIdentity && latestIdentity.match(/\/download\/v([0-9.]+)\//);
+    if (versionMatch && currentVersion && currentVersion.includes(versionMatch[1])) {
+      writeInstalledDenoBuildIdentity(latestIdentity);
+      return { updated: false, ...(await getVersions()) };
+    }
+  }
+
+  return updateDeno(latestIdentity);
+}
+
 async function searchYouTube(query, limit = 1) {
   const cleanLimit = Math.max(1, Math.min(10, parseInt(limit, 10) || 1));
   const cleanQuery = String(query || '').trim();
@@ -1113,6 +1265,9 @@ module.exports = {
   updateFfmpegIfAvailable,
   getFfmpegDir,
   getFfmpegBin,
+  updateDeno,
+  updateDenoIfAvailable,
+  getDenoBin,
   DOWNLOAD_DIR,
   COOKIES_FILE,
   stopDownload,

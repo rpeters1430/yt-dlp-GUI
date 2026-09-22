@@ -25,6 +25,10 @@ export default function Settings() {
   const [ffmpegMessage, setFfmpegMessage] = useState('');
   const [ffmpegError, setFfmpegError] = useState('');
 
+  const [denoBusy, setDenoBusy] = useState(false);
+  const [denoMessage, setDenoMessage] = useState('');
+  const [denoError, setDenoError] = useState('');
+
   const [cleanupSettings, setCleanupSettings] = useState(null);
   const [jellyfinApiKeyInput, setJellyfinApiKeyInput] = useState('');
   const [cleanupBusy, setCleanupBusy] = useState(false);
@@ -170,6 +174,21 @@ export default function Settings() {
       setFfmpegError(err.message);
     } finally {
       setFfmpegBusy(false);
+    }
+  }
+
+  async function handleUpdateDeno() {
+    setDenoMessage('');
+    setDenoError('');
+    setDenoBusy(true);
+    try {
+      const result = await api.updateDeno();
+      setVersions(result);
+      setDenoMessage(`Deno is now updated (${result.deno || 'latest'}).`);
+    } catch (err) {
+      setDenoError(err.message);
+    } finally {
+      setDenoBusy(false);
     }
   }
 
@@ -444,6 +463,21 @@ export default function Settings() {
             </div>
             {ffmpegMessage && <div className="alert alert-success" style={{ marginTop: '10px' }}><CheckCircle2 size={15} />{ffmpegMessage}</div>}
             {ffmpegError && <div className="alert alert-error" style={{ marginTop: '10px' }}><AlertCircle size={15} />{ffmpegError}</div>}
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+            <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>Deno</h3>
+            <p className="panel-description" style={{ marginBottom: '10px' }}>
+              The JavaScript runtime used by yt-dlp to solve YouTube video extraction and JavaScript challenges.
+              The app automatically checks for newer Deno releases nightly at 3:45 AM and updates when available.
+            </p>
+            <div className="options-row" style={{ marginTop: 0 }}>
+              <button type="button" onClick={handleUpdateDeno} disabled={denoBusy}>
+                {denoBusy ? 'Updating Deno…' : 'Update Deno'}
+              </button>
+            </div>
+            {denoMessage && <div className="alert alert-success" style={{ marginTop: '10px' }}><CheckCircle2 size={15} />{denoMessage}</div>}
+            {denoError && <div className="alert alert-error" style={{ marginTop: '10px' }}><AlertCircle size={15} />{denoError}</div>}
           </div>
         </div>
       </section>
