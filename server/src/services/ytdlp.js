@@ -686,9 +686,11 @@ function stopDownload(jobId) {
 // Idle-watchdog: if yt-dlp prints nothing at all for this long, assume it's hung (stuck
 // network call, wedged extractor) and kill it rather than tying up a queue slot forever.
 // Disabled for --wait-for-video jobs, which are *supposed* to sit idle while polling for a
-// stream to go live.
+// stream to go live. Live recordings get a longer watchdog because some sites can go quiet
+// for extended stretches while the capture is still healthy.
 const DOWNLOAD_IDLE_TIMEOUT_MS = parseInt(process.env.DOWNLOAD_IDLE_TIMEOUT_MS || String(15 * 60 * 1000), 10);
 const PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS = parseInt(process.env.PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS || String(60 * 60 * 1000), 10);
+const LIVE_DOWNLOAD_IDLE_TIMEOUT_MS = parseInt(process.env.LIVE_DOWNLOAD_IDLE_TIMEOUT_MS || String(60 * 60 * 1000), 10);
 
 function isPlaylistUrl(url) {
   const raw = String(url || '').trim();
@@ -709,6 +711,17 @@ function isPlaylistUrl(url) {
   }
 }
 
+function getDownloadIdleTimeoutMs(url, options = {}, timeouts = {}) {
+  const {
+    standard = DOWNLOAD_IDLE_TIMEOUT_MS,
+    playlist = PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS,
+    live = LIVE_DOWNLOAD_IDLE_TIMEOUT_MS,
+  } = timeouts;
+  if (options.waitForLive) return null;
+  if (options.isLive) return live;
+  return isPlaylistUrl(url) ? playlist : standard;
+}
+
 // Downloads a single URL, streaming progress updates via onProgress({percent, speed, eta})
 // and log messages via onLog(line).
 // Resolves with { filepath, command } once yt-dlp exits successfully.
@@ -717,7 +730,7 @@ function download(url, options = {}, onProgress, onLog) {
   const commandStr = formatCommand(YTDLP_BIN, args);
   const jobId = options.jobId ? `job:${options.jobId}` : 'download';
   const ffmpegDir = getFfmpegDir();
-  const idleTimeoutMs = isPlaylistUrl(url) ? PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS : DOWNLOAD_IDLE_TIMEOUT_MS;
+  const idleTimeoutMs = getDownloadIdleTimeoutMs(url, options);
 
   console.log(`[${jobId}] Starting download: ${url}`);
   console.log(`[${jobId}] Command: ${commandStr}`);
@@ -747,7 +760,7 @@ function download(url, options = {}, onProgress, onLog) {
 
     let idleTimer = null;
     function resetIdleTimer() {
-      if (options.waitForLive) return;
+      if (idleTimeoutMs == null) return;
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
         timedOut = true;
@@ -1470,5 +1483,6 @@ module.exports = {
   getTwitchAuthTokenMasked,
   writeCookiesFilePreservingTwitchAuth,
   isPlaylistUrl,
+  getDownloadIdleTimeoutMs,
   isYouTube,
 };
