@@ -183,7 +183,7 @@ async function runJob(job) {
 
     const result = await ytdlp.download(
       job.url,
-      { ...downloadOptions, onSpawn: (pid) => updateJob(job.id, { pid }) },
+      { ...downloadOptions, extractor: extractor || job.extractor, onSpawn: (pid) => updateJob(job.id, { pid }) },
       (progress) => {
         const now = Date.now();
         const percentChanged = Math.abs((progress.percent || 0) - lastPercent) >= 1;

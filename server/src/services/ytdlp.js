@@ -309,6 +309,27 @@ function formatCommand(bin, args) {
     .join(' ')}`;
 }
 
+// Detect whether a target URL or extractor belongs to YouTube.
+function isYouTube(url, extractor = null) {
+  if (extractor && typeof extractor === 'string') {
+    return /^youtube/i.test(extractor);
+  }
+  const raw = String(url || '').trim();
+  if (!raw) return false;
+  if (/^ytsearch/i.test(raw)) return true;
+  try {
+    const looksLikeHostWithoutScheme = !/^[a-z][a-z0-9+.-]*:/i.test(raw) && /^[\w.-]+\.[a-z]{2,}(?:\/|$)/i.test(raw);
+    const normalized = raw.startsWith('//')
+      ? `https:${raw}`
+      : (looksLikeHostWithoutScheme ? `https://${raw}` : raw);
+    const parsed = new URL(normalized, 'https://example.invalid');
+    const host = parsed.hostname.toLowerCase();
+    return /(^|\.)youtube\.com$/i.test(host) || host === 'youtu.be' || /(^|\.)youtube-nocookie\.com$/i.test(host);
+  } catch (_) {
+    return false;
+  }
+}
+
 // Accepts a comma-separated string or an array of SponsorBlock category names and
 // normalizes it to the comma-separated form yt-dlp's --sponsorblock-* flags expect.
 function normalizeCategories(value) {
@@ -334,6 +355,7 @@ function buildDownloadArgs(url, options = {}) {
     postprocessorArgs = null,
   } = options;
 
+  const isYt = isYouTube(url, options.extractor);
   const targetOutput = outputTemplate || `${DOWNLOAD_DIR}/%(uploader,extractor)s/%(title)s [%(id)s].%(ext)s`;
 
   const args = [
@@ -362,15 +384,22 @@ function buildDownloadArgs(url, options = {}) {
     }
   }
 
-  if (subtitles) {
-    // --write-subs is required so yt-dlp actually fetches the subtitle tracks to embed, but by
-    // default yt-dlp keeps that downloaded .srt/.vtt alongside the video once --write-subs is
-    // set (see FFmpegEmbedSubtitlePP's `already_have_subtitle` in yt-dlp's source). We only want
-    // them embedded, not left as separate sidecar files, so force cleanup of the temp files.
-    args.push(
-      '--write-subs', '--write-auto-subs', '--sub-langs', subLangs || 'en.*', '--embed-subs',
+  if (subtitles && !audioOnly) {
+    // --write-subs is required so yt-dlp actually fetches subtitle tracks to embed.
+    // For YouTube, --write-auto-subs allows auto-generated captions if manual ones aren't present.
+    // Non-YouTube extractors generally lack auto-subs and may fail if requested.
+    const subArgs = ['--write-subs'];
+    if (isYt) {
+      subArgs.push('--write-auto-subs');
+    }
+    // Subtitles in webvtt/ttml formats fail to embed into MP4 containers unless converted to srt.
+    subArgs.push(
+      '--sub-langs', subLangs || 'en.*',
+      '--convert-subs', 'srt',
+      '--embed-subs',
       '--compat-options', 'no-keep-subs',
     );
+    args.push(...subArgs);
   }
 
   // Embed extras directly into the output file instead of leaving separate sidecar files.
@@ -380,12 +409,14 @@ function buildDownloadArgs(url, options = {}) {
   if (embedMetadata) {
     args.push('--embed-metadata');
   }
-  if (embedChapters) {
+  if (embedChapters && !audioOnly) {
     args.push('--embed-chapters');
   }
 
   // SponsorBlock: cut the chosen segment categories out of the file automatically.
-  const sponsorblockRemoveCats = normalizeCategories(sponsorblockRemove);
+  // Note: SponsorBlock API only supports YouTube. For other sites, omit the flag so yt-dlp
+  // doesn't print unsupported warnings or misfire postprocessing.
+  const sponsorblockRemoveCats = isYt ? normalizeCategories(sponsorblockRemove) : '';
   if (sponsorblockRemoveCats) {
     args.push('--sponsorblock-remove', sponsorblockRemoveCats);
   }
@@ -417,9 +448,8 @@ function buildDownloadArgs(url, options = {}) {
     // Joining a broadcast that's already in progress normally starts recording from the
     // live edge (right now), losing everything broadcast before that point. YouTube (and a
     // few other extractors) support fetching the full DASH manifest from the beginning of
-    // the stream instead, so a user adding an in-progress live stream can still capture it
-    // from the start rather than only from the moment it was added.
-    if (options.liveFromStart) {
+    // the stream instead. Other live platforms (like Twitch) do not support live-from-start.
+    if (options.liveFromStart && isYt) {
       args.push('--live-from-start');
     }
   }
@@ -683,7 +713,12 @@ function download(url, options = {}, onProgress, onLog) {
         } else if (trimmed.includes('[ExtractAudio]')) {
           currentStage = 'Extracting audio…';
           reportProgress(99, null, null, 'Extracting audio…');
-        } else if (trimmed.includes('[SponsorBlock]')) {
+        } else if (
+          trimmed.includes('[SponsorBlock]') &&
+          !trimmed.includes('not supported') &&
+          !trimmed.includes('unavailable') &&
+          !trimmed.includes('SponsorBlock is not')
+        ) {
           currentStage = 'Applying SponsorBlock…';
           reportProgress(99, null, null, 'Applying SponsorBlock…');
         }
@@ -1277,4 +1312,5 @@ module.exports = {
   getTwitchAuthTokenMasked,
   writeCookiesFilePreservingTwitchAuth,
   isPlaylistUrl,
+  isYouTube,
 };

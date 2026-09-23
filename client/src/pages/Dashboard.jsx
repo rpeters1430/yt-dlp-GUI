@@ -1,12 +1,13 @@
 import React, { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   ListChecks, CheckCircle2, XCircle, AlertCircle,
-  Inbox, PartyPopper, Sparkles, SlidersHorizontal, ChevronDown,
+  Inbox, PartyPopper, Sparkles, SlidersHorizontal, ChevronDown, Globe,
 } from 'lucide-react';
 import { api } from '../api.js';
 import QueueItem from '../components/QueueItem.jsx';
 import MediaPreviewModal from '../components/MediaPreviewModal.jsx';
-import DownloadOptionsFields, { defaultDownloadOptions } from '../components/DownloadOptionsFields.jsx';
+import DownloadOptionsFields, { defaultDownloadOptions, isYouTubeUrl } from '../components/DownloadOptionsFields.jsx';
 import { useDownloads } from '../context/DownloadsContext.jsx';
 
 export default function Dashboard() {
@@ -39,6 +40,16 @@ export default function Dashboard() {
   const validUrls = useMemo(
     () => parsedUrls.filter((u) => /^https?:\/\//i.test(u)),
     [parsedUrls]
+  );
+
+  const hasUrls = validUrls.length > 0;
+  const allValidAreYouTube = useMemo(
+    () => hasUrls && validUrls.every((u) => isYouTubeUrl(u)),
+    [hasUrls, validUrls]
+  );
+  const hasNonYouTube = useMemo(
+    () => hasUrls && validUrls.some((u) => !isYouTubeUrl(u)),
+    [hasUrls, validUrls]
   );
 
   const advancedActiveCount = [subtitles, embedThumbnail, embedMetadata, embedChapters, sponsorblock]
@@ -141,13 +152,21 @@ export default function Dashboard() {
       </div>
 
       <section className="panel">
-        <div className="panel-header">
+        <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <h2>Add downloads</h2>
             {validUrls.length > 0 && (
               <span className="count-badge accent">{validUrls.length} link{validUrls.length > 1 ? 's' : ''} ready</span>
             )}
           </div>
+          <Link
+            to="/sites"
+            className="btn-ghost btn-sm"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            title="View supported sites and feature requirements"
+          >
+            <Globe size={13} /> Supported Sites Guide
+          </Link>
         </div>
         <form onSubmit={handleAnalyze}>
           <textarea
@@ -193,7 +212,16 @@ export default function Dashboard() {
                 These are the default options used when you click Analyze — you can still review
                 or change them (and apply them to all videos or individually) before downloading.
               </p>
-              <DownloadOptionsFields values={options} onChange={setOptions} />
+              <DownloadOptionsFields
+                values={options}
+                onChange={setOptions}
+                isYouTube={hasUrls ? allValidAreYouTube : true}
+              />
+              {hasNonYouTube && (
+                <p className="muted small form-hint" style={{ color: 'var(--accent, #6366f1)', marginTop: '8px' }}>
+                  Non-YouTube link detected: features specific to YouTube (such as SponsorBlock and broadcast start recording) will be automatically skipped.
+                </p>
+              )}
             </div>
           )}
 

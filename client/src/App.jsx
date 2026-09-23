@@ -9,6 +9,7 @@ import Watches from './pages/Watches.jsx';
 import Settings from './pages/Settings.jsx';
 import Twitch from './pages/Twitch.jsx';
 import Music from './pages/Music.jsx';
+import SupportedSites from './pages/SupportedSites.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import QueueStatusWidget from './components/QueueStatusWidget.jsx';
 import { DownloadsProvider } from './context/DownloadsContext.jsx';
@@ -95,6 +96,8 @@ export default function App() {
               <Route path="/twitch" element={<Twitch />} />
               <Route path="/history" element={<History />} />
               <Route path="/watches" element={<Watches />} />
+              <Route path="/sites" element={<SupportedSites />} />
+              <Route path="/supported-sites" element={<SupportedSites />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

@@ -242,6 +242,35 @@ label.field-label {
   border-color: var(--accent);
 }
 .checkbox-label input[type="checkbox"]:checked::before { transform: scale(1); }
+.checkbox-label.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.checkbox-label.disabled input[type="checkbox"] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.badge-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  color: var(--text-muted, #888);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  letter-spacing: 0.02em;
+}
+.option-disabled-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 2px 0;
+  user-select: none;
+}
 
 /* ---------------------------------------------------------------------- */
 /* Buttons                                                                */
@@ -2864,4 +2893,180 @@ button.twitch-tab-btn:hover:not(:disabled):not(.active) {
 .queue-live-indicator-sm .queue-live-dot {
   width: 5px;
   height: 5px;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Supported Sites & Requirements Page                                     */
+/* ---------------------------------------------------------------------- */
+
+.platform-check-card {
+  padding: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.platform-check-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.platform-capabilities-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.capability-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--bg-hover, rgba(255, 255, 255, 0.03));
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.cap-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.cap-status {
+  font-size: 12px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cap-status.yes {
+  color: #10b981;
+}
+
+.cap-status.no {
+  color: #ef4444;
+}
+
+.cap-status.info {
+  color: var(--accent);
+}
+
+.platform-check-notes {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  background: var(--accent-soft, rgba(91, 109, 248, 0.08));
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.feature-rules-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.rule-card {
+  padding: 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rule-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.rule-card p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+.sites-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+
+.sites-table th {
+  padding: 10px 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.sites-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.sites-table tbody tr:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.02));
+}
+
+.extractors-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+  max-height: 480px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.extractor-pill {
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.extractor-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.extractor-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

@@ -52,13 +52,41 @@ export function defaultDownloadOptions(overrides = {}) {
   };
 }
 
+export function isYouTubeUrl(url, extractor = null) {
+  if (extractor && typeof extractor === 'string') {
+    return /^youtube/i.test(extractor);
+  }
+  const raw = String(url || '').trim();
+  if (!raw) return false;
+  if (/^ytsearch/i.test(raw)) return true;
+  try {
+    const looksLikeHostWithoutScheme = !/^[a-z][a-z0-9+.-]*:/i.test(raw) && /^[\w.-]+\.[a-z]{2,}(?:\/|$)/i.test(raw);
+    const normalized = raw.startsWith('//')
+      ? `https:${raw}`
+      : (looksLikeHostWithoutScheme ? `https://${raw}` : raw);
+    const parsed = new URL(normalized, 'https://example.invalid');
+    const host = parsed.hostname.toLowerCase();
+    return /(^|\.)youtube\.com$/i.test(host) || host === 'youtu.be' || /(^|\.)youtube-nocookie\.com$/i.test(host);
+  } catch (_) {
+    return false;
+  }
+}
+
 /**
  * Renders the shared "quality / container / subtitles / embed-into-file / SponsorBlock"
  * option controls. Used both for a single video and for each entry in a batch of videos, and
  * for the "apply to all" shared settings, so the same option set/behavior is available
  * everywhere instead of being duplicated and drifting.
  */
-export default function DownloadOptionsFields({ values, onChange, resolutions, liveInfo }) {
+export default function DownloadOptionsFields({
+  values,
+  onChange,
+  resolutions,
+  liveInfo,
+  isYouTube = true,
+  hasSubtitles = null,
+  isAudioMedia = false,
+}) {
   const {
     audioOnly, quality, container, subtitles, subLangs,
     embedThumbnail, embedMetadata, embedChapters,
@@ -67,6 +95,7 @@ export default function DownloadOptionsFields({ values, onChange, resolutions, l
   } = values;
   const isLive = liveInfo?.liveStatus === 'is_live';
   const isUpcoming = liveInfo?.liveStatus === 'is_upcoming';
+  const isAudioMode = audioOnly || isAudioMedia;
 
   function set(patch) {
     onChange({ ...values, ...patch });
@@ -120,12 +149,14 @@ export default function DownloadOptionsFields({ values, onChange, resolutions, l
             <button type="button" className={!liveFromStart ? 'active' : ''} onClick={() => set({ liveFromStart: false })}>
               <Radio size={14} /> Join live now
             </button>
-            <button type="button" className={liveFromStart ? 'active' : ''} onClick={() => set({ liveFromStart: true })}>
-              <Clock size={14} /> Record from broadcast start
-            </button>
+            {isYouTube && (
+              <button type="button" className={liveFromStart ? 'active' : ''} onClick={() => set({ liveFromStart: true })}>
+                <Clock size={14} /> Record from broadcast start
+              </button>
+            )}
           </div>
           <p className="muted small">
-            {liveFromStart
+            {liveFromStart && isYouTube
               ? "Downloads the full broadcast from the moment it started, not just from now. May take a while to catch up to the live edge."
               : 'Only what airs from now on will be recorded — anything already broadcast before this point is skipped.'}
           </p>
@@ -175,19 +206,34 @@ export default function DownloadOptionsFields({ values, onChange, resolutions, l
           </label>
         )}
 
-        <label className="checkbox-label">
-          <input type="checkbox" checked={subtitles} onChange={(e) => set({ subtitles: e.target.checked })} />
-          <Captions size={14} /> Subtitles
-        </label>
+        {!isAudioMode ? (
+          <>
+            <label className={`checkbox-label ${hasSubtitles === false ? 'disabled' : ''}`}>
+              <input
+                type="checkbox"
+                checked={subtitles && hasSubtitles !== false}
+                disabled={hasSubtitles === false}
+                onChange={(e) => set({ subtitles: e.target.checked })}
+              />
+              <Captions size={14} /> Subtitles
+              {hasSubtitles === false && <span className="badge-tag">None available</span>}
+            </label>
 
-        {subtitles && (
-          <label className="field-inline">
-            <select value={subLangs} onChange={(e) => set({ subLangs: e.target.value })}>
-              {SUBTITLE_LANG_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </label>
+            {subtitles && hasSubtitles !== false && (
+              <label className="field-inline">
+                <select value={subLangs} onChange={(e) => set({ subLangs: e.target.value })}>
+                  {SUBTITLE_LANG_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </>
+        ) : (
+          <div className="option-disabled-notice" title="Subtitles cannot be embedded into audio-only files">
+            <Captions size={14} />
+            <span className="muted small">Subtitles not applicable for audio</span>
+          </div>
         )}
 
         <label className="checkbox-label">
@@ -198,18 +244,29 @@ export default function DownloadOptionsFields({ values, onChange, resolutions, l
           <input type="checkbox" checked={embedMetadata} onChange={(e) => set({ embedMetadata: e.target.checked })} />
           Embed metadata
         </label>
-        <label className="checkbox-label">
-          <input type="checkbox" checked={embedChapters} onChange={(e) => set({ embedChapters: e.target.checked })} />
-          Embed chapters
-        </label>
 
-        <label className="checkbox-label">
-          <input type="checkbox" checked={sponsorblock} onChange={(e) => set({ sponsorblock: e.target.checked })} />
-          Auto-remove sponsored segments (SponsorBlock)
-        </label>
+        {!isAudioMode && (
+          <label className="checkbox-label">
+            <input type="checkbox" checked={embedChapters} onChange={(e) => set({ embedChapters: e.target.checked })} />
+            Embed chapters
+          </label>
+        )}
+
+        {isYouTube ? (
+          <label className="checkbox-label">
+            <input type="checkbox" checked={sponsorblock} onChange={(e) => set({ sponsorblock: e.target.checked })} />
+            Auto-remove sponsored segments (SponsorBlock)
+            <span className="badge-tag">YouTube</span>
+          </label>
+        ) : (
+          <div className="option-disabled-notice" title="SponsorBlock is only available for YouTube videos">
+            <span className="badge-tag">SponsorBlock</span>
+            <span className="muted small">Only supported on YouTube</span>
+          </div>
+        )}
       </div>
 
-      {sponsorblock && (
+      {isYouTube && sponsorblock && (
         <div className="sponsorblock-categories">
           <div className="sponsorblock-categories-actions">
             <button type="button" className="btn-ghost btn-sm" onClick={selectAllSponsorblockCategories}>

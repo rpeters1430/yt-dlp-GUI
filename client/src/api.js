@@ -96,4 +96,8 @@ export const api = {
   createMusicWatch: (payload) => request('/music/watches', { method: 'POST', body: JSON.stringify(payload) }),
   getMusicSettings: () => request('/music/settings'),
   updateMusicSettings: (payload) => request('/music/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+
+  // Supported Sites & Extractors
+  getSiteGuide: () => request('/sites/guide'),
+  listExtractors: (q = '') => request(`/sites/extractors${q ? `?q=${encodeURIComponent(q)}` : ''}`),
 };
