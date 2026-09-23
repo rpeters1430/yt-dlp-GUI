@@ -161,3 +161,29 @@ test('resolveShareUrl leaves non-share URLs untouched without fetching', async (
   assert.equal(await resolveShareUrl(url), url);
   assert.equal(fetchMock.mock.callCount(), 0);
 });
+
+test('resolveShareUrl follows an intermediate Reddit redirect hop', async (t) => {
+  const { resolveShareUrl } = require('./ytdlp');
+  const hops = [
+    'https://www.reddit.com/r/videos/s/eawAD6BLAE',
+    'https://www.reddit.com/r/videos/comments/1abcde/some_title/?share_id=xyz',
+  ];
+  let call = 0;
+  t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 301, headers: { location: hops[call++] } }));
+  assert.equal(
+    await resolveShareUrl('https://reddit.com/r/videos/s/eawAD6BLAE'),
+    'https://www.reddit.com/r/videos/comments/1abcde/some_title/'
+  );
+});
+
+test('resolveShareUrl does not follow redirects off Reddit', async (t) => {
+  const { resolveShareUrl } = require('./ytdlp');
+  const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, {
+    status: 302,
+    headers: { location: 'http://169.254.169.254/latest/meta-data/' },
+  }));
+  const share = 'https://www.reddit.com/r/videos/s/eawAD6BLAE';
+  assert.equal(await resolveShareUrl(share), share);
+  // One request per user agent; the off-site hop is never fetched.
+  assert.equal(fetchMock.mock.callCount(), 2);
+});

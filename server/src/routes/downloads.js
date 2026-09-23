@@ -14,7 +14,7 @@ router.post('/info', async (req, res) => {
   if (!rawUrl) return res.status(400).json({ error: 'url is required' });
   try {
     const url = await ytdlp.resolveShareUrl(String(rawUrl).trim());
-    let info = await ytdlp.getInfo(url, { flatPlaylist: true });
+    let info = await ytdlp.getInfo(url, { flatPlaylist: true, resolveShare: false });
     const isPlaylist = info._type === 'playlist' || Array.isArray(info.entries);
 
     if (isPlaylist) {
@@ -40,7 +40,7 @@ router.post('/info', async (req, res) => {
     }
 
     if (!info.formats || info.formats.length === 0) {
-      info = await ytdlp.getInfo(url, { flatPlaylist: false });
+      info = await ytdlp.getInfo(url, { flatPlaylist: false, resolveShare: false });
     }
 
     const heights = [...new Set((info.formats || []).map((f) => f.height).filter(Boolean))].sort((a, b) => b - a);
