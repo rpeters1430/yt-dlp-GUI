@@ -10,9 +10,10 @@ router.use(requireAuth);
 
 // Fetch metadata/formats for a URL before download, supporting both single videos and playlists.
 router.post('/info', async (req, res) => {
-  const { url } = req.body || {};
-  if (!url) return res.status(400).json({ error: 'url is required' });
+  const { url: rawUrl } = req.body || {};
+  if (!rawUrl) return res.status(400).json({ error: 'url is required' });
   try {
+    const url = await ytdlp.resolveShareUrl(String(rawUrl).trim());
     let info = await ytdlp.getInfo(url, { flatPlaylist: true });
     const isPlaylist = info._type === 'playlist' || Array.isArray(info.entries);
 
@@ -102,7 +103,7 @@ router.post('/info', async (req, res) => {
 });
 
 // Accepts either a single URL or newline-separated multiple URLs.
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const {
     urls,
     url,
@@ -122,13 +123,16 @@ router.post('/', (req, res) => {
     waitInterval,
   } = req.body || {};
   const list = urls ? urls : url ? [url] : [];
-  const cleaned = list.map((u) => String(u).trim()).filter(Boolean);
+  const trimmed = list.map((u) => String(u).trim()).filter(Boolean);
 
-  if (cleaned.length === 0) return res.status(400).json({ error: 'At least one URL is required' });
+  if (trimmed.length === 0) return res.status(400).json({ error: 'At least one URL is required' });
   const MAX_URLS_PER_REQUEST = 100;
-  if (cleaned.length > MAX_URLS_PER_REQUEST) {
+  if (trimmed.length > MAX_URLS_PER_REQUEST) {
     return res.status(400).json({ error: `Too many URLs in one request (max ${MAX_URLS_PER_REQUEST})` });
   }
+  // Expand share/short links (e.g. Reddit /s/ links) up front so the stored job URL is the
+  // canonical one yt-dlp's site extractor recognizes. Non-share URLs pass through untouched.
+  const cleaned = await Promise.all(trimmed.map((u) => ytdlp.resolveShareUrl(u)));
   // Fails fast here for immediate feedback; getInfo/download would reject the same URLs
   // anyway once the job actually runs, but that's a queued failure minutes later instead.
   for (const u of cleaned) {
