@@ -199,6 +199,83 @@ function assertPublicUrl(url) {
   }
 }
 
+// Reddit's mobile app "Share" button produces short links like
+// https://www.reddit.com/r/<sub>/s/<code>. yt-dlp's Reddit extractor only matches
+// /comments/<id> URLs, so share links fall through to the generic extractor, which Reddit
+// answers with "HTTP Error 403: Blocked". Reddit serves these as a plain redirect to the
+// real post, so we follow it ourselves and hand yt-dlp the canonical /comments/ URL.
+const REDDIT_SHARE_RE = /^https?:\/\/(?:(?:www|old|new|m)\.)?reddit\.com\/(?:r|u|user)\/[^/]+\/s\/[A-Za-z0-9]+\/?(?:[?#].*)?$/i;
+const SHARE_RESOLVE_TIMEOUT_MS = 10 * 1000;
+const SHARE_RESOLVE_MAX_HOPS = 3;
+// Reddit blocks some user agents outright, so try a descriptive bot UA and a browser UA.
+const SHARE_RESOLVE_USER_AGENTS = [
+  'Mozilla/5.0 (compatible; yt-dlp-gui/1.0; +https://github.com/yt-dlp/yt-dlp)',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+];
+
+function isRedditShareUrl(url) {
+  return typeof url === 'string' && REDDIT_SHARE_RE.test(url.trim());
+}
+
+// Strips tracking params (share_id, utm_*, ...) Reddit appends to the redirect target.
+function cleanRedditPostUrl(location, base) {
+  let target;
+  try {
+    target = new URL(location, base);
+  } catch (_) {
+    return null;
+  }
+  if (!/(^|\.)reddit\.com$/i.test(target.hostname) || !/\/comments\//i.test(target.pathname)) return null;
+  target.search = '';
+  target.hash = '';
+  return target.toString();
+}
+
+// Returns the canonical URL for known short/share links, or the input unchanged. Never
+// throws: if resolution fails we let yt-dlp try the original URL and report its own error.
+async function resolveShareUrl(url) {
+  if (!isRedditShareUrl(url)) return url;
+  const shareUrl = url.trim();
+  for (const userAgent of SHARE_RESOLVE_USER_AGENTS) {
+    try {
+      // Follow a short redirect chain by hand (e.g. reddit.com -> www.reddit.com -> post) so
+      // every hop is checked against the Reddit host guard instead of trusting fetch's follow.
+      let current = shareUrl;
+      let status = null;
+      for (let hop = 0; hop < SHARE_RESOLVE_MAX_HOPS; hop++) {
+        const res = await fetch(current, {
+          method: 'GET',
+          redirect: 'manual',
+          headers: { 'User-Agent': userAgent, Accept: 'text/html' },
+          signal: AbortSignal.timeout(SHARE_RESOLVE_TIMEOUT_MS),
+        });
+        status = res.status;
+        // Only the headers matter; release the connection instead of leaving the body unread.
+        if (res.body) res.body.cancel().catch(() => {});
+        const location = res.headers.get('location');
+        if (!location) break;
+        const resolved = cleanRedditPostUrl(location, current);
+        if (resolved) {
+          console.log(`[ytdlp] Resolved Reddit share link ${shareUrl} -> ${resolved}`);
+          return resolved;
+        }
+        let next;
+        try {
+          next = new URL(location, current);
+        } catch (_) {
+          break;
+        }
+        if (!/(^|\.)reddit\.com$/i.test(next.hostname)) break;
+        current = next.toString();
+      }
+      console.warn(`[ytdlp] Reddit share link ${shareUrl} did not redirect to a post (HTTP ${status})`);
+    } catch (err) {
+      console.warn(`[ytdlp] Failed to resolve Reddit share link ${shareUrl}: ${err.message}`);
+    }
+  }
+  return url;
+}
+
 // Runs `yt-dlp -J <url>` to fetch metadata (title, id, extractor, thumbnail, formats)
 // without downloading anything. Used for the format picker and for watch/history dedup.
 // Metadata lookups should be fast; a hung one (stalled extractor, network partition) would
@@ -206,7 +283,13 @@ function assertPublicUrl(url) {
 // watch scheduler's tick, forever.
 const GETINFO_TIMEOUT_MS = parseInt(process.env.GETINFO_TIMEOUT_MS || String(2 * 60 * 1000), 10);
 
-function getInfo(url, { flatPlaylist = false, playlistEnd = null } = {}) {
+// Pass { resolveShare: false } when the caller already ran resolveShareUrl(), so a link that
+// couldn't be resolved isn't retried (and doesn't pay the resolver timeouts) a second time.
+async function getInfo(url, { resolveShare = true, ...options } = {}) {
+  return getInfoResolved(resolveShare ? await resolveShareUrl(url) : url, options);
+}
+
+function getInfoResolved(url, { flatPlaylist = false, playlistEnd = null } = {}) {
   return new Promise((resolve, reject) => {
     try {
       assertPublicUrl(url);
@@ -1459,6 +1542,8 @@ async function searchYouTube(query, limit = 1) {
 
 module.exports = {
   getInfo,
+  resolveShareUrl,
+  isRedditShareUrl,
   searchYouTube,
   download,
   buildDownloadArgs,
