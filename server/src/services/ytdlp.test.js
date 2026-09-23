@@ -187,3 +187,43 @@ test('resolveShareUrl does not follow redirects off Reddit', async (t) => {
   // One request per user agent; the off-site hop is never fetched.
   assert.equal(fetchMock.mock.callCount(), 2);
 });
+
+test('isBotCheckError matches YouTube bot-check errors with straight or curly apostrophes', () => {
+  const { isBotCheckError } = require('./ytdlp');
+  assert.equal(isBotCheckError("ERROR: [youtube] abc: Sign in to confirm you’re not a bot. Use --cookies"), true);
+  assert.equal(isBotCheckError("ERROR: [youtube] abc: Sign in to confirm you're not a bot"), true);
+  assert.equal(isBotCheckError('ERROR: [youtube] abc: Video unavailable'), false);
+  assert.equal(isBotCheckError(undefined), false);
+});
+
+test('withPrivateCookies hands yt-dlp a temp copy so it never rewrites the shared cookies.txt', () => {
+  const fs = require('fs');
+  const { withPrivateCookies, COOKIES_FILE } = require('./ytdlp');
+  const existed = fs.existsSync(COOKIES_FILE);
+  const original = existed ? fs.readFileSync(COOKIES_FILE) : null;
+  fs.mkdirSync(require('path').dirname(COOKIES_FILE), { recursive: true });
+  fs.writeFileSync(COOKIES_FILE, '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tabc\n');
+  try {
+    const args = ['-J', '--cookies', COOKIES_FILE, 'https://www.youtube.com/watch?v=x'];
+    const { args: out, cleanup } = withPrivateCookies(args);
+    assert.notEqual(out[2], COOKIES_FILE);
+    assert.equal(args[2], COOKIES_FILE, 'input args are not mutated');
+    assert.equal(fs.readFileSync(out[2], 'utf8'), fs.readFileSync(COOKIES_FILE, 'utf8'));
+    fs.writeFileSync(out[2], 'rotated by yt-dlp');
+    assert.match(fs.readFileSync(COOKIES_FILE, 'utf8'), /SID\tabc/);
+    cleanup();
+    return new Promise((resolve) => setTimeout(() => {
+      assert.equal(fs.existsSync(out[2]), false);
+      resolve();
+    }, 50));
+  } finally {
+    if (existed) fs.writeFileSync(COOKIES_FILE, original);
+    else fs.rmSync(COOKIES_FILE, { force: true });
+  }
+});
+
+test('withPrivateCookies leaves args alone when no cookies are configured', () => {
+  const { withPrivateCookies } = require('./ytdlp');
+  const args = ['-J', 'https://example.com'];
+  assert.equal(withPrivateCookies(args).args, args);
+});

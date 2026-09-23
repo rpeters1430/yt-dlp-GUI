@@ -176,6 +176,12 @@ async function runJob(job) {
       for (const warning of caps.warnings) appendLog(`WARNING: ${warning}`);
       updateJob(job.id, { title, thumbnail, extractor, video_id: videoId, stage: 'Ready to download', log: logLines.join('\n') });
     } catch (e) {
+      // The download would hit the exact same wall with the same cookies/IP, so don't spend
+      // another round-trip (and another flagged request) on it.
+      if (ytdlp.isBotCheckError(e.message)) {
+        appendLog(`Metadata lookup failed: ${e.message}`);
+        throw e;
+      }
       appendLog(`Metadata lookup note: ${e.message} (proceeding to download)`);
     }
 
@@ -272,11 +278,14 @@ async function runJob(job) {
       }
     }
   } catch (err) {
-    appendLog(`ERROR: ${err.message}`);
+    const errorMsg = ytdlp.isBotCheckError(err.message)
+      ? `${ytdlp.BOT_CHECK_HINT}\n\n${err.message}`
+      : err.message;
+    appendLog(`ERROR: ${errorMsg}`);
     console.error(`[queue] [job:${job.id}] Failed: ${err.message}`);
     updateJob(job.id, {
       status: 'failed',
-      error: err.message,
+      error: errorMsg,
       stage: 'Failed',
       pid: null,
       log: logLines.join('\n'),
