@@ -72,20 +72,67 @@ export function isYouTubeUrl(url, extractor = null) {
   }
 }
 
+// Used when nothing is known about the link(s) yet: every option is offered, and the server
+// drops whatever turns out not to apply once the download's own metadata probe runs.
+const UNKNOWN_CAPS = {
+  site: null,
+  sponsorblock: true,
+  liveFromStart: true,
+  hasSubtitles: null,
+  audioOnlyMedia: null,
+  chapters: null,
+  thumbnail: null,
+  warnings: [],
+};
+
+// Pre-analysis guess from the URL alone. Only site-level features can be guessed; media facts
+// (subtitles, chapters, ...) stay unknown until the server's `capabilities` arrive.
+export function capsFromUrl(url) {
+  return { ...UNKNOWN_CAPS, sponsorblock: isYouTubeUrl(url) };
+}
+
+// An analyzed item's server capabilities, or the URL guess if its metadata lookup failed.
+export function capsForItem(item) {
+  return item?.data?.capabilities ?? capsFromUrl(item?.url);
+}
+
+// Combines several links' capabilities for the shared "apply to all" options. A site feature
+// is offered if *any* link supports it (the server skips it for the others and says so in
+// that job's log); a media option is only shown as unavailable when *every* link lacks it.
+export function mergeCapabilities(list) {
+  const all = (list || []).filter(Boolean);
+  if (all.length === 0) return null;
+  if (all.length === 1) return all[0];
+  const tri = (key) => (all.some((c) => c[key] === true) ? true : all.every((c) => c[key] === false) ? false : null);
+  const siteIds = new Set(all.map((c) => c.site?.id ?? null));
+  return {
+    site: siteIds.size === 1 && all[0].site ? all[0].site : { id: 'mixed', name: 'multiple sites' },
+    sponsorblock: all.some((c) => c.sponsorblock),
+    sponsorblockPartial: all.some((c) => c.sponsorblock) && !all.every((c) => c.sponsorblock),
+    liveFromStart: all.some((c) => c.liveFromStart),
+    hasSubtitles: tri('hasSubtitles'),
+    audioOnlyMedia: all.every((c) => c.audioOnlyMedia === true),
+    chapters: tri('chapters'),
+    thumbnail: tri('thumbnail'),
+    warnings: [...new Set(all.flatMap((c) => c.warnings || []))],
+  };
+}
+
 /**
  * Renders the shared "quality / container / subtitles / embed-into-file / SponsorBlock"
  * option controls. Used both for a single video and for each entry in a batch of videos, and
  * for the "apply to all" shared settings, so the same option set/behavior is available
  * everywhere instead of being duplicated and drifting.
+ *
+ * `caps` is the server's per-link `capabilities` object (or mergeCapabilities of several):
+ * options the link can't use are hidden or disabled. Omit it to offer everything.
  */
 export default function DownloadOptionsFields({
   values,
   onChange,
   resolutions,
   liveInfo,
-  isYouTube = true,
-  hasSubtitles = null,
-  isAudioMedia = false,
+  caps = null,
 }) {
   const {
     audioOnly, quality, container, subtitles, subLangs,
@@ -93,9 +140,16 @@ export default function DownloadOptionsFields({
     sponsorblock, sponsorblockCategories,
     liveFromStart, waitForLive, waitInterval,
   } = values;
+  const c = caps || UNKNOWN_CAPS;
+  const siteName = c.site?.name || null;
+  const hasSubtitles = c.hasSubtitles;
+  const canSponsorblock = !!c.sponsorblock;
+  const canLiveFromStart = !!c.liveFromStart;
+  const noChapters = c.chapters === false;
+  const noThumbnail = c.thumbnail === false;
   const isLive = liveInfo?.liveStatus === 'is_live';
   const isUpcoming = liveInfo?.liveStatus === 'is_upcoming';
-  const isAudioMode = audioOnly || isAudioMedia;
+  const isAudioMode = audioOnly || !!c.audioOnlyMedia;
 
   function set(patch) {
     onChange({ ...values, ...patch });
@@ -118,6 +172,14 @@ export default function DownloadOptionsFields({
 
   return (
     <div className="download-options-fields">
+      {c.warnings?.length > 0 && (
+        <div className="site-caps-warnings">
+          {c.warnings.map((w) => (
+            <p key={w} className="muted small text-danger">{w}</p>
+          ))}
+        </div>
+      )}
+
       {isUpcoming && (
         <div className="live-options-panel">
           <div className="segmented-choice">
@@ -149,14 +211,14 @@ export default function DownloadOptionsFields({
             <button type="button" className={!liveFromStart ? 'active' : ''} onClick={() => set({ liveFromStart: false })}>
               <Radio size={14} /> Join live now
             </button>
-            {isYouTube && (
+            {canLiveFromStart && (
               <button type="button" className={liveFromStart ? 'active' : ''} onClick={() => set({ liveFromStart: true })}>
                 <Clock size={14} /> Record from broadcast start
               </button>
             )}
           </div>
           <p className="muted small">
-            {liveFromStart && isYouTube
+            {liveFromStart && canLiveFromStart
               ? "Downloads the full broadcast from the moment it started, not just from now. May take a while to catch up to the live edge."
               : 'Only what airs from now on will be recorded — anything already broadcast before this point is skipped.'}
           </p>
@@ -236,9 +298,15 @@ export default function DownloadOptionsFields({
           </div>
         )}
 
-        <label className="checkbox-label">
-          <input type="checkbox" checked={embedThumbnail} onChange={(e) => set({ embedThumbnail: e.target.checked })} />
+        <label className={`checkbox-label ${noThumbnail ? 'disabled' : ''}`}>
+          <input
+            type="checkbox"
+            checked={embedThumbnail && !noThumbnail}
+            disabled={noThumbnail}
+            onChange={(e) => set({ embedThumbnail: e.target.checked })}
+          />
           Embed thumbnail
+          {noThumbnail && <span className="badge-tag">None available</span>}
         </label>
         <label className="checkbox-label">
           <input type="checkbox" checked={embedMetadata} onChange={(e) => set({ embedMetadata: e.target.checked })} />
@@ -246,27 +314,35 @@ export default function DownloadOptionsFields({
         </label>
 
         {!isAudioMode && (
-          <label className="checkbox-label">
-            <input type="checkbox" checked={embedChapters} onChange={(e) => set({ embedChapters: e.target.checked })} />
+          <label className={`checkbox-label ${noChapters ? 'disabled' : ''}`}>
+            <input
+              type="checkbox"
+              checked={embedChapters && !noChapters}
+              disabled={noChapters}
+              onChange={(e) => set({ embedChapters: e.target.checked })}
+            />
             Embed chapters
+            {noChapters && <span className="badge-tag">None available</span>}
           </label>
         )}
 
-        {isYouTube ? (
+        {canSponsorblock ? (
           <label className="checkbox-label">
             <input type="checkbox" checked={sponsorblock} onChange={(e) => set({ sponsorblock: e.target.checked })} />
             Auto-remove sponsored segments (SponsorBlock)
-            <span className="badge-tag">YouTube</span>
+            <span className="badge-tag">{c.sponsorblockPartial ? 'YouTube links only' : 'YouTube'}</span>
           </label>
         ) : (
           <div className="option-disabled-notice" title="SponsorBlock is only available for YouTube videos">
             <span className="badge-tag">SponsorBlock</span>
-            <span className="muted small">Only supported on YouTube</span>
+            <span className="muted small">
+              Only supported on YouTube{siteName ? ` (this is ${siteName})` : ''}
+            </span>
           </div>
         )}
       </div>
 
-      {isYouTube && sponsorblock && (
+      {canSponsorblock && sponsorblock && (
         <div className="sponsorblock-categories">
           <div className="sponsorblock-categories-actions">
             <button type="button" className="btn-ghost btn-sm" onClick={selectAllSponsorblockCategories}>

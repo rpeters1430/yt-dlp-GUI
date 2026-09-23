@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api.js';
 import { useModalA11y } from '../hooks/useModalA11y.js';
-import DownloadOptionsFields, { defaultDownloadOptions, isYouTubeUrl } from './DownloadOptionsFields.jsx';
+import DownloadOptionsFields, { defaultDownloadOptions, capsForItem, mergeCapabilities } from './DownloadOptionsFields.jsx';
 
 function formatDuration(sec) {
   if (!sec && sec !== 0) return '';
@@ -321,9 +321,7 @@ export default function MediaPreviewModal({
                           onChange={(next) => updateItemSettings(idx, next)}
                           resolutions={toResolutionOptions(it.data)}
                           liveInfo={toLiveInfo(it.data)}
-                          isYouTube={it.data ? (it.data.isYouTube ?? isYouTubeUrl(it.url, it.data.extractor)) : isYouTubeUrl(it.url)}
-                          hasSubtitles={it.data?.hasSubtitles ?? null}
-                          isAudioMedia={it.data?.isAudioOnly ?? false}
+                          caps={capsForItem(it)}
                         />
                       </div>
                     )}
@@ -341,21 +339,7 @@ export default function MediaPreviewModal({
                 onChange={setSharedSettings}
                 resolutions={!isBatch ? toResolutionOptions(single?.data) : null}
                 liveInfo={!isBatch ? toLiveInfo(single?.data) : aggregateLiveInfo(items)}
-                isYouTube={
-                  !isBatch
-                    ? (single?.data ? (single.data.isYouTube ?? isYouTubeUrl(single.url, single.data.extractor)) : isYouTubeUrl(single?.url))
-                    : items.every((it) => it.data ? (it.data.isYouTube ?? isYouTubeUrl(it.url, it.data.extractor)) : isYouTubeUrl(it.url))
-                }
-                hasSubtitles={
-                  !isBatch
-                    ? (single?.data ? single.data.hasSubtitles : null)
-                    : (items.some((it) => it.data?.hasSubtitles) ? true : items.every((it) => it.data && it.data.hasSubtitles === false) ? false : null)
-                }
-                isAudioMedia={
-                  !isBatch
-                    ? (single?.data ? single.data.isAudioOnly : false)
-                    : items.every((it) => it.data?.isAudioOnly)
-                }
+                caps={!isBatch ? capsForItem(single) : mergeCapabilities(items.map(capsForItem))}
               />
             </div>
           )}
@@ -454,8 +438,8 @@ function SingleVideoDetails({ data }) {
             {data.viewCount != null && data.liveStatus !== 'is_live' && (
               <span className="tag">{formatViews(data.viewCount)}</span>
             )}
-            {data.extractor && (
-              <span className="tag text-capitalize">{data.extractor}</span>
+            {(data.capabilities?.site?.name || data.extractor) && (
+              <span className="tag text-capitalize">{data.capabilities?.site?.name || data.extractor}</span>
             )}
           </div>
 

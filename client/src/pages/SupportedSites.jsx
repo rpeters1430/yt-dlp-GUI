@@ -276,12 +276,13 @@ export default function SupportedSites() {
             <div className="rule-card-header">
               <Radio size={16} className="text-accent" />
               <strong>Live Stream Rewind</strong>
-              <span className="badge-tag">YouTube DASH</span>
+              <span className="badge-tag">Site-specific</span>
             </div>
             <p className="muted small">
               Recording an ongoing live stream from its beginning (<code>--live-from-start</code>)
-              requires multi-period DASH manifests with archived segment history. Only YouTube Live currently supports this.
-              On platforms like Twitch, recording starts strictly from the current moment you join.
+              needs the site to expose the stream's history. Your installed yt-dlp supports it for{' '}
+              <strong>{guideData?.liveFromStartSites?.join(', ') || 'YouTube'}</strong>; this list is read
+              from yt-dlp itself and updates with it. Everywhere else, recording starts from the moment you join.
             </p>
           </div>
 

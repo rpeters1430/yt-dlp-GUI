@@ -4,6 +4,7 @@ const os = require('os');
 const { spawn } = require('child_process');
 const { pipeline } = require('stream/promises');
 const { Readable } = require('stream');
+const siteProfiles = require('./siteProfiles');
 
 const YTDLP_BIN = process.env.YTDLP_BIN || 'yt-dlp';
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(__dirname, '..', '..', 'downloads');
@@ -338,7 +339,159 @@ function normalizeCategories(value) {
   return String(value).trim();
 }
 
-function buildDownloadArgs(url, options = {}) {
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Turns a --sub-langs pattern like "en.*" into the exact tracks the probe found. Passing the
+// raw regex lets yt-dlp also match auto-*translated* caption tracks (e.g. "en-de"), which
+// YouTube rate-limits (HTTP 429) — and one failed subtitle fetch fails the whole download.
+// Manual tracks win; auto-captions are only used when no manual track matches, preferring
+// the original-language caption over machine translations. Returns null to leave the
+// pattern alone ("all", or a pattern that isn't a valid regex).
+function pickSubtitleTracks(pattern, { manual = [], auto = [] }) {
+  const parts = String(pattern).split(',').map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0 || parts.includes('all')) return null;
+  let regexes;
+  try {
+    regexes = parts.map((p) => new RegExp(`^(?:${p})$`));
+  } catch (_) {
+    return null;
+  }
+  const matches = (lang) => regexes.some((r) => r.test(lang));
+  const manualHits = manual.filter(matches);
+  if (manualHits.length) return { langs: manualHits, auto: false };
+  const autoHits = auto.filter(matches);
+  const originals = autoHits.filter((l) => !l.includes('-') || l.endsWith('-orig'));
+  return { langs: originals.length ? originals : autoHits, auto: autoHits.length > 0 };
+}
+
+const AUDIO_FORMATS = ['mp3', 'm4a', 'opus', 'flac', 'wav', 'alac', 'vorbis', 'aac'];
+
+// The final file extension buildDownloadArgs will produce for these options.
+function expectedOutputExt({ audioOnly, container }) {
+  if (audioOnly) {
+    const fmt = AUDIO_FORMATS.includes(container) ? container : 'mp3';
+    return { alac: 'm4a', aac: 'm4a', vorbis: 'ogg' }[fmt] || fmt;
+  }
+  return container === 'mkv' || container === 'ts' ? container : 'mp4';
+}
+
+// Containers embedThumbnailFromUrl can add an attached picture to.
+const THUMBNAIL_FALLBACK_EXTS = new Set(['mp4', 'm4a', 'mp3']);
+
+function runFfmpegCollect(args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(getFfmpegBin(), args);
+    let stderr = '';
+    proc.stderr.on('data', (d) => (stderr += d));
+    proc.on('close', (code) => resolve({ code, stderr }));
+    proc.on('error', reject);
+  });
+}
+
+// Embeds a thumbnail fetched from `thumbnailUrl` into an already-downloaded file as its
+// cover art, mirroring the ffmpeg invocation yt-dlp's own EmbedThumbnail step uses. Used
+// when yt-dlp can't embed the site's preferred thumbnail itself (see resolveDownloadOptions).
+async function embedThumbnailFromUrl(filepath, thumbnailUrl) {
+  const ext = path.extname(filepath).slice(1).toLowerCase();
+  if (!THUMBNAIL_FALLBACK_EXTS.has(ext)) throw new Error(`can't embed a thumbnail into .${ext}`);
+  assertPublicUrl(thumbnailUrl);
+
+  const res = await fetch(thumbnailUrl, { signal: AbortSignal.timeout(30000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status} fetching thumbnail`);
+  const imageExt = /png/i.test(res.headers.get('content-type') || '') ? 'png' : 'jpg';
+  const coverPath = `${filepath}.cover.${imageExt}`;
+  const tempOut = `${filepath}.thumb-tmp.${ext}`;
+  fs.writeFileSync(coverPath, Buffer.from(await res.arrayBuffer()));
+
+  try {
+    // The cover becomes the next video stream after the file's own (data streams dropped),
+    // so its disposition index is the existing video stream count.
+    const { stderr: probe } = await runFfmpegCollect(['-hide_banner', '-i', filepath]);
+    const videoStreams = (probe.match(/Stream #0:\d+\S*: Video:/g) || []).length;
+    const args = [
+      '-y', '-i', filepath, '-i', coverPath,
+      '-map', '0', '-dn', '-ignore_unknown', '-map', '1', '-c', 'copy',
+      `-disposition:v:${videoStreams}`, 'attached_pic',
+    ];
+    if (ext === 'mp3') args.push('-id3v2_version', '3');
+    args.push(tempOut);
+    const { code, stderr } = await runFfmpegCollect(args);
+    if (code !== 0) throw new Error(stderr.trim().split('\n').slice(-2).join(' ') || `ffmpeg exited with code ${code}`);
+    fs.renameSync(tempOut, filepath);
+  } finally {
+    for (const p of [coverPath, tempOut]) {
+      try { fs.unlinkSync(p); } catch (_) {}
+    }
+  }
+}
+
+// Checks the requested options against what this link actually supports (see
+// siteProfiles.getCapabilities) and drops anything that would make yt-dlp warn or run a
+// post-processor with nothing to work on. `options.caps` comes from a real `-J` probe when
+// the queue has one; without it, a URL/extractor-based guess is used and only site-level
+// features (SponsorBlock, live-from-start) are enforced, since media facts are unknown.
+// Returns the cleaned options plus a human-readable note for each change, for the job log.
+function resolveDownloadOptions(url, options = {}) {
+  const caps = options.caps || siteProfiles.capabilitiesFromUrl(url, options.extractor);
+  const siteName = caps.site.name;
+  const resolved = { ...options, caps };
+  const adjustments = [];
+
+  if (normalizeCategories(resolved.sponsorblockRemove) && !caps.sponsorblock) {
+    resolved.sponsorblockRemove = '';
+    adjustments.push(`Skipped SponsorBlock: it only covers YouTube (this link is ${siteName})`);
+  }
+  if (resolved.liveFromStart && !caps.liveFromStart) {
+    resolved.liveFromStart = false;
+    adjustments.push(`Skipped "record from broadcast start": yt-dlp doesn't support it for ${siteName}`);
+  }
+  if (!resolved.audioOnly) {
+    if (resolved.subtitles && caps.hasSubtitles === false) {
+      resolved.subtitles = false;
+      adjustments.push('Skipped subtitles: this video has no subtitle tracks');
+    } else if (resolved.subtitles && caps.subtitles) {
+      const picked = pickSubtitleTracks(resolved.subLangs || 'en.*', caps.subtitles);
+      if (picked && picked.langs.length === 0) {
+        resolved.subtitles = false;
+        const available = [...new Set([...caps.subtitles.manual, ...caps.subtitles.auto])];
+        adjustments.push(`Skipped subtitles: none match "${resolved.subLangs}" (available: ${available.slice(0, 15).join(', ')})`);
+      } else if (picked) {
+        resolved.subLangs = picked.langs.map(escapeRegex).join(',');
+        resolved.useAutoSubs = picked.auto;
+      }
+    }
+    if (resolved.embedChapters && caps.chapters === false) {
+      resolved.embedChapters = false;
+      adjustments.push('Skipped chapter embedding: this video has no chapters');
+    }
+  }
+  if (resolved.embedThumbnail && caps.thumbnail === false) {
+    resolved.embedThumbnail = false;
+    adjustments.push('Skipped thumbnail embedding: this video has no thumbnail');
+  } else if (resolved.embedThumbnail && caps.thumbnailConvertible === false) {
+    // yt-dlp would pick a thumbnail it can't convert (e.g. AVIF) and fail the whole job in
+    // post-processing. MKV takes it as a plain attachment; other outputs get the site's
+    // JPG/PNG thumbnail embedded by us after the download (embedThumbnailFromUrl).
+    const outExt = expectedOutputExt(resolved);
+    const fmt = String(caps.thumbnailFormat || 'unknown').toUpperCase();
+    if (outExt !== 'mkv') {
+      resolved.embedThumbnail = false;
+      if (caps.thumbnailFallbackUrl && THUMBNAIL_FALLBACK_EXTS.has(outExt)) {
+        resolved.thumbnailFallbackUrl = caps.thumbnailFallbackUrl;
+        adjustments.push(`This site's preferred thumbnail is ${fmt}, which yt-dlp can't embed; embedding its JPG/PNG thumbnail after the download instead`);
+      } else {
+        adjustments.push(`Skipped thumbnail embedding: this site's thumbnail is ${fmt}, which yt-dlp can't embed into .${outExt}`);
+      }
+    }
+  }
+
+  return { options: resolved, adjustments, caps };
+}
+
+function buildDownloadArgs(url, rawOptions = {}) {
+  const { options, caps } = resolveDownloadOptions(url, rawOptions);
   const {
     audioOnly = false,
     formatSelector = '',
@@ -355,8 +508,10 @@ function buildDownloadArgs(url, options = {}) {
     postprocessorArgs = null,
   } = options;
 
-  const isYt = isYouTube(url, options.extractor);
-  const targetOutput = outputTemplate || `${DOWNLOAD_DIR}/%(uploader,extractor)s/%(title)s [%(id)s].%(ext)s`;
+  // Titles are capped in bytes: some sites use very long (often multi-byte) titles that push
+  // the name past the 255-byte filesystem limit once yt-dlp's post-processing adds suffixes
+  // like ".temp" / ".f137", which fails the ffmpeg step after the download already finished.
+  const targetOutput = outputTemplate || `${DOWNLOAD_DIR}/%(uploader,extractor).80B/%(title).150B [%(id)s].%(ext)s`;
 
   const args = [
     '--newline',
@@ -369,7 +524,6 @@ function buildDownloadArgs(url, options = {}) {
   ];
 
   if (audioOnly) {
-    const AUDIO_FORMATS = ['mp3', 'm4a', 'opus', 'flac', 'wav', 'alac', 'vorbis', 'aac'];
     const audioFormat = AUDIO_FORMATS.includes(container) ? container : 'mp3';
     args.push('-x', '--audio-format', audioFormat, '-f', buildFormatSelector({ audioOnly }));
     if (audioQuality) {
@@ -386,10 +540,10 @@ function buildDownloadArgs(url, options = {}) {
 
   if (subtitles && !audioOnly) {
     // --write-subs is required so yt-dlp actually fetches subtitle tracks to embed.
-    // For YouTube, --write-auto-subs allows auto-generated captions if manual ones aren't present.
-    // Non-YouTube extractors generally lack auto-subs and may fail if requested.
+    // --write-auto-subs allows auto-generated captions if manual ones aren't present; only
+    // requested when the probe (or, unprobed, the site profile) says the link has them.
     const subArgs = ['--write-subs'];
-    if (isYt) {
+    if (caps.autoSubs && options.useAutoSubs !== false) {
       subArgs.push('--write-auto-subs');
     }
     // Subtitles in webvtt/ttml formats fail to embed into MP4 containers unless converted to srt.
@@ -414,15 +568,14 @@ function buildDownloadArgs(url, options = {}) {
   }
 
   // SponsorBlock: cut the chosen segment categories out of the file automatically.
-  // Note: SponsorBlock API only supports YouTube. For other sites, omit the flag so yt-dlp
-  // doesn't print unsupported warnings or misfire postprocessing.
-  const sponsorblockRemoveCats = isYt ? normalizeCategories(sponsorblockRemove) : '';
+  // resolveDownloadOptions already cleared this for sites SponsorBlock doesn't cover.
+  const sponsorblockRemoveCats = normalizeCategories(sponsorblockRemove);
   if (sponsorblockRemoveCats) {
     args.push('--sponsorblock-remove', sponsorblockRemoveCats);
   }
 
   // Twitch specific configuration
-  const isTwitch = /twitch\.tv/i.test(url) || options.isTwitch;
+  const isTwitch = caps.site.id === 'twitch' || /twitch\.tv/i.test(url) || options.isTwitch;
   // options.isLive is only ever a real override when the caller actually set it — `false`
   // must mean "not live" (e.g. a clips.twitch.tv short link, which contains neither
   // "/videos/" nor "/clip/" so the URL heuristic alone would misdetect it as live).
@@ -446,10 +599,11 @@ function buildDownloadArgs(url, options = {}) {
       args.push('--wait-for-video', String(waitInterval));
     }
     // Joining a broadcast that's already in progress normally starts recording from the
-    // live edge (right now), losing everything broadcast before that point. YouTube (and a
-    // few other extractors) support fetching the full DASH manifest from the beginning of
-    // the stream instead. Other live platforms (like Twitch) do not support live-from-start.
-    if (options.liveFromStart && isYt) {
+    // live edge (right now), losing everything broadcast before that point. A few extractors
+    // can fetch the stream from its beginning instead; which ones is read from the installed
+    // yt-dlp's --help (siteProfiles.refreshYtdlpFacts), and resolveDownloadOptions has
+    // already cleared this for any other site.
+    if (options.liveFromStart) {
       args.push('--live-from-start');
     }
   }
@@ -861,6 +1015,8 @@ function updateYtdlp(channel) {
     proc.on('close', (code) => {
       isUpdatingYtdlp = false;
       if (code !== 0) return reject(new Error(stderr || `pip3 exited with code ${code}`));
+      // A new yt-dlp can change which sites support features like --live-from-start.
+      siteProfiles.refreshYtdlpFacts();
       resolve(stdout);
     });
     proc.on('error', (err) => {
@@ -1293,6 +1449,8 @@ module.exports = {
   searchYouTube,
   download,
   buildDownloadArgs,
+  resolveDownloadOptions,
+  embedThumbnailFromUrl,
   formatCommand,
   getVersions,
   updateYtdlp,

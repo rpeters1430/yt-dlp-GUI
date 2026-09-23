@@ -7,7 +7,7 @@ import {
 import { api } from '../api.js';
 import QueueItem from '../components/QueueItem.jsx';
 import MediaPreviewModal from '../components/MediaPreviewModal.jsx';
-import DownloadOptionsFields, { defaultDownloadOptions, isYouTubeUrl } from '../components/DownloadOptionsFields.jsx';
+import DownloadOptionsFields, { defaultDownloadOptions, isYouTubeUrl, capsFromUrl, mergeCapabilities } from '../components/DownloadOptionsFields.jsx';
 import { useDownloads } from '../context/DownloadsContext.jsx';
 
 export default function Dashboard() {
@@ -43,8 +43,8 @@ export default function Dashboard() {
   );
 
   const hasUrls = validUrls.length > 0;
-  const allValidAreYouTube = useMemo(
-    () => hasUrls && validUrls.every((u) => isYouTubeUrl(u)),
+  const pastedCaps = useMemo(
+    () => (hasUrls ? mergeCapabilities(validUrls.map(capsFromUrl)) : null),
     [hasUrls, validUrls]
   );
   const hasNonYouTube = useMemo(
@@ -215,11 +215,12 @@ export default function Dashboard() {
               <DownloadOptionsFields
                 values={options}
                 onChange={setOptions}
-                isYouTube={hasUrls ? allValidAreYouTube : true}
+                caps={pastedCaps}
               />
               {hasNonYouTube && (
                 <p className="muted small form-hint" style={{ color: 'var(--accent, #6366f1)', marginTop: '8px' }}>
-                  Non-YouTube link detected: features specific to YouTube (such as SponsorBlock and broadcast start recording) will be automatically skipped.
+                  Non-YouTube link detected: each link is checked when you click Analyze, and options its site
+                  doesn't support (such as SponsorBlock) are skipped automatically.
                 </p>
               )}
             </div>

@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const queue = require('../services/queue');
 const ytdlp = require('../services/ytdlp');
+const siteProfiles = require('../services/siteProfiles');
 const { requireAuth } = require('../auth');
 
 const router = express.Router();
@@ -25,7 +26,6 @@ router.post('/info', async (req, res) => {
         thumbnail: entry.thumbnail || (entry.thumbnails && entry.thumbnails[0] ? entry.thumbnails[0].url : null),
       }));
 
-      const isYt = ytdlp.isYouTube(url, info.extractor);
       return res.json({
         isPlaylist: true,
         title: info.title || 'Playlist',
@@ -33,7 +33,7 @@ router.post('/info', async (req, res) => {
         videoCount: info.playlist_count || (info.entries ? info.entries.length : entries.length),
         thumbnail: info.thumbnail || (entries[0] ? entries[0].thumbnail : null),
         extractor: info.extractor || 'youtube:playlist',
-        isYouTube: isYt,
+        capabilities: siteProfiles.getCapabilities(info, url),
         entries,
       });
     }
@@ -41,14 +41,6 @@ router.post('/info', async (req, res) => {
     if (!info.formats || info.formats.length === 0) {
       info = await ytdlp.getInfo(url, { flatPlaylist: false });
     }
-
-    const isYt = ytdlp.isYouTube(url, info.extractor);
-    const hasSubtitles = Boolean(
-      (info.subtitles && Object.keys(info.subtitles).length > 0) ||
-      (info.automatic_captions && Object.keys(info.automatic_captions).length > 0)
-    );
-    const isAudioOnly = !info.formats?.some((f) => f.vcodec && f.vcodec !== 'none');
-    const hasChapters = Array.isArray(info.chapters) && info.chapters.length > 0;
 
     const heights = [...new Set((info.formats || []).map((f) => f.height).filter(Boolean))].sort((a, b) => b - a);
     const bestVideo = (info.formats || [])
@@ -90,10 +82,9 @@ router.post('/info', async (req, res) => {
       thumbnail: info.thumbnail || (info.thumbnails && info.thumbnails.length ? info.thumbnails[info.thumbnails.length - 1].url : null),
       viewCount: info.view_count || null,
       extractor: info.extractor || null,
-      isYouTube: isYt,
-      hasSubtitles,
-      hasChapters,
-      isAudioOnly,
+      // What this link supports (site features + what the probe found); drives which
+      // download options the UI offers. The queue re-derives it at download time too.
+      capabilities: siteProfiles.getCapabilities(info, url),
       highestQuality,
       resolutions: heights.map((h) => ({
         height: h,

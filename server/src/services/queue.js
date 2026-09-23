@@ -1,6 +1,7 @@
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const ytdlp = require('./ytdlp');
+const siteProfiles = require('./siteProfiles');
 const nfo = require('./nfo');
 const jellyfinSync = require('./jellyfinSync');
 
@@ -127,31 +128,29 @@ async function runJob(job) {
     ...extraOptions,
   };
 
-  const commandArgs = ytdlp.buildDownloadArgs(job.url, downloadOptions);
-  const commandStr = ytdlp.formatCommand(process.env.YTDLP_BIN || 'yt-dlp', commandArgs);
   const ffmpegDir = ytdlp.getFfmpegDir();
 
   appendLog(`Download job started`);
   appendLog(`URL: ${job.url}`);
-  appendLog(`Command: ${commandStr}`);
   if (ffmpegDir) {
     appendLog(`FFmpeg path: ${ffmpegDir}`);
   }
 
   console.log(`[queue] [job:${job.id}] Starting download: ${job.url}`);
-  console.log(`[queue] [job:${job.id}] Command: ${commandStr}`);
 
   updateJob(job.id, {
     status: 'downloading',
     percent: 0,
     stage: 'Starting…',
-    command_args: commandStr,
     log: logLines.join('\n'),
   });
 
   try {
     let title = null, thumbnail = null, extractor = null, videoId = null;
     let nfoInfo = null;
+    // What this specific link supports (site features + what the probe found). Stays null
+    // if the probe fails, in which case resolveDownloadOptions falls back to a URL guess.
+    let caps = null;
     try {
       appendLog(`Resolving metadata...`);
       updateJob(job.id, { stage: 'Fetching metadata…', log: logLines.join('\n') });
@@ -171,11 +170,26 @@ async function runJob(job) {
         videoId,
         sourceUrl: info.webpage_url || job.url,
       };
+      caps = siteProfiles.getCapabilities(info, job.url);
       appendLog(`Metadata: "${title || 'Unknown'}" (${extractor || 'extractor'}) [ID: ${videoId || 'unknown'}]`);
+      appendLog(`Site profile: ${caps.site.name}${caps.site.id === 'generic' ? ' (generic rules)' : ''}`);
+      for (const warning of caps.warnings) appendLog(`WARNING: ${warning}`);
       updateJob(job.id, { title, thumbnail, extractor, video_id: videoId, stage: 'Ready to download', log: logLines.join('\n') });
     } catch (e) {
       appendLog(`Metadata lookup note: ${e.message} (proceeding to download)`);
     }
+
+    const { options: resolvedOptions, adjustments } = ytdlp.resolveDownloadOptions(job.url, {
+      ...downloadOptions,
+      extractor: extractor || job.extractor,
+      ...(caps ? { caps } : {}),
+    });
+    for (const note of adjustments) appendLog(note);
+
+    const commandStr = ytdlp.formatCommand(process.env.YTDLP_BIN || 'yt-dlp', ytdlp.buildDownloadArgs(job.url, resolvedOptions));
+    appendLog(`Command: ${commandStr}`);
+    console.log(`[queue] [job:${job.id}] Command: ${commandStr}`);
+    updateJob(job.id, { command_args: commandStr, log: logLines.join('\n') });
 
     let lastLogSave = Date.now();
     let lastProgressSave = 0;
@@ -183,7 +197,7 @@ async function runJob(job) {
 
     const result = await ytdlp.download(
       job.url,
-      { ...downloadOptions, extractor: extractor || job.extractor, onSpawn: (pid) => updateJob(job.id, { pid }) },
+      { ...resolvedOptions, onSpawn: (pid) => updateJob(job.id, { pid }) },
       (progress) => {
         const now = Date.now();
         const percentChanged = Math.abs((progress.percent || 0) - lastPercent) >= 1;
@@ -208,6 +222,16 @@ async function runJob(job) {
         appendLog(logLine);
       }
     );
+
+    if (resolvedOptions.thumbnailFallbackUrl && result.filepath) {
+      try {
+        updateJob(job.id, { stage: 'Embedding thumbnail…' });
+        await ytdlp.embedThumbnailFromUrl(result.filepath, resolvedOptions.thumbnailFallbackUrl);
+        appendLog('Embedded fallback thumbnail');
+      } catch (e) {
+        appendLog(`WARNING: Couldn't embed fallback thumbnail (video kept): ${e.message}`);
+      }
+    }
 
     const completionMsg = result.stoppedByUser
       ? `Live stream recording stopped by user -> ${result.filepath || 'saved stream'}`

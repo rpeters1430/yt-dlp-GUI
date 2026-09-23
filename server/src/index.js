@@ -162,6 +162,8 @@ cleanup.init(io);
 cleanup.start();
 jellyfinSync.start();
 dependencyUpdater.start();
+// Reads per-site feature support (e.g. --live-from-start) from the installed yt-dlp.
+require('./services/siteProfiles').refreshYtdlpFacts();
 
 server.listen(PORT, () => {
   console.log(`yt-dlp GUI server listening on port ${PORT}`);
