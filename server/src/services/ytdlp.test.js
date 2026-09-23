@@ -227,3 +227,14 @@ test('withPrivateCookies leaves args alone when no cookies are configured', () =
   const args = ['-J', 'https://example.com'];
   assert.equal(withPrivateCookies(args).args, args);
 });
+
+test('sweepPrivateCookieDirs removes private cookie copies left behind by a crash', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { sweepPrivateCookieDirs, PRIVATE_COOKIES_ROOT } = require('./ytdlp');
+  const leftover = path.join(PRIVATE_COOKIES_ROOT, 'job-leftover');
+  fs.mkdirSync(leftover, { recursive: true });
+  fs.writeFileSync(path.join(leftover, 'cookies.txt'), 'secret');
+  sweepPrivateCookieDirs();
+  assert.equal(fs.existsSync(leftover), false);
+});

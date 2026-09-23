@@ -153,6 +153,36 @@ function getTwitchAuthTokenMasked() {
 // you're not a bot" even though cookies are configured. So the uploaded cookies.txt is treated
 // as read-only: each process gets a private temp copy that it can rewrite freely and that is
 // deleted when the process exits. The displayed command still shows the real cookies path.
+// All copies live under one dedicated dir so anything a crash/SIGKILL left behind (the exit
+// handlers never ran) can be swept at startup — see sweepPrivateCookieDirs below.
+const PRIVATE_COOKIES_ROOT = path.join(os.tmpdir(), 'ytdlp-gui-cookies');
+
+function removePrivateCookieDir(dir) {
+  fs.rm(dir, { recursive: true, force: true, maxRetries: 3 }, (err) => {
+    if (err) console.error(`[ytdlp] Failed to remove private cookies copy ${dir}: ${err.message}`);
+  });
+}
+
+// Runs once at module load, i.e. at server startup, before the queue resumes any job. Any
+// yt-dlp process from a previous run is orphaned at that point (queue.init kills them by
+// pid), so every leftover copy is stale and holds a live login session — remove them all.
+function sweepPrivateCookieDirs() {
+  let entries;
+  try {
+    entries = fs.readdirSync(PRIVATE_COOKIES_ROOT);
+  } catch (_) {
+    return; // nothing to sweep
+  }
+  for (const name of entries) {
+    try {
+      fs.rmSync(path.join(PRIVATE_COOKIES_ROOT, name), { recursive: true, force: true, maxRetries: 3 });
+    } catch (e) {
+      console.error(`[ytdlp] Failed to remove stale private cookies copy ${name}: ${e.message}`);
+    }
+  }
+}
+sweepPrivateCookieDirs();
+
 function withPrivateCookies(args) {
   const idx = args.indexOf('--cookies');
   if (idx === -1 || args[idx + 1] !== COOKIES_FILE || !fs.existsSync(COOKIES_FILE)) {
@@ -160,7 +190,8 @@ function withPrivateCookies(args) {
   }
   let tmpDir;
   try {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-cookies-'));
+    fs.mkdirSync(PRIVATE_COOKIES_ROOT, { recursive: true, mode: 0o700 });
+    tmpDir = fs.mkdtempSync(path.join(PRIVATE_COOKIES_ROOT, 'job-'));
     const tmpFile = path.join(tmpDir, 'cookies.txt');
     fs.copyFileSync(COOKIES_FILE, tmpFile);
     fs.chmodSync(tmpFile, 0o600);
@@ -172,12 +203,12 @@ function withPrivateCookies(args) {
       cleanup: () => {
         if (cleaned) return;
         cleaned = true;
-        fs.rm(tmpDir, { recursive: true, force: true }, () => {});
+        removePrivateCookieDir(tmpDir);
       },
     };
   } catch (e) {
     console.error(`[ytdlp] Couldn't create private cookies copy, using shared file: ${e.message}`);
-    if (tmpDir) fs.rm(tmpDir, { recursive: true, force: true }, () => {});
+    if (tmpDir) removePrivateCookieDir(tmpDir);
     return { args, cleanup: () => {} };
   }
 }
@@ -1647,4 +1678,6 @@ module.exports = {
   isBotCheckError,
   BOT_CHECK_HINT,
   withPrivateCookies,
+  sweepPrivateCookieDirs,
+  PRIVATE_COOKIES_ROOT,
 };
