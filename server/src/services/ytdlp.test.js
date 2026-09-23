@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isPlaylistUrl } = require('./ytdlp');
+const { isPlaylistUrl, getDownloadIdleTimeoutMs } = require('./ytdlp');
 
 test('isPlaylistUrl detects playlist URLs across supported URL forms', () => {
   assert.equal(isPlaylistUrl('https://www.youtube.com/playlist?list=PL123'), true);
@@ -12,6 +12,35 @@ test('isPlaylistUrl detects playlist URLs across supported URL forms', () => {
 test('isPlaylistUrl does not treat arbitrary list query params as playlist', () => {
   assert.equal(isPlaylistUrl('https://example.com/watch?list=abc123'), false);
   assert.equal(isPlaylistUrl('https://www.youtube.com/watch?v=abc123'), false);
+});
+
+test('getDownloadIdleTimeoutMs skips the watchdog for wait-for-live jobs', () => {
+  assert.equal(getDownloadIdleTimeoutMs('https://www.twitch.tv/somechannel', {
+    waitForLive: true,
+    isLive: true,
+  }), null);
+});
+
+test('getDownloadIdleTimeoutMs prefers the live watchdog for live recordings', () => {
+  assert.equal(
+    getDownloadIdleTimeoutMs('https://www.twitch.tv/somechannel', { isLive: true }, {
+      standard: 1000,
+      playlist: 2000,
+      live: 3000,
+    }),
+    3000
+  );
+});
+
+test('getDownloadIdleTimeoutMs still uses the playlist watchdog for playlist URLs', () => {
+  assert.equal(
+    getDownloadIdleTimeoutMs('https://www.youtube.com/playlist?list=PL123', {}, {
+      standard: 1000,
+      playlist: 2000,
+      live: 3000,
+    }),
+    2000
+  );
 });
 
 test('getDenoBin resolves binary name correctly', () => {
