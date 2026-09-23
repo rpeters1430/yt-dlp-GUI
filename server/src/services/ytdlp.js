@@ -71,9 +71,14 @@ function readCookieLines() {
 }
 
 // Netscape cookie file fields are tab-separated: domain, includeSubdomains, path, secure,
-// expiry, name, value. Returns null for comments/blank lines/malformed rows.
+// expiry, name, value. Returns null for comments/blank lines/malformed rows. A "#HttpOnly_"
+// domain prefix marks a real (HttpOnly) cookie, not a comment — most YouTube auth cookies
+// are exported that way.
 function parseCookieLine(line) {
-  if (!line || line.trim().startsWith('#')) return null;
+  if (!line) return null;
+  line = line.replace(/\r$/, '');
+  if (line.startsWith('#HttpOnly_')) line = line.slice('#HttpOnly_'.length);
+  else if (line.trim().startsWith('#')) return null;
   const parts = line.split('\t');
   if (parts.length < 7) return null;
   return { domain: parts[0], name: parts[5], value: parts.slice(6).join('\t') };
@@ -139,6 +144,101 @@ function getTwitchAuthTokenMasked() {
   }
   return '';
 }
+
+// yt-dlp saves its cookie jar back to the --cookies file when it exits, and YouTube rotates
+// session cookies (__Secure-*PSIDTS, SIDCC, ...) on nearly every response. With several
+// yt-dlp processes sharing one cookies.txt (metadata probe + concurrent downloads + watch
+// checks) each one writes back its own rotated copy, last writer wins, and the stored session
+// ends up desynced/invalidated — YouTube then answers every request with "Sign in to confirm
+// you're not a bot" even though cookies are configured. So the uploaded cookies.txt is treated
+// as read-only: each process gets a private temp copy that it can rewrite freely and that is
+// deleted when the process exits. The displayed command still shows the real cookies path.
+// All copies live under one dedicated dir so anything a crash/SIGKILL left behind (the exit
+// handlers never ran) can be swept at startup — see sweepPrivateCookieDirs below.
+const PRIVATE_COOKIES_ROOT = path.join(os.tmpdir(), 'ytdlp-gui-cookies');
+
+function removePrivateCookieDir(dir) {
+  fs.rm(dir, { recursive: true, force: true, maxRetries: 3 }, (err) => {
+    if (err) console.error(`[ytdlp] Failed to remove private cookies copy ${dir}: ${err.message}`);
+  });
+}
+
+// Runs once at module load, i.e. at server startup, before the queue resumes any job. Any
+// yt-dlp process from a previous run is orphaned at that point (queue.init kills them by
+// pid), so every leftover copy is stale and holds a live login session — remove them all.
+function sweepPrivateCookieDirs() {
+  let entries;
+  try {
+    entries = fs.readdirSync(PRIVATE_COOKIES_ROOT);
+  } catch (_) {
+    return; // nothing to sweep
+  }
+  for (const name of entries) {
+    try {
+      fs.rmSync(path.join(PRIVATE_COOKIES_ROOT, name), { recursive: true, force: true, maxRetries: 3 });
+    } catch (e) {
+      console.error(`[ytdlp] Failed to remove stale private cookies copy ${name}: ${e.message}`);
+    }
+  }
+}
+sweepPrivateCookieDirs();
+
+function withPrivateCookies(args) {
+  const idx = args.indexOf('--cookies');
+  if (idx === -1 || args[idx + 1] !== COOKIES_FILE || !fs.existsSync(COOKIES_FILE)) {
+    return { args, cleanup: () => {} };
+  }
+  let tmpDir;
+  try {
+    fs.mkdirSync(PRIVATE_COOKIES_ROOT, { recursive: true, mode: 0o700 });
+    tmpDir = fs.mkdtempSync(path.join(PRIVATE_COOKIES_ROOT, 'job-'));
+    const tmpFile = path.join(tmpDir, 'cookies.txt');
+    fs.copyFileSync(COOKIES_FILE, tmpFile);
+    fs.chmodSync(tmpFile, 0o600);
+    const copy = args.slice();
+    copy[idx + 1] = tmpFile;
+    let cleaned = false;
+    return {
+      args: copy,
+      cleanup: () => {
+        if (cleaned) return;
+        cleaned = true;
+        removePrivateCookieDir(tmpDir);
+      },
+    };
+  } catch (e) {
+    console.error(`[ytdlp] Couldn't create private cookies copy, using shared file: ${e.message}`);
+    if (tmpDir) removePrivateCookieDir(tmpDir);
+    return { args, cleanup: () => {} };
+  }
+}
+
+function spawnYtdlp(args, options) {
+  const { args: spawnArgs, cleanup } = withPrivateCookies(args);
+  let proc;
+  try {
+    proc = spawn(YTDLP_BIN, spawnArgs, options);
+  } catch (e) {
+    cleanup();
+    throw e;
+  }
+  proc.once('close', cleanup);
+  proc.once('error', cleanup);
+  return proc;
+}
+
+// YouTube's anti-bot wall. Retrying the same request with the same cookies/IP won't help, so
+// callers fail fast and show the user what to actually do about it.
+const BOT_CHECK_RE = /Sign in to confirm you(?:'|’)re not a bot|confirm you(?:'|’)re not a bot/i;
+
+function isBotCheckError(message) {
+  return BOT_CHECK_RE.test(String(message || ''));
+}
+
+const BOT_CHECK_HINT = 'YouTube rejected the request with its bot check. Your cookies are likely expired or were '
+  + 'rotated by YouTube: export a fresh cookies.txt from a private/incognito window (log in, open '
+  + 'youtube.com/robots.txt, export, then close that window without browsing further) and re-upload it in '
+  + 'Settings → Cookies. If it persists, this server\'s IP may be flagged by YouTube (common for VPN/datacenter IPs).';
 
 function ffmpegArgs() {
   const dir = getFfmpegDir();
@@ -302,7 +402,7 @@ function getInfoResolved(url, { flatPlaylist = false, playlistEnd = null } = {})
     args.push(url);
 
     console.log(`[ytdlp:info] Fetching metadata for ${url}`);
-    const proc = spawn(YTDLP_BIN, args, { detached: process.platform !== 'win32' });
+    const proc = spawnYtdlp(args, { detached: process.platform !== 'win32' });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
@@ -829,7 +929,12 @@ function download(url, options = {}, onProgress, onLog) {
     }
     // detached: true makes the child (and any grandchild ffmpeg it spawns) the leader of
     // its own process group on POSIX, so killProcessTree() can signal -pid to reach both.
-    const proc = spawn(YTDLP_BIN, args, { detached: process.platform !== 'win32' });
+    let proc;
+    try {
+      proc = spawnYtdlp(args, { detached: process.platform !== 'win32' });
+    } catch (e) {
+      return reject(e);
+    }
     let stderr = '';
     let filepath = null;
     let timedOut = false;
@@ -1570,4 +1675,9 @@ module.exports = {
   isPlaylistUrl,
   getDownloadIdleTimeoutMs,
   isYouTube,
+  isBotCheckError,
+  BOT_CHECK_HINT,
+  withPrivateCookies,
+  sweepPrivateCookieDirs,
+  PRIVATE_COOKIES_ROOT,
 };
