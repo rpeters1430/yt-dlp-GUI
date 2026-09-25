@@ -297,9 +297,9 @@ function stopJob(id) {
   const stopped = ytdlp.stopDownload(id);
   // The job stays in 'downloading' status until yt-dlp actually exits (SIGINT is graceful and
   // can take a few seconds, longer still if escalation to SIGTERM/SIGKILL is needed) — without
-  // this, the UI has no way to tell a stop is in progress versus still recording normally.
+  // this, the UI has no way to tell finalization is in progress versus still recording normally.
   if (stopped) {
-    updateJob(id, { stage: 'Stopping recording…' });
+    updateJob(id, { stage: 'Finalizing recording…', eta: null, speed: null });
   }
   return stopped;
 }
@@ -314,4 +314,3 @@ function getActiveCount() {
 }
 
 module.exports = { init, enqueue, listJobs, getJob, stopJob, removeJob, getActiveCount };
-

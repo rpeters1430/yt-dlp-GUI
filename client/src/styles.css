@@ -2130,6 +2130,11 @@ button.chip-btn:hover:not(:disabled) {
   gap: 6px;
   letter-spacing: 0.04em;
 }
+.live-pulsing-badge-sm.finalizing-badge {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: transparent;
+}
 
 .pulsing-dot {
   width: 7px;
@@ -2179,6 +2184,26 @@ button.chip-btn:hover:not(:disabled) {
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
+
+.live-finalize-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+}
+.live-finalize-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.live-finalize-heading strong { color: var(--text); font-weight: 600; }
+.live-finalize-heading > span:last-child { margin-left: auto; font-variant-numeric: tabular-nums; }
 
 .live-pulsing-badge.upcoming-badge {
   background: rgba(245, 158, 11, 0.9);

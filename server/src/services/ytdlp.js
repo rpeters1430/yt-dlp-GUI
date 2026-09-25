@@ -826,7 +826,7 @@ const userStoppedJobs = new Set();
 // POSIX, letting us signal the whole group via the negative pid; Windows has no such
 // concept, so taskkill /T there kills the process and its children instead.
 function killProcessTree(proc, signal) {
-  if (!proc || proc.killed || !proc.pid) return;
+  if (!proc || !proc.pid || proc.exitCode !== null || proc.signalCode !== null) return;
   try {
     if (process.platform === 'win32') {
       spawn('taskkill', ['/pid', String(proc.pid), '/t', '/f']);
@@ -841,28 +841,33 @@ function killProcessTree(proc, signal) {
 }
 
 function stopDownload(jobId) {
-  const proc = activeProcesses.get(jobId);
-  if (!proc) return false;
+  const active = activeProcesses.get(jobId);
+  if (!active) return false;
+  const { proc, onProgress } = active;
   userStoppedJobs.add(jobId);
-  console.log(`[ytdlp] Gracefully stopping download for job ${jobId} via SIGINT`);
+  console.log(`[ytdlp] Requesting graceful stop for job ${jobId} via SIGINT`);
+  onProgress && onProgress({ stage: 'Finalizing recording…', percent: 99, speed: null, eta: null });
   try {
-    killProcessTree(proc, 'SIGINT');
+    // Signal yt-dlp first. It needs to stop fetching fragments and run its cleanup and
+    // post-processors; interrupting its FFmpeg child at the same time leaves .part files.
+    if (process.platform === 'win32') proc.kill('SIGINT');
+    else process.kill(proc.pid, 'SIGINT');
   } catch (err) {
     console.error(`[ytdlp] Failed to send SIGINT to job ${jobId}: ${err.message}`);
     return false;
   }
   setTimeout(() => {
     if (activeProcesses.has(jobId)) {
-      console.log(`[ytdlp] Force terminating lingering job ${jobId} via SIGTERM`);
+      console.log(`[ytdlp] Graceful stop still pending for job ${jobId}; terminating process group via SIGTERM`);
       killProcessTree(proc, 'SIGTERM');
     }
-  }, 8000);
+  }, 30 * 60 * 1000);
   setTimeout(() => {
     if (activeProcesses.has(jobId)) {
       console.log(`[ytdlp] Job ${jobId} still alive after SIGTERM, sending SIGKILL`);
       killProcessTree(proc, 'SIGKILL');
     }
-  }, 16000);
+  }, 35 * 60 * 1000);
   return true;
 }
 
@@ -940,7 +945,7 @@ function download(url, options = {}, onProgress, onLog) {
     let timedOut = false;
 
     if (options.jobId) {
-      activeProcesses.set(options.jobId, proc);
+      activeProcesses.set(options.jobId, { proc, onProgress });
     }
     if (typeof options.onSpawn === 'function' && proc.pid) {
       options.onSpawn(proc.pid);
@@ -951,6 +956,14 @@ function download(url, options = {}, onProgress, onLog) {
       if (idleTimeoutMs == null) return;
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
+        // Once the user asks to stop a live recording, post-processing may legitimately be
+        // quiet for a long time (especially for a large capture). Keep waiting instead of
+        // treating the lack of output as a hung download; the separate stop fallback is the
+        // last resort for a process that never exits.
+        if (options.jobId && userStoppedJobs.has(options.jobId)) {
+          resetIdleTimer();
+          return;
+        }
         timedOut = true;
         const msg = `No output for ${Math.round(idleTimeoutMs / 60000)} min — terminating as hung`;
         console.error(`[${jobId}] ${msg}`);
@@ -972,6 +985,21 @@ function download(url, options = {}, onProgress, onLog) {
     let totalFormats = 1;
     let formatIndex = 0;
     let currentStage = null;
+    let postprocessSample = null;
+
+    function estimatePostprocessEta(percent) {
+      const now = Date.now();
+      const previous = postprocessSample;
+      postprocessSample = { percent, at: now };
+      if (!previous || percent <= previous.percent || now <= previous.at) return null;
+      const percentPerSecond = (percent - previous.percent) / ((now - previous.at) / 1000);
+      if (!Number.isFinite(percentPerSecond) || percentPerSecond <= 0) return null;
+      const seconds = Math.ceil((100 - percent) / percentPerSecond);
+      if (seconds < 60) return `${seconds}s`;
+      const minutes = Math.ceil(seconds / 60);
+      if (minutes < 60) return `${minutes}m`;
+      return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+    }
 
     function reportProgress(rawPercent, speed, eta, explicitStage) {
       if (Number.isNaN(rawPercent)) return;
@@ -1004,6 +1032,13 @@ function download(url, options = {}, onProgress, onLog) {
         stage = stage || (options.audioOnly ? 'Downloading audio…' : 'Downloading…');
       }
 
+      // A final download tick can race with the user's stop request. Keep every connected
+      // client in the finalization UI until yt-dlp reports an actual post-processing stage.
+      if (options.jobId && userStoppedJobs.has(options.jobId) && (!explicitStage || /^Downloading/i.test(explicitStage))) {
+        effectivePercent = Math.max(effectivePercent, 99);
+        stage = 'Finalizing recording…';
+      }
+
       effectivePercent = Math.round(effectivePercent * 10) / 10;
       onProgress && onProgress({
         percent: effectivePercent,
@@ -1032,7 +1067,8 @@ function download(url, options = {}, onProgress, onLog) {
           const rest = trimmed.replace('YTDLP_POSTPROCESS', '').trim();
           const percent = parseFloat(rest.replace('%', '').trim());
           if (!Number.isNaN(percent)) {
-            reportProgress(Math.min(99, 90 + percent * 0.09), null, null, 'Post-processing…');
+            const eta = estimatePostprocessEta(percent);
+            reportProgress(Math.min(99, 90 + percent * 0.09), null, eta, 'Post-processing recording…');
           }
           continue;
         }
