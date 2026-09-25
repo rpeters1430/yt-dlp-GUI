@@ -60,13 +60,13 @@ export default function QueueItem({ job, onDeleted }) {
   const elapsed = useElapsed(isRecording, parseUtc(job.created_at));
   // Show a separate progress panel while yt-dlp finalizes an early-stopped capture.
   const isFinalizing = isLive && job.status === 'downloading' && (
-    stopping || /finaliz|post-processing recording|merging formats|extracting audio|embedding thumbnail/i.test(job.stage || '')
+    stopping || /finaliz|post-processing recording|merging formats|extracting audio|embedding thumbnail|applying sponsorblock/i.test(job.stage || '')
   );
-  const isStopping = stopping && !/post-processing recording|merging formats|extracting audio/i.test(job.stage || '');
+  const isStopping = stopping && !/post-processing recording|merging formats|extracting audio|applying sponsorblock/i.test(job.stage || '');
 
   useEffect(() => {
     if (job.status !== 'downloading' || !isLive) setStopping(false);
-    else if (/post-processing recording|merging formats|extracting audio/i.test(job.stage || '')) setStopping(false);
+    else if (/post-processing recording|merging formats|extracting audio|applying sponsorblock/i.test(job.stage || '')) setStopping(false);
   }, [job.status, job.stage, isLive]);
 
   async function handleStop() {

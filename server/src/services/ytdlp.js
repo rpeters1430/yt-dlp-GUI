@@ -840,35 +840,69 @@ function killProcessTree(proc, signal) {
   }
 }
 
+// Node's SIGINT emulation on Windows terminates a child abruptly. Give yt-dlp and FFmpeg
+// a real console control event so their handlers can flush/finalize output. The download
+// is started detached into its own console/process group for a targeted CTRL+BREAK.
+function sendWindowsCtrlBreak(pid, onLog) {
+  const csharp = 'using System; using System.Runtime.InteropServices; public static class Win32Console { [DllImport("kernel32.dll", SetLastError=true)] public static extern bool FreeConsole(); [DllImport("kernel32.dll", SetLastError=true)] public static extern bool AttachConsole(uint pid); [DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add); [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GenerateConsoleCtrlEvent(uint eventType, uint processGroupId); }';
+  const script = [
+    `Add-Type -TypeDefinition '${csharp}'`,
+    '[Win32Console]::FreeConsole() | Out-Null',
+    `if (-not [Win32Console]::AttachConsole(${pid})) { exit 2 }`,
+    '[Win32Console]::SetConsoleCtrlHandler([IntPtr]::Zero, $true) | Out-Null',
+    `if (-not [Win32Console]::GenerateConsoleCtrlEvent(1, ${pid})) { exit 3 }`,
+    'Start-Sleep -Milliseconds 500; [Win32Console]::FreeConsole() | Out-Null',
+  ].join('; ');
+  let helper;
+  try {
+    helper = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      windowsHide: true,
+      stdio: 'ignore',
+    });
+  } catch (err) {
+    onLog && onLog(`[warning] Could not send Windows console stop event: ${err.message}`);
+    return false;
+  }
+  helper.once('error', (err) => onLog && onLog(`[warning] Could not send Windows console stop event: ${err.message}`));
+  helper.once('close', (code) => {
+    if (code !== 0) onLog && onLog(`[warning] Windows console stop event helper exited with code ${code}`);
+  });
+  return true;
+}
+
 function stopDownload(jobId) {
   const active = activeProcesses.get(jobId);
   if (!active) return false;
-  const { proc, onProgress } = active;
+  const { proc, onProgress, onLog } = active;
   userStoppedJobs.add(jobId);
-  console.log(`[ytdlp] Requesting graceful stop for job ${jobId} via SIGINT`);
+  console.log(`[ytdlp] Requesting graceful stop for job ${jobId}`);
   onProgress && onProgress({ stage: 'Finalizing recording…', percent: 99, speed: null, eta: null });
   try {
-    // Signal yt-dlp first. It needs to stop fetching fragments and run its cleanup and
-    // post-processors; interrupting its FFmpeg child at the same time leaves .part files.
-    if (process.platform === 'win32') proc.kill('SIGINT');
+    // On POSIX, yt-dlp receives SIGINT and handles its FFmpeg child. On Windows, a real
+    // CTRL+BREAK reaches the detached process group; ChildProcess.kill('SIGINT') is forceful.
+    if (process.platform === 'win32') sendWindowsCtrlBreak(proc.pid, onLog);
     else process.kill(proc.pid, 'SIGINT');
   } catch (err) {
     console.error(`[ytdlp] Failed to send SIGINT to job ${jobId}: ${err.message}`);
     return false;
   }
-  setTimeout(() => {
+  active.stopTimers = [setTimeout(() => {
     if (activeProcesses.has(jobId)) {
       console.log(`[ytdlp] Graceful stop still pending for job ${jobId}; terminating process group via SIGTERM`);
       killProcessTree(proc, 'SIGTERM');
     }
-  }, 30 * 60 * 1000);
-  setTimeout(() => {
+  }, 30 * 60 * 1000), setTimeout(() => {
     if (activeProcesses.has(jobId)) {
       console.log(`[ytdlp] Job ${jobId} still alive after SIGTERM, sending SIGKILL`);
       killProcessTree(proc, 'SIGKILL');
     }
-  }, 35 * 60 * 1000);
+  }, 35 * 60 * 1000)];
   return true;
+}
+
+function clearStopTimers(active) {
+  for (const timer of active?.stopTimers || []) clearTimeout(timer);
+  if (active) active.stopTimers = [];
 }
 
 // Idle-watchdog: if yt-dlp prints nothing at all for this long, assume it's hung (stuck
@@ -932,11 +966,11 @@ function download(url, options = {}, onProgress, onLog) {
     } catch (e) {
       return reject(e);
     }
-    // detached: true makes the child (and any grandchild ffmpeg it spawns) the leader of
-    // its own process group on POSIX, so killProcessTree() can signal -pid to reach both.
+    // Detached POSIX jobs lead their own process group. On Windows, detached gives yt-dlp
+    // a private console/process group for the targeted CTRL+BREAK sent by stopDownload().
     let proc;
     try {
-      proc = spawnYtdlp(args, { detached: process.platform !== 'win32' });
+      proc = spawnYtdlp(args, { detached: true, windowsHide: process.platform === 'win32' });
     } catch (e) {
       return reject(e);
     }
@@ -945,7 +979,7 @@ function download(url, options = {}, onProgress, onLog) {
     let timedOut = false;
 
     if (options.jobId) {
-      activeProcesses.set(options.jobId, { proc, onProgress });
+      activeProcesses.set(options.jobId, { proc, onProgress, onLog, stopTimers: [] });
     }
     if (typeof options.onSpawn === 'function' && proc.pid) {
       options.onSpawn(proc.pid);
@@ -1001,7 +1035,7 @@ function download(url, options = {}, onProgress, onLog) {
       return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
     }
 
-    function reportProgress(rawPercent, speed, eta, explicitStage) {
+    function reportProgress(rawPercent, speed, eta, explicitStage, globalPercent = false) {
       if (Number.isNaN(rawPercent)) return;
 
       if (rawPercent < 25 && highestPassPercent > 70) {
@@ -1015,7 +1049,11 @@ function download(url, options = {}, onProgress, onLog) {
       let effectivePercent = rawPercent;
       let stage = explicitStage;
 
-      if (isMultiFormat) {
+      if (globalPercent) {
+        // Explicit merger/postprocessor ticks are already on the queue-wide scale.
+        effectivePercent = rawPercent;
+        stage = explicitStage || 'Post-processing recording…';
+      } else if (isMultiFormat) {
         if (currentPass <= 1) {
           // Video format pass: 0% -> 85%
           effectivePercent = Math.min(85, rawPercent * 0.85);
@@ -1068,7 +1106,7 @@ function download(url, options = {}, onProgress, onLog) {
           const percent = parseFloat(rest.replace('%', '').trim());
           if (!Number.isNaN(percent)) {
             const eta = estimatePostprocessEta(percent);
-            reportProgress(Math.min(99, 90 + percent * 0.09), null, eta, 'Post-processing recording…');
+            reportProgress(Math.min(99, 90 + percent * 0.09), null, eta, 'Post-processing recording…', true);
           }
           continue;
         }
@@ -1100,10 +1138,10 @@ function download(url, options = {}, onProgress, onLog) {
 
         if (trimmed.includes('[Merger] Merging formats')) {
           currentStage = 'Merging formats…';
-          reportProgress(99, null, null, 'Merging formats…');
+          reportProgress(99, null, null, 'Merging formats…', true);
         } else if (trimmed.includes('[ExtractAudio]')) {
           currentStage = 'Extracting audio…';
-          reportProgress(99, null, null, 'Extracting audio…');
+          reportProgress(99, null, null, 'Extracting audio…', true);
         } else if (
           trimmed.includes('[SponsorBlock]') &&
           !trimmed.includes('not supported') &&
@@ -1111,7 +1149,7 @@ function download(url, options = {}, onProgress, onLog) {
           !trimmed.includes('SponsorBlock is not')
         ) {
           currentStage = 'Applying SponsorBlock…';
-          reportProgress(99, null, null, 'Applying SponsorBlock…');
+          reportProgress(99, null, null, 'Applying SponsorBlock…', true);
         }
 
         // Fallback for standard yt-dlp progress lines (e.g. from external downloaders/HLS/fragments)
@@ -1158,6 +1196,7 @@ function download(url, options = {}, onProgress, onLog) {
       if (idleTimer) clearTimeout(idleTimer);
       const wasStoppedByUser = !!options.jobId && userStoppedJobs.has(options.jobId);
       if (options.jobId) {
+        clearStopTimers(activeProcesses.get(options.jobId));
         activeProcesses.delete(options.jobId);
         userStoppedJobs.delete(options.jobId);
       }
@@ -1187,6 +1226,7 @@ function download(url, options = {}, onProgress, onLog) {
     proc.on('error', (err) => {
       if (idleTimer) clearTimeout(idleTimer);
       if (options.jobId) {
+        clearStopTimers(activeProcesses.get(options.jobId));
         activeProcesses.delete(options.jobId);
         userStoppedJobs.delete(options.jobId);
       }
