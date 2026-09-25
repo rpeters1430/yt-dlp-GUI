@@ -58,11 +58,16 @@ export default function QueueItem({ job, onDeleted }) {
   const isLive = job.is_live === 1 || job.is_live === true;
   const isRecording = isLive && job.status === 'downloading';
   const elapsed = useElapsed(isRecording, parseUtc(job.created_at));
-  // The stop request only sends a signal and returns — yt-dlp can take several seconds (longer
-  // if it has to be escalated to SIGTERM/SIGKILL) to actually finish and flip job.status away
-  // from 'downloading'. `stage` is pushed by the server the moment a stop is requested, so any
-  // client watching this job sees "stopping" even if it wasn't the one that clicked the button.
-  const isStopping = stopping || job.stage === 'Stopping recording…';
+  // Show a separate progress panel while yt-dlp finalizes an early-stopped capture.
+  const isFinalizing = isLive && job.status === 'downloading' && (
+    stopping || /finaliz|post-processing recording|merging formats|extracting audio|embedding thumbnail|applying sponsorblock/i.test(job.stage || '')
+  );
+  const isStopping = stopping && !/post-processing recording|merging formats|extracting audio|applying sponsorblock/i.test(job.stage || '');
+
+  useEffect(() => {
+    if (job.status !== 'downloading' || !isLive) setStopping(false);
+    else if (/post-processing recording|merging formats|extracting audio|applying sponsorblock/i.test(job.stage || '')) setStopping(false);
+  }, [job.status, job.stage, isLive]);
 
   async function handleStop() {
     setStopping(true);
@@ -112,34 +117,43 @@ export default function QueueItem({ job, onDeleted }) {
               {meta.label}
             </span>
             {isLive && (
-              <span className="live-pulsing-badge-sm">
-                <span className="pulsing-dot" /> LIVE
+              <span className={`live-pulsing-badge-sm${isFinalizing ? ' finalizing-badge' : ''}`}>
+                {isFinalizing ? <><Loader2 size={11} className="spin-icon" /> FINALIZING</> : <><span className="pulsing-dot" /> LIVE</>}
               </span>
             )}
           </div>
           {isRecording ? (
-            <div className="queue-item-live-row">
-              {isStopping ? (
-                <span className="muted small">
-                  <Loader2 size={12} className="spin-icon" /> Stopping — finishing the saved file…
-                </span>
-              ) : (
-                <>
-                  <span className="queue-item-live-elapsed"><Clock size={12} /> {elapsed || '0:00'} recorded</span>
-                  {job.stage && <span className="muted small">· {job.stage}</span>}
-                  {job.speed && <span className="muted small">· {job.speed}</span>}
-                </>
-              )}
-              <button
-                type="button"
-                className="btn-danger btn-sm"
-                onClick={() => setConfirmStop(true)}
-                disabled={isStopping}
-                title="Stop recording and save the file captured so far"
-              >
-                <Square size={12} /> {isStopping ? 'Stopping…' : 'Stop Recording'}
-              </button>
-            </div>
+            isFinalizing ? (
+              <div className="live-finalize-panel" aria-live="polite">
+                <div className="live-finalize-heading">
+                  <Loader2 size={14} className="spin-icon" />
+                  <strong>{job.stage || 'Finalizing recording…'}</strong>
+                  {job.eta ? <span>ETA {job.eta}</span> : <span className="muted">Estimating time remaining…</span>}
+                </div>
+                <div className="progress-bar">
+                  <div className="progress-fill" style={{ width: `${Math.min(99, Math.max(0, job.percent || 0))}%` }} />
+                </div>
+                <div className="progress-meta">
+                  <span>{Math.round(job.percent || 0)}%</span>
+                  {job.speed && <span>· {job.speed}</span>}
+                </div>
+              </div>
+            ) : (
+              <div className="queue-item-live-row">
+                <span className="queue-item-live-elapsed"><Clock size={12} /> {elapsed || '0:00'} recorded</span>
+                {job.stage && <span className="muted small">· {job.stage}</span>}
+                {job.speed && <span className="muted small">· {job.speed}</span>}
+                <button
+                  type="button"
+                  className="btn-danger btn-sm"
+                  onClick={() => setConfirmStop(true)}
+                  disabled={isStopping || isFinalizing}
+                  title="Stop recording and save the file captured so far"
+                >
+                  <Square size={12} /> {isStopping ? 'Finalizing…' : 'Stop Recording'}
+                </button>
+              </div>
+            )
           ) : job.status === 'downloading' && (
             <div>
               <div className="progress-bar">
