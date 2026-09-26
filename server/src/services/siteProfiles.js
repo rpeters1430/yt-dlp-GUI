@@ -415,6 +415,17 @@ function getCapabilities(info, url = null) {
   const profile = matchProfile({ url, extractor, extractorKey });
   const isPlaylist = info._type === 'playlist' || Array.isArray(info.entries);
 
+  // A scheduled broadcast has no formats, subtitles or chapters *yet*; judging it by those
+  // would strip options the stream will have once it starts. Use the site-level guess.
+  if (!isPlaylist && info.live_status === 'is_upcoming') {
+    return {
+      ...capabilitiesFromUrl(url, extractor),
+      site: siteSummary(profile, extractor, extractorKey),
+      liveFromStart: supportsLiveFromStart(extractorKey, extractor, profile),
+      liveStatus: 'is_upcoming',
+    };
+  }
+
   const formats = Array.isArray(info.formats) ? info.formats : null;
   const hasFormats = !!(formats && formats.length);
   // A missing vcodec means "unknown", not "no video" — plain progressive MP4s on many sites

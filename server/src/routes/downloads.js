@@ -74,6 +74,11 @@ router.post('/info', async (req, res) => {
     // (scheduled but not started — has no formats yet), 'was_live'/'post_live' (a finished
     // broadcast now served as a VOD — downloads like any normal video), or unset/'not_live'.
     const liveStatus = info.live_status || (info.is_live ? 'is_live' : null);
+    // getInfo tolerates "no formats" so scheduled broadcasts can be probed; anything else
+    // without formats (geo-blocked, removed, …) still can't be downloaded.
+    if (heights.length === 0 && !(info.formats || []).length && liveStatus !== 'is_upcoming') {
+      return res.status(502).json({ error: 'No downloadable formats found for this link' });
+    }
 
     res.json({
       isPlaylist: false,

@@ -173,3 +173,20 @@ test('default output template caps title length in bytes', () => {
   const template = args[args.indexOf('-o') + 1];
   assert.match(template, /%\(title\)\.150B \[%\(id\)s\]\.%\(ext\)s$/);
 });
+
+test('getCapabilities does not judge a scheduled broadcast by its (not yet existing) formats', () => {
+  const caps = getCapabilities({
+    extractor: 'youtube',
+    extractor_key: 'Youtube',
+    live_status: 'is_upcoming',
+    formats: [],
+    subtitles: {},
+    automatic_captions: {},
+    chapters: null,
+  }, 'https://www.youtube.com/watch?v=abc123');
+  assert.equal(caps.liveStatus, 'is_upcoming');
+  assert.equal(caps.hasSubtitles, null);
+  assert.equal(caps.chapters, null);
+  assert.equal(caps.liveFromStart, true);
+  assert.equal(caps.site.extractorKey, 'Youtube');
+});

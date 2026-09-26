@@ -238,3 +238,50 @@ test('sweepPrivateCookieDirs removes private cookie copies left behind by a cras
   sweepPrivateCookieDirs();
   assert.equal(fs.existsSync(leftover), false);
 });
+
+test('summarizeErrorOutput collapses repeated lines with a count, keeping first-seen order', () => {
+  const stderr = [
+    'WARNING: Unknown codec unknown',
+    'ERROR: Did not get any data blocks',
+    'ERROR: Did not get any data blocks',
+    '',
+    'ERROR: Did not get any data blocks',
+    'WARNING: Unknown codec unknown',
+  ].join('\n');
+  const { summarizeErrorOutput } = require('./ytdlp');
+  assert.equal(
+    summarizeErrorOutput(stderr),
+    'WARNING: Unknown codec unknown (×2)\nERROR: Did not get any data blocks (×3)',
+  );
+});
+
+test('readProcessGroupCpuTicks sums CPU time for only the matching process group', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { readProcessGroupCpuTicks } = require('./ytdlp');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proc-'));
+  const writeStat = (pid, comm, pgrp, utime, stime, cutime, cstime) => {
+    fs.mkdirSync(path.join(root, String(pid)));
+    // pid (comm) state ppid pgrp session tty tpgid flags minflt cminflt majflt cmajflt utime stime cutime cstime ...
+    fs.writeFileSync(path.join(root, String(pid), 'stat'),
+      `${pid} (${comm}) S 1 ${pgrp} ${pgrp} 0 -1 0 0 0 0 0 ${utime} ${stime} ${cutime} ${cstime} 20 0 1 0`);
+  };
+  try {
+    writeStat(100, 'yt-dlp', 100, 10, 5, 3, 2);
+    writeStat(101, 'ffmpeg (merge) x', 100, 40, 10, 0, 0);
+    writeStat(200, 'other', 200, 999, 999, 0, 0);
+    fs.mkdirSync(path.join(root, 'self'));
+    assert.equal(readProcessGroupCpuTicks(100, root), 70);
+    assert.equal(readProcessGroupCpuTicks(100, path.join(root, 'missing')), null);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('isBusyCpuDelta requires a small but real share of CPU over the window', () => {
+  const { isBusyCpuDelta } = require('./ytdlp');
+  assert.equal(isBusyCpuDelta(0, 60000), false);
+  assert.equal(isBusyCpuDelta(29, 60000), false);
+  assert.equal(isBusyCpuDelta(30, 60000), true);
+});
