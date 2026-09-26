@@ -396,7 +396,10 @@ function getInfoResolved(url, { flatPlaylist = false, playlistEnd = null } = {})
     } catch (e) {
       return reject(e);
     }
-    const args = ['-J', ...commonArgs()];
+    // A scheduled (not yet live) broadcast has no formats, which yt-dlp otherwise treats as
+    // an error ("This live event will begin in …") — so the link could never be probed and
+    // offered as "wait for it to start". Callers check for empty formats themselves.
+    const args = ['-J', '--ignore-no-formats-error', ...commonArgs()];
     if (flatPlaylist) args.push('--flat-playlist');
     if (playlistEnd) args.push('--playlist-end', String(playlistEnd));
     args.push(url);
@@ -913,6 +916,58 @@ function clearStopTimers(active) {
 const DOWNLOAD_IDLE_TIMEOUT_MS = parseInt(process.env.DOWNLOAD_IDLE_TIMEOUT_MS || String(15 * 60 * 1000), 10);
 const PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS = parseInt(process.env.PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS || String(60 * 60 * 1000), 10);
 const LIVE_DOWNLOAD_IDLE_TIMEOUT_MS = parseInt(process.env.LIVE_DOWNLOAD_IDLE_TIMEOUT_MS || String(60 * 60 * 1000), 10);
+// Silence isn't always a hang: `--print` implies --quiet, so FFmpeg merging/SponsorBlock
+// cutting of a multi-hour capture prints nothing for a long time. When the watchdog fires,
+// the job's process group is given a short sampling window and spared if it's still using
+// CPU (a wedged network read uses essentially none), up to this hard cap of total silence.
+const DOWNLOAD_MAX_QUIET_MS = parseInt(process.env.DOWNLOAD_MAX_QUIET_MS || String(4 * 60 * 60 * 1000), 10);
+const BUSY_SAMPLE_WINDOW_MS = 60 * 1000;
+// Average CPU share (of one core) the process group must use over a sampling window to
+// count as working. Linux reports CPU time in USER_HZ ticks, which is 100/s in practice.
+const BUSY_MIN_CPU_SHARE = 0.005;
+const CLOCK_TICKS_PER_SEC = 100;
+
+// Total CPU ticks (including reaped children) used by every process in a process group,
+// or null where /proc isn't available (non-Linux) so callers fall back to plain idle kills.
+function readProcessGroupCpuTicks(pgid, procRoot = '/proc') {
+  let entries;
+  try {
+    entries = fs.readdirSync(procRoot);
+  } catch (_) {
+    return null;
+  }
+  let total = 0;
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    let stat;
+    try {
+      stat = fs.readFileSync(path.join(procRoot, entry, 'stat'), 'utf8');
+    } catch (_) {
+      continue; // exited between readdir and read
+    }
+    // The command name (field 2) can contain spaces/parens, so parse from the last ')'.
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    if (parseInt(fields[2], 10) !== pgid) continue;
+    // utime, stime, cutime, cstime
+    for (const i of [11, 12, 13, 14]) total += parseInt(fields[i], 10) || 0;
+  }
+  return total;
+}
+
+function isBusyCpuDelta(deltaTicks, windowMs) {
+  return deltaTicks >= (windowMs / 1000) * CLOCK_TICKS_PER_SEC * BUSY_MIN_CPU_SHARE;
+}
+
+// yt-dlp's stderr for a flaky live capture can repeat the same line hundreds of times; keep
+// each distinct line once (first-seen order) with a repeat count so errors stay readable.
+function summarizeErrorOutput(text) {
+  const counts = new Map();
+  for (const line of String(text || '').split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed) counts.set(trimmed, (counts.get(trimmed) || 0) + 1);
+  }
+  return [...counts].map(([line, n]) => (n > 1 ? `${line} (×${n})` : line)).join('\n');
+}
 
 function isPlaylistUrl(url) {
   const raw = String(url || '').trim();
@@ -952,7 +1007,9 @@ function download(url, options = {}, onProgress, onLog) {
   const commandStr = formatCommand(YTDLP_BIN, args);
   const jobId = options.jobId ? `job:${options.jobId}` : 'download';
   const ffmpegDir = getFfmpegDir();
-  const idleTimeoutMs = getDownloadIdleTimeoutMs(url, options);
+  // Null while a --wait-for-video job waits for its broadcast; switched to the live watchdog
+  // once the stream starts and progress arrives (see processLines).
+  let idleTimeoutMs = getDownloadIdleTimeoutMs(url, options);
 
   console.log(`[${jobId}] Starting download: ${url}`);
   console.log(`[${jobId}] Command: ${commandStr}`);
@@ -976,7 +1033,10 @@ function download(url, options = {}, onProgress, onLog) {
     }
     let stderr = '';
     let filepath = null;
+    // Only set by the after_move print, i.e. once yt-dlp has fully finished and moved the file.
+    let finalFilepath = null;
     let timedOut = false;
+    let stalledQuietMs = 0;
 
     if (options.jobId) {
       activeProcesses.set(options.jobId, { proc, onProgress, onLog, stopTimers: [] });
@@ -986,24 +1046,56 @@ function download(url, options = {}, onProgress, onLog) {
     }
 
     let idleTimer = null;
-    function resetIdleTimer() {
-      if (idleTimeoutMs == null) return;
+    let lastOutputAt = Date.now();
+    // CPU sample taken when the current silent stretch was last checked; null until the
+    // watchdog first fires, then used to tell a busy-but-quiet process from a hung one.
+    let cpuBaseline = null;
+    let quietWorkNoted = false;
+    function armIdleTimer(delayMs) {
       if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => {
-        // Once the user asks to stop a live recording, post-processing may legitimately be
-        // quiet for a long time (especially for a large capture). Keep waiting instead of
-        // treating the lack of output as a hung download; the separate stop fallback is the
-        // last resort for a process that never exits.
-        if (options.jobId && userStoppedJobs.has(options.jobId)) {
-          resetIdleTimer();
+      idleTimer = setTimeout(onIdle, delayMs);
+    }
+    function onIdle() {
+      // Once the user asks to stop a live recording, post-processing may legitimately be
+      // quiet for a long time (especially for a large capture). Keep waiting instead of
+      // treating the lack of output as a hung download; the separate stop fallback is the
+      // last resort for a process that never exits.
+      if (options.jobId && userStoppedJobs.has(options.jobId)) {
+        armIdleTimer(idleTimeoutMs);
+        return;
+      }
+      const quietMs = Date.now() - lastOutputAt;
+      const cpu = readProcessGroupCpuTicks(proc.pid);
+      if (cpu != null && quietMs < DOWNLOAD_MAX_QUIET_MS) {
+        if (cpuBaseline == null) {
+          cpuBaseline = { ticks: cpu, at: Date.now() };
+          armIdleTimer(BUSY_SAMPLE_WINDOW_MS);
           return;
         }
-        timedOut = true;
-        const msg = `No output for ${Math.round(idleTimeoutMs / 60000)} min — terminating as hung`;
-        console.error(`[${jobId}] ${msg}`);
-        onLog && onLog(`[error] ${msg}`);
-        killProcessTree(proc, 'SIGKILL');
-      }, idleTimeoutMs);
+        const windowMs = Date.now() - cpuBaseline.at;
+        if (isBusyCpuDelta(cpu - cpuBaseline.ticks, windowMs)) {
+          if (!quietWorkNoted) {
+            quietWorkNoted = true;
+            onLog && onLog(`No output for ${Math.round(quietMs / 60000)} min, but yt-dlp/FFmpeg is still working (likely post-processing) — waiting`);
+          }
+          cpuBaseline = { ticks: cpu, at: Date.now() };
+          armIdleTimer(Math.min(idleTimeoutMs, DOWNLOAD_MAX_QUIET_MS - quietMs));
+          return;
+        }
+      }
+      timedOut = true;
+      stalledQuietMs = quietMs;
+      const msg = `No output for ${Math.round(quietMs / 60000)} min — terminating as hung`;
+      console.error(`[${jobId}] ${msg}`);
+      onLog && onLog(`[error] ${msg}`);
+      killProcessTree(proc, 'SIGKILL');
+    }
+    function resetIdleTimer() {
+      if (idleTimeoutMs == null) return;
+      lastOutputAt = Date.now();
+      cpuBaseline = null;
+      quietWorkNoted = false;
+      armIdleTimer(idleTimeoutMs);
     }
     resetIdleTimer();
 
@@ -1088,10 +1180,17 @@ function download(url, options = {}, onProgress, onLog) {
 
     function processLines(lines, isStderr = false) {
       for (const line of lines) {
-        const trimmed = line.trim();
+        // Multi-threaded fragment downloads (e.g. YouTube --live-from-start fetching video
+        // and audio concurrently) prefix each progress line with its thread number: "1: ".
+        const trimmed = line.trim().replace(/^\d+:\s*(?=YTDLP_)/, '');
         if (!trimmed) continue;
 
         if (trimmed.startsWith('YTDLP_PROGRESS')) {
+          if (idleTimeoutMs == null && options.waitForLive) {
+            idleTimeoutMs = LIVE_DOWNLOAD_IDLE_TIMEOUT_MS;
+            onLog && onLog('Broadcast is live — recording started');
+            resetIdleTimer();
+          }
           const rest = trimmed.replace('YTDLP_PROGRESS', '').trim();
           const [percentStr, speed, eta] = rest.split('|');
           const percent = parseFloat(percentStr.replace('%', '').trim());
@@ -1122,6 +1221,7 @@ function download(url, options = {}, onProgress, onLog) {
 
         if (trimmed.startsWith('FILEPATH ')) {
           filepath = trimmed.replace('FILEPATH ', '').trim();
+          finalFilepath = filepath;
           console.log(`[${jobId}] Destination file: ${filepath}`);
           onLog && onLog(`[destination] ${filepath}`);
           continue;
@@ -1201,17 +1301,27 @@ function download(url, options = {}, onProgress, onLog) {
         userStoppedJobs.delete(options.jobId);
       }
       if (timedOut) {
-        return reject(new Error(`Download stalled: no output for ${Math.round(idleTimeoutMs / 60000)} minutes`));
+        return reject(new Error(`Download stalled: no output for ${Math.round(stalledQuietMs / 60000)} minutes`));
       }
       // Covers both the common case (yt-dlp catches SIGINT itself and exits with a non-zero
       // code, so signal is null here) and the escalated-kill case (SIGTERM/SIGKILL actually
       // terminates it, so Node reports the real signal).
       const stoppedByUser = wasStoppedByUser || signal === 'SIGINT' || signal === 'SIGTERM' || signal === 'SIGKILL';
-      if (code !== 0 && !stoppedByUser) {
-        const errMsg = stderr.trim() || `yt-dlp exited with code ${code}`;
+      const errSummary = summarizeErrorOutput(stderr);
+      // yt-dlp exits non-zero if *any* error was reported, including ones it recovered from
+      // (e.g. a live capture skipping fragments that returned no data). If it still got as
+      // far as moving the finished file into place, keep the file rather than failing the job.
+      const completedWithErrors = code !== 0 && !stoppedByUser
+        && !!finalFilepath && fs.existsSync(finalFilepath);
+      if (code !== 0 && !stoppedByUser && !completedWithErrors) {
+        const errMsg = errSummary || `yt-dlp exited with code ${code}`;
         console.error(`[${jobId}] Failed with exit code ${code}: ${errMsg}`);
         onLog && onLog(`[failed] Exit code ${code}: ${errMsg}`);
         return reject(new Error(errMsg));
+      }
+      if (completedWithErrors) {
+        console.warn(`[${jobId}] Exit code ${code} but output was saved -> ${finalFilepath}`);
+        onLog && onLog(`[warning] yt-dlp exited with code ${code} but saved the file; it may have gaps:\n${errSummary}`);
       }
       if (stoppedByUser) {
         console.log(`[${jobId}] Recording stopped by user -> ${filepath || 'saved stream'}`);
@@ -1220,7 +1330,7 @@ function download(url, options = {}, onProgress, onLog) {
         console.log(`[${jobId}] Completed successfully -> ${filepath || 'unknown destination'}`);
         onLog && onLog(`[completed] Successfully saved: ${filepath || ''}`);
       }
-      resolve({ filepath, command: commandStr, stoppedByUser });
+      resolve({ filepath, command: commandStr, stoppedByUser, completedWithErrors });
     });
 
     proc.on('error', (err) => {
@@ -1750,6 +1860,9 @@ module.exports = {
   writeCookiesFilePreservingTwitchAuth,
   isPlaylistUrl,
   getDownloadIdleTimeoutMs,
+  readProcessGroupCpuTicks,
+  isBusyCpuDelta,
+  summarizeErrorOutput,
   isYouTube,
   isBotCheckError,
   BOT_CHECK_HINT,

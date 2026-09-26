@@ -86,19 +86,35 @@ function updateJob(id, fields) {
   emit(getJob(id));
 }
 
-async function processNext() {
-  if (activeCount >= MAX_CONCURRENT) return;
-  const next = db.prepare("SELECT * FROM downloads WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1").get();
-  if (!next) return;
+function isWaitForLiveJob(job) {
+  try {
+    return !!JSON.parse(job.options_json || '{}').waitForLive;
+  } catch (_) {
+    return false;
+  }
+}
 
-  activeCount++;
-  runJob(next).finally(() => {
-    activeCount--;
+// runJob marks the row 'downloading' synchronously before its first await, so a job can't be
+// picked up twice by overlapping processNext() calls.
+function startJob(job, usesSlot) {
+  if (usesSlot) activeCount++;
+  runJob(job).finally(() => {
+    if (usesSlot) activeCount--;
     processNext();
   });
+}
 
-  // Allow more concurrent slots to pick up work immediately.
-  if (activeCount < MAX_CONCURRENT) processNext();
+function processNext() {
+  const queued = db.prepare("SELECT * FROM downloads WHERE status = 'queued' ORDER BY created_at ASC").all();
+  for (const job of queued) {
+    // A job waiting for a scheduled broadcast can sit idle for hours or days, and must be
+    // running when the stream starts — so it never waits for (or holds) a download slot.
+    if (isWaitForLiveJob(job)) {
+      startJob(job, false);
+    } else if (activeCount < MAX_CONCURRENT) {
+      startJob(job, true);
+    }
+  }
 }
 
 async function runJob(job) {
@@ -196,6 +212,10 @@ async function runJob(job) {
     appendLog(`Command: ${commandStr}`);
     console.log(`[queue] [job:${job.id}] Command: ${commandStr}`);
     updateJob(job.id, { command_args: commandStr, log: logLines.join('\n') });
+    if (resolvedOptions.waitForLive) {
+      appendLog(`Waiting for the broadcast to go live (checking every ${resolvedOptions.waitInterval || 15}s); recording starts automatically and finishes when the stream ends`);
+      updateJob(job.id, { stage: 'Waiting for stream to go live…', log: logLines.join('\n') });
+    }
 
     let lastLogSave = Date.now();
     let lastProgressSave = 0;
@@ -241,7 +261,9 @@ async function runJob(job) {
 
     const completionMsg = result.stoppedByUser
       ? `Live stream recording stopped by user -> ${result.filepath || 'saved stream'}`
-      : `Download completed successfully -> ${result.filepath || 'unknown destination'}`;
+      : result.completedWithErrors
+        ? `Download completed with errors (file saved, may have gaps) -> ${result.filepath}`
+        : `Download completed successfully -> ${result.filepath || 'unknown destination'}`;
 
     appendLog(completionMsg);
     console.log(`[queue] [job:${job.id}] ${completionMsg}`);
