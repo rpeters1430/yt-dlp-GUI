@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isPlaylistUrl, getDownloadIdleTimeoutMs } = require('./ytdlp');
+const { isPlaylistUrl, getDownloadIdleTimeoutMs, clearRecentCaches } = require('./ytdlp');
+
+test.beforeEach(() => clearRecentCaches());
 
 test('isPlaylistUrl detects playlist URLs across supported URL forms', () => {
   assert.equal(isPlaylistUrl('https://www.youtube.com/playlist?list=PL123'), true);
@@ -186,6 +188,32 @@ test('resolveShareUrl does not follow redirects off Reddit', async (t) => {
   assert.equal(await resolveShareUrl(share), share);
   // One request per user agent; the off-site hop is never fetched.
   assert.equal(fetchMock.mock.callCount(), 2);
+});
+
+test('resolveShareUrl caches a resolved link so enqueue after Analyze does not refetch', async (t) => {
+  const { resolveShareUrl } = require('./ytdlp');
+  const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, {
+    status: 301,
+    headers: { location: 'https://www.reddit.com/r/videos/comments/1abcde/some_title/' },
+  }));
+  const share = 'https://www.reddit.com/r/videos/s/eawAD6BLAE';
+  const first = await resolveShareUrl(share);
+  const callsAfterFirst = fetchMock.mock.callCount();
+  assert.equal(await resolveShareUrl(share), first);
+  assert.equal(fetchMock.mock.callCount(), callsAfterFirst);
+});
+
+test('resolveShareUrl uses whichever user agent Reddit answers', async (t) => {
+  const { resolveShareUrl } = require('./ytdlp');
+  t.mock.method(globalThis, 'fetch', async (_url, opts) => (
+    /Chrome/.test(opts.headers['User-Agent'])
+      ? new Response(null, { status: 301, headers: { location: 'https://www.reddit.com/r/videos/comments/1abcde/t/' } })
+      : new Response('Blocked', { status: 403 })
+  ));
+  assert.equal(
+    await resolveShareUrl('https://www.reddit.com/r/videos/s/eawAD6BLAE'),
+    'https://www.reddit.com/r/videos/comments/1abcde/t/'
+  );
 });
 
 test('isBotCheckError matches YouTube bot-check errors with straight or curly apostrophes', () => {

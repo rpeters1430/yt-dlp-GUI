@@ -14,7 +14,7 @@ router.post('/info', async (req, res) => {
   if (!rawUrl) return res.status(400).json({ error: 'url is required' });
   try {
     const url = await ytdlp.resolveShareUrl(String(rawUrl).trim());
-    let info = await ytdlp.getInfo(url, { flatPlaylist: true, resolveShare: false });
+    let info = await ytdlp.getInfo(url, { flatPlaylist: true, resolveShare: false, reuseRecent: true });
     const isPlaylist = info._type === 'playlist' || Array.isArray(info.entries);
 
     if (isPlaylist) {
@@ -39,8 +39,11 @@ router.post('/info', async (req, res) => {
       });
     }
 
-    if (!info.formats || info.formats.length === 0) {
-      info = await ytdlp.getInfo(url, { flatPlaylist: false, resolveShare: false });
+    // --flat-playlist only flattens playlist entries, so a single-video result above is already
+    // the full extraction. Re-probing it when formats are empty (scheduled streams, image or
+    // text posts) just ran the same slow lookup twice; only a bare URL reference needs it.
+    if (info._type === 'url' || info._type === 'url_transparent') {
+      info = await ytdlp.getInfo(info.url || url, { flatPlaylist: false });
     }
 
     const heights = [...new Set((info.formats || []).map((f) => f.height).filter(Boolean))].sort((a, b) => b - a);
