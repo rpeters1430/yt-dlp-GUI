@@ -305,7 +305,7 @@ function assertPublicUrl(url) {
 // answers with "HTTP Error 403: Blocked". Reddit serves these as a plain redirect to the
 // real post, so we follow it ourselves and hand yt-dlp the canonical /comments/ URL.
 const REDDIT_SHARE_RE = /^https?:\/\/(?:(?:www|old|new|m)\.)?reddit\.com\/(?:r|u|user)\/[^/]+\/s\/[A-Za-z0-9]+\/?(?:[?#].*)?$/i;
-const SHARE_RESOLVE_TIMEOUT_MS = 10 * 1000;
+const SHARE_RESOLVE_TIMEOUT_MS = 8 * 1000;
 const SHARE_RESOLVE_MAX_HOPS = 3;
 // Reddit blocks some user agents outright, so try a descriptive bot UA and a browser UA.
 const SHARE_RESOLVE_USER_AGENTS = [
@@ -331,47 +331,67 @@ function cleanRedditPostUrl(location, base) {
   return target.toString();
 }
 
+// Share links are resolved once on Analyze and again on enqueue; remember the answer so the
+// second pass (and re-analyzing the same link) doesn't pay Reddit's round-trips again.
+const SHARE_RESOLVE_CACHE_TTL_MS = 60 * 60 * 1000;
+const SHARE_RESOLVE_CACHE_MAX = 200;
+const shareResolveCache = new Map();
+
+// Follows one share link's redirect chain with a single user agent. Resolves to the clean
+// post URL, or rejects when that user agent didn't lead to a post.
+async function resolveShareUrlWithAgent(shareUrl, userAgent) {
+  // Follow a short redirect chain by hand (e.g. reddit.com -> www.reddit.com -> post) so
+  // every hop is checked against the Reddit host guard instead of trusting fetch's follow.
+  let current = shareUrl;
+  let status = null;
+  for (let hop = 0; hop < SHARE_RESOLVE_MAX_HOPS; hop++) {
+    const res = await fetch(current, {
+      method: 'GET',
+      redirect: 'manual',
+      headers: { 'User-Agent': userAgent, Accept: 'text/html' },
+      signal: AbortSignal.timeout(SHARE_RESOLVE_TIMEOUT_MS),
+    });
+    status = res.status;
+    // Only the headers matter; release the connection instead of leaving the body unread.
+    if (res.body) res.body.cancel().catch(() => {});
+    const location = res.headers.get('location');
+    if (!location) break;
+    const resolved = cleanRedditPostUrl(location, current);
+    if (resolved) return resolved;
+    let next;
+    try {
+      next = new URL(location, current);
+    } catch (_) {
+      break;
+    }
+    if (!/(^|\.)reddit\.com$/i.test(next.hostname)) break;
+    current = next.toString();
+  }
+  throw new Error(`did not redirect to a post (HTTP ${status})`);
+}
+
 // Returns the canonical URL for known short/share links, or the input unchanged. Never
 // throws: if resolution fails we let yt-dlp try the original URL and report its own error.
 async function resolveShareUrl(url) {
   if (!isRedditShareUrl(url)) return url;
   const shareUrl = url.trim();
-  for (const userAgent of SHARE_RESOLVE_USER_AGENTS) {
-    try {
-      // Follow a short redirect chain by hand (e.g. reddit.com -> www.reddit.com -> post) so
-      // every hop is checked against the Reddit host guard instead of trusting fetch's follow.
-      let current = shareUrl;
-      let status = null;
-      for (let hop = 0; hop < SHARE_RESOLVE_MAX_HOPS; hop++) {
-        const res = await fetch(current, {
-          method: 'GET',
-          redirect: 'manual',
-          headers: { 'User-Agent': userAgent, Accept: 'text/html' },
-          signal: AbortSignal.timeout(SHARE_RESOLVE_TIMEOUT_MS),
-        });
-        status = res.status;
-        // Only the headers matter; release the connection instead of leaving the body unread.
-        if (res.body) res.body.cancel().catch(() => {});
-        const location = res.headers.get('location');
-        if (!location) break;
-        const resolved = cleanRedditPostUrl(location, current);
-        if (resolved) {
-          console.log(`[ytdlp] Resolved Reddit share link ${shareUrl} -> ${resolved}`);
-          return resolved;
-        }
-        let next;
-        try {
-          next = new URL(location, current);
-        } catch (_) {
-          break;
-        }
-        if (!/(^|\.)reddit\.com$/i.test(next.hostname)) break;
-        current = next.toString();
-      }
-      console.warn(`[ytdlp] Reddit share link ${shareUrl} did not redirect to a post (HTTP ${status})`);
-    } catch (err) {
-      console.warn(`[ytdlp] Failed to resolve Reddit share link ${shareUrl}: ${err.message}`);
+  const cached = shareResolveCache.get(shareUrl);
+  if (cached && cached.expires > Date.now()) return cached.resolved;
+  // Try every user agent at once and take the first that works, so a blocked or slow agent
+  // doesn't add its full timeout in front of the one Reddit actually answers.
+  try {
+    const resolved = await Promise.any(
+      SHARE_RESOLVE_USER_AGENTS.map((userAgent) => resolveShareUrlWithAgent(shareUrl, userAgent))
+    );
+    console.log(`[ytdlp] Resolved Reddit share link ${shareUrl} -> ${resolved}`);
+    if (shareResolveCache.size >= SHARE_RESOLVE_CACHE_MAX) {
+      shareResolveCache.delete(shareResolveCache.keys().next().value);
     }
+    shareResolveCache.set(shareUrl, { resolved, expires: Date.now() + SHARE_RESOLVE_CACHE_TTL_MS });
+    return resolved;
+  } catch (err) {
+    const reasons = (err.errors || [err]).map((e) => e.message).join('; ');
+    console.warn(`[ytdlp] Failed to resolve Reddit share link ${shareUrl}: ${reasons}`);
   }
   return url;
 }
@@ -385,8 +405,55 @@ const GETINFO_TIMEOUT_MS = parseInt(process.env.GETINFO_TIMEOUT_MS || String(2 *
 
 // Pass { resolveShare: false } when the caller already ran resolveShareUrl(), so a link that
 // couldn't be resolved isn't retried (and doesn't pay the resolver timeouts) a second time.
-async function getInfo(url, { resolveShare = true, ...options } = {}) {
-  return getInfoResolved(resolveShare ? await resolveShareUrl(url) : url, options);
+// Pass { reuseRecent: true } to accept a result probed for the same URL in the last few
+// minutes (see rememberInfo) instead of running yt-dlp again.
+async function getInfo(url, { resolveShare = true, reuseRecent = false, ...options } = {}) {
+  const resolved = resolveShare ? await resolveShareUrl(url) : url;
+  const cacheable = !options.playlistEnd;
+  if (reuseRecent && cacheable) {
+    const recent = recallInfo(resolved);
+    if (recent) {
+      console.log(`[ytdlp:info] Reusing metadata fetched moments ago for ${resolved}`);
+      return recent;
+    }
+  }
+  const info = await getInfoResolved(resolved, options);
+  if (cacheable) rememberInfo(resolved, info);
+  return info;
+}
+
+// Analyze probes a link with `yt-dlp -J`, then the queue probes it again right before the
+// download starts. Each probe is a full extraction (several seconds on YouTube once the JS
+// challenge runs, several round-trips on Reddit), so keep recent single-video results and
+// let the queue reuse them when a job is enqueued straight from the Analyze dialog.
+const RECENT_INFO_TTL_MS = 10 * 60 * 1000;
+const RECENT_INFO_MAX = 25;
+const recentInfo = new Map();
+
+function rememberInfo(url, info) {
+  if (!info || typeof info !== 'object') return;
+  // Flat playlist results are incomplete, and live/upcoming status goes stale quickly.
+  if (info._type === 'playlist' || Array.isArray(info.entries)) return;
+  if (!Array.isArray(info.formats) || info.formats.length === 0) return;
+  if (info.is_live || ['is_live', 'is_upcoming', 'post_live'].includes(info.live_status)) return;
+  recentInfo.delete(url);
+  if (recentInfo.size >= RECENT_INFO_MAX) recentInfo.delete(recentInfo.keys().next().value);
+  recentInfo.set(url, { info, expires: Date.now() + RECENT_INFO_TTL_MS });
+}
+
+function recallInfo(url) {
+  const entry = recentInfo.get(url);
+  if (!entry) return null;
+  if (entry.expires <= Date.now()) {
+    recentInfo.delete(url);
+    return null;
+  }
+  return entry.info;
+}
+
+function clearRecentCaches() {
+  recentInfo.clear();
+  shareResolveCache.clear();
 }
 
 function getInfoResolved(url, { flatPlaylist = false, playlistEnd = null } = {}) {
@@ -1833,6 +1900,7 @@ async function searchYouTube(query, limit = 1) {
 
 module.exports = {
   getInfo,
+  clearRecentCaches,
   resolveShareUrl,
   isRedditShareUrl,
   searchYouTube,

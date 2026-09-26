@@ -170,7 +170,8 @@ async function runJob(job) {
     try {
       appendLog(`Resolving metadata...`);
       updateJob(job.id, { stage: 'Fetching metadata…', log: logLines.join('\n') });
-      const info = await ytdlp.getInfo(job.url);
+      // Reuses the Analyze dialog's probe when the job was enqueued right after it.
+      const info = await ytdlp.getInfo(job.url, { reuseRecent: true });
       title = info.title || null;
       thumbnail = info.thumbnail || null;
       extractor = info.extractor || null;
