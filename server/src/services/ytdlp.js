@@ -5,6 +5,7 @@ const { spawn } = require('child_process');
 const { pipeline } = require('stream/promises');
 const { Readable } = require('stream');
 const siteProfiles = require('./siteProfiles');
+const { DEFAULT_TEMPLATE: DEFAULT_OUTPUT_TEMPLATE } = require('./outputTemplate');
 
 const YTDLP_BIN = process.env.YTDLP_BIN || 'yt-dlp';
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(__dirname, '..', '..', 'downloads');
@@ -761,10 +762,9 @@ function buildDownloadArgs(url, rawOptions = {}) {
     postprocessorArgs = null,
   } = options;
 
-  // Titles are capped in bytes: some sites use very long (often multi-byte) titles that push
-  // the name past the 255-byte filesystem limit once yt-dlp's post-processing adds suffixes
-  // like ".temp" / ".f137", which fails the ffmpeg step after the download already finished.
-  const targetOutput = outputTemplate || `${DOWNLOAD_DIR}/%(uploader,extractor).80B/%(title).150B [%(id)s].%(ext)s`;
+  // Queued jobs always pass a template (see outputTemplate.resolveTemplate); this fallback
+  // only covers direct callers, and uses the same byte-capped default.
+  const targetOutput = outputTemplate || `${DOWNLOAD_DIR}/${DEFAULT_OUTPUT_TEMPLATE}`;
 
   const args = [
     '--newline',

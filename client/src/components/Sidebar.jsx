@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, History, Radar, Settings, LogOut, Download, Tv, Music, Globe } from 'lucide-react';
+import { LayoutDashboard, History, Radar, Settings, LogOut, Download, Tv, Music, Globe, Library } from 'lucide-react';
 import ThemeToggle from './ThemeToggle.jsx';
 import DensityToggle from './DensityToggle.jsx';
 
@@ -8,6 +8,7 @@ const LINKS = [
   { to: '/', end: true, label: 'Dashboard', icon: LayoutDashboard },
   { to: '/music', label: 'Music', icon: Music },
   { to: '/twitch', label: 'Twitch', icon: Tv },
+  { to: '/library', label: 'Library', icon: Library },
   { to: '/history', label: 'History', icon: History },
   { to: '/watches', label: 'Watches', icon: Radar },
   { to: '/sites', label: 'Supported Sites', icon: Globe },

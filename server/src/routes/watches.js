@@ -3,12 +3,23 @@ const db = require('../db');
 const scheduler = require('../services/scheduler');
 const ytdlp = require('../services/ytdlp');
 const jellyfinSync = require('../services/jellyfinSync');
+const outputTemplate = require('../services/outputTemplate');
 const { requireAuth } = require('../auth');
 
 const router = express.Router();
 router.use(requireAuth);
 
 const FORMAT_SELECTOR_RE = /^[\w+\-/*.,:()!<>=\s]{0,200}$/;
+
+// A blank per-Watch filename template means "use the global one from Settings".
+function normalizeTemplate(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function outputTemplateError(value) {
+  const normalized = normalizeTemplate(value);
+  return normalized ? outputTemplate.validateTemplate(normalized) : null;
+}
 
 // List all watches with metrics
 router.get('/', (req, res) => {
@@ -107,6 +118,7 @@ router.post('/', (req, res) => {
     channelName,
     backfillCount,
     cleanupExempt,
+    outputTemplate,
   } = req.body || {};
 
   if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
@@ -120,6 +132,9 @@ router.post('/', (req, res) => {
   if (formatSelector && (typeof formatSelector !== 'string' || !FORMAT_SELECTOR_RE.test(formatSelector))) {
     return res.status(400).json({ error: 'Invalid format selector' });
   }
+
+  const templateError = outputTemplateError(outputTemplate);
+  if (templateError) return res.status(400).json({ error: templateError });
 
   const interval = parseInt(checkIntervalMins, 10) || 30;
   const dlLimit = parseInt(downloadLimit, 10) || 5;
@@ -136,13 +151,13 @@ router.post('/', (req, res) => {
       quality, container, subtitles, sub_langs, embed_thumbnail,
       embed_metadata, embed_chapters, sponsorblock, sponsorblock_categories,
       match_title, reject_title, min_duration, max_duration,
-      download_limit, max_scan_entries, thumbnail, channel_name, cleanup_exempt, enabled
+      download_limit, max_scan_entries, thumbnail, channel_name, cleanup_exempt, output_template, enabled
     ) VALUES (
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?, ?, ?, ?,
-      ?, ?, ?, ?, ?, 1
+      ?, ?, ?, ?, ?, ?, 1
     )
   `).run(
     url,
@@ -167,7 +182,8 @@ router.post('/', (req, res) => {
     scanDepth,
     thumbnail || null,
     channelName || null,
-    cleanupExempt ? 1 : 0
+    cleanupExempt ? 1 : 0,
+    normalizeTemplate(outputTemplate)
   );
 
   const watch = db.prepare(`
@@ -211,7 +227,11 @@ router.put('/:id', (req, res) => {
     maxScanEntries,
     enabled,
     cleanupExempt,
+    outputTemplate,
   } = req.body || {};
+
+  const templateError = outputTemplateError(outputTemplate);
+  if (templateError) return res.status(400).json({ error: templateError });
 
   if (formatSelector && (typeof formatSelector !== 'string' || !FORMAT_SELECTOR_RE.test(formatSelector))) {
     return res.status(400).json({ error: 'Invalid format selector' });
@@ -256,7 +276,8 @@ router.put('/:id', (req, res) => {
       download_limit = ?,
       max_scan_entries = ?,
       enabled = ?,
-      cleanup_exempt = ?
+      cleanup_exempt = ?,
+      output_template = ?
     WHERE id = ?
   `).run(
     name !== undefined ? (name || null) : watch.name,
@@ -280,6 +301,7 @@ router.put('/:id', (req, res) => {
     scanDepth,
     isEnabled,
     isCleanupExempt,
+    outputTemplate !== undefined ? normalizeTemplate(outputTemplate) : watch.output_template,
     watch.id
   );
 

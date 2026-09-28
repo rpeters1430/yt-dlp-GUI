@@ -18,6 +18,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { api } from '../api.js';
+import { previewTemplate } from '../outputTemplatePreview.js';
 import { useModalA11y } from '../hooks/useModalA11y.js';
 
 const CHECK_INTERVAL_OPTIONS = [
@@ -99,6 +100,8 @@ export default function WatchModal({
   const [downloadLimit, setDownloadLimit] = useState(5);
   const [maxScanEntries, setMaxScanEntries] = useState(30);
   const [cleanupExempt, setCleanupExempt] = useState(false);
+  const [outputTemplate, setOutputTemplate] = useState('');
+  const [globalTemplate, setGlobalTemplate] = useState('');
 
   // Inspect state
   const [inspecting, setInspecting] = useState(false);
@@ -141,6 +144,7 @@ export default function WatchModal({
       setDownloadLimit(watch.download_limit || 5);
       setMaxScanEntries(watch.max_scan_entries || 30);
       setCleanupExempt(!!watch.cleanup_exempt);
+      setOutputTemplate(watch.output_template || '');
       setInspectData(null);
     } else {
       setUrl('');
@@ -165,9 +169,15 @@ export default function WatchModal({
       setDownloadLimit(5);
       setMaxScanEntries(30);
       setCleanupExempt(false);
+      setOutputTemplate('');
       setInspectData(null);
     }
   }, [open, watch]);
+
+  useEffect(() => {
+    if (!open) return;
+    api.getOutputTemplate().then((data) => setGlobalTemplate(data.template)).catch(() => {});
+  }, [open]);
 
   async function handleInspect(urlToInspect) {
     const target = (urlToInspect || url).trim();
@@ -233,6 +243,7 @@ export default function WatchModal({
       downloadLimit: Number(downloadLimit) || 5,
       maxScanEntries: Number(maxScanEntries) || 30,
       cleanupExempt: !!cleanupExempt,
+      outputTemplate: outputTemplate.trim(),
       thumbnail: inspectData?.thumbnail || watch?.thumbnail || null,
       channelName: inspectData?.channelName || watch?.channel_name || null,
       backfillCount: !isEdit ? Number(backfillCount) || 0 : undefined,
@@ -615,6 +626,33 @@ export default function WatchModal({
                           <span>{cat.label}</span>
                         </label>
                       ))}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                  <label className="field-label" htmlFor="watch-output-template" style={{ display: 'block', marginBottom: 6 }}>
+                    Filename template (optional)
+                  </label>
+                  <input
+                    id="watch-output-template"
+                    className="mono-input"
+                    value={outputTemplate}
+                    onChange={(e) => setOutputTemplate(e.target.value)}
+                    placeholder={globalTemplate || 'Uses the template from Settings'}
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                  />
+                  <span className="muted small" style={{ marginTop: 4, display: 'block' }}>
+                    Leave blank to use the global template from Settings → File naming. Relative to the
+                    downloads folder, e.g. <code>Kids/%(uploader)s/%(title)s [%(id)s].%(ext)s</code> to
+                    keep this channel in its own library folder.
+                  </span>
+                  {outputTemplate.trim() && (
+                    <div className="template-preview" style={{ marginTop: 8 }}>
+                      <span className="muted small">Example result (approximate):</span>
+                      <code>downloads/{previewTemplate(outputTemplate.trim())}</code>
                     </div>
                   )}
                 </div>

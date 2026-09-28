@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload, Trash2, ListMusic } from 'lucide-react';
 import { api } from '../api.js';
+import FileNamingSettings from '../components/FileNamingSettings.jsx';
+import NotificationSettings from '../components/NotificationSettings.jsx';
 
 export default function Settings() {
   const [newPassword, setNewPassword] = useState('');
@@ -324,7 +326,7 @@ export default function Settings() {
       <div className="page-header">
         <div>
           <h1>Settings</h1>
-          <p>Account, YouTube cookies, and yt-dlp dependencies.</p>
+          <p>Account, cookies, dependencies, file naming, notifications, and media server options.</p>
         </div>
       </div>
 
@@ -481,6 +483,10 @@ export default function Settings() {
           </div>
         </div>
       </section>
+
+      <FileNamingSettings />
+
+      <NotificationSettings />
 
       <section className="panel">
         <div className="panel-header">
