@@ -110,6 +110,7 @@ ensureColumn('watches', 'jellyfin_playlist_id', 'TEXT');
 ensureColumn('watches', 'is_music', 'INTEGER DEFAULT 0');
 ensureColumn('watches', 'music_folder', 'TEXT');
 ensureColumn('watches', 'audio_quality', "TEXT DEFAULT '320k'");
+ensureColumn('watches', 'output_template', 'TEXT');
 ensureColumn('downloads', 'protected', 'INTEGER DEFAULT 0');
 ensureColumn('watch_seen_ids', 'title', 'TEXT');
 ensureColumn('watch_seen_ids', 'created_at', "TEXT DEFAULT (datetime('now'))");

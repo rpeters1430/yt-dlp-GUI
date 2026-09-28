@@ -4,6 +4,7 @@ const db = require('../db');
 const { requireAuth } = require('../auth');
 const ytdlp = require('../services/ytdlp');
 const queue = require('../services/queue');
+const outputTemplate = require('../services/outputTemplate');
 const { COOKIES_FILE } = ytdlp;
 
 const router = express.Router();
@@ -16,6 +17,7 @@ const ALLOWED_SETTINGS_KEYS = new Set([
   'music_format',
   'music_quality',
   'music_save_cover',
+  'output_template',
 ]);
 
 function saveSetting(key, value) {
@@ -101,6 +103,15 @@ router.post('/deno/update', async (req, res) => {
   }
 });
 
+// The effective global filename template plus the built-in presets the Settings page offers.
+router.get('/output-template', (req, res) => {
+  res.json({
+    template: outputTemplate.getGlobalTemplate(),
+    defaultTemplate: outputTemplate.DEFAULT_TEMPLATE,
+    presets: outputTemplate.PRESETS,
+  });
+});
+
 router.get('/', (req, res) => {
   const rows = db.prepare(`SELECT key, value FROM settings WHERE key IN (${[...ALLOWED_SETTINGS_KEYS].map(() => '?').join(', ')})`)
     .all(...ALLOWED_SETTINGS_KEYS);
@@ -119,6 +130,12 @@ router.put('/', (req, res) => {
   const invalidChannel = entries.some(([key, value]) => key === 'ytdlpChannel' && value !== 'stable' && value !== 'nightly');
   if (invalidChannel) {
     return res.status(400).json({ error: 'ytdlpChannel must be stable or nightly' });
+  }
+  // A blank template is stored as-is and means "use the built-in default".
+  const template = entries.find(([key]) => key === 'output_template');
+  if (template && String(template[1] || '').trim()) {
+    const templateError = outputTemplate.validateTemplate(String(template[1]));
+    if (templateError) return res.status(400).json({ error: templateError });
   }
 
   const upsert = db.prepare(`

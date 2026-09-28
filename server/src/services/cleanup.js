@@ -176,4 +176,4 @@ function start() {
   });
 }
 
-module.exports = { init, start, runCleanup, computeCleanupPlan, getCleanupConfig };
+module.exports = { init, start, runCleanup, computeCleanupPlan, getCleanupConfig, deleteDownloadFile };

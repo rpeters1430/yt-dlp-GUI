@@ -97,6 +97,24 @@ export const api = {
   getMusicSettings: () => request('/music/settings'),
   updateMusicSettings: (payload) => request('/music/settings', { method: 'PUT', body: JSON.stringify(payload) }),
 
+  // Library — completed downloads on disk, with in-browser playback
+  listLibrary: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
+    return request(`/library${qs ? `?${qs}` : ''}`);
+  },
+  deleteLibraryFile: (id) => request(`/library/${id}/file`, { method: 'DELETE' }),
+  libraryStreamUrl: (id) => `${BASE}/library/${encodeURIComponent(id)}/stream`,
+  libraryFileUrl: (id) => `${BASE}/library/${encodeURIComponent(id)}/file`,
+  libraryPosterUrl: (id) => `${BASE}/library/${encodeURIComponent(id)}/poster`,
+
+  // Notifications (Discord / Slack / ntfy / Gotify / generic webhook)
+  getNotificationSettings: () => request('/notifications/settings'),
+  updateNotificationSettings: (payload) => request('/notifications/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  testNotification: (payload) => request('/notifications/test', { method: 'POST', body: JSON.stringify(payload || {}) }),
+
+  // Filename templates
+  getOutputTemplate: () => request('/settings/output-template'),
+
   // Supported Sites & Extractors
   getSiteGuide: () => request('/sites/guide'),
   listExtractors: (q = '') => request(`/sites/extractors${q ? `?q=${encodeURIComponent(q)}` : ''}`),

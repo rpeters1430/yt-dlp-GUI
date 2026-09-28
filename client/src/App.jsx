@@ -5,6 +5,7 @@ import { api, setUnauthorizedHandler } from './api.js';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import History from './pages/History.jsx';
+import Library from './pages/Library.jsx';
 import Watches from './pages/Watches.jsx';
 import Settings from './pages/Settings.jsx';
 import Twitch from './pages/Twitch.jsx';
@@ -94,6 +95,7 @@ export default function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/music" element={<Music />} />
               <Route path="/twitch" element={<Twitch />} />
+              <Route path="/library" element={<Library />} />
               <Route path="/history" element={<History />} />
               <Route path="/watches" element={<Watches />} />
               <Route path="/sites" element={<SupportedSites />} />

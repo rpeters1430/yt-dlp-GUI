@@ -14,6 +14,8 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 - [Quick start (Docker Compose)](#quick-start-docker-compose)
 - [Updating](#updating)
 - [Configuration](#configuration)
+- [File naming](#file-naming)
+- [Notifications](#notifications)
 - [Site cookies](#site-cookies-youtube-twitch-and-others)
 - [Jellyfin integration](#jellyfin-integration)
 - [Scheduled tasks](#scheduled-tasks)
@@ -31,7 +33,14 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 - Live progress bars over WebSocket (percent, speed, ETA)
 - Format picker, audio-only (MP3), subtitles, embedded thumbnail/metadata/chapters, and SponsorBlock auto-remove
 - Download history with thumbnails, file paths, and the exact yt-dlp command and log for every job
+- Customizable filename/folder layout — pick a preset or write your own yt-dlp template, globally or per Watch (see [File naming](#file-naming))
 - Writes a Kodi/Jellyfin/Emby-compatible `.nfo` + poster image next to every download so titles, descriptions, and artwork scrape reliably (toggle in Settings)
+
+### Library
+- Browse everything you've downloaded as a grid of cards, with search, filters (source Watch, video/audio), sorting, and pagination
+- Play videos and audio right in the browser, with seeking — no media server required
+- Download a file to your device, protect it from auto-delete, or delete it (along with its `.nfo`, poster, and subtitle files)
+- Files deleted or moved outside the app are flagged as missing
 
 ### Watches (auto-download new uploads)
 - Point a Watch at a playlist or channel URL and it's checked on a schedule (every 30 minutes by default, adjustable per Watch) — new videos are downloaded automatically
@@ -61,6 +70,11 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 - Auto-match and download tracks from YouTube as MP3 (up to 320 kbps CBR), FLAC, M4A (AAC), or OPUS, with embedded ID3/Vorbis tags and cover art
 - Organized into `{MusicFolder}/{Artist}/{Album}/{TrackNumber} - {Title}.{ext}`, with an optional `cover.jpg` for Jellyfin/Plex/Navidrome
 - Music Watches follow artist channels or playlists for new releases and add them to your library
+
+### Notifications
+- Discord, Slack (and Mattermost/Rocket.Chat), ntfy, Gotify, or any generic JSON webhook (Home Assistant, n8n, Node-RED)
+- Pick which events notify you: download completed, download failed, Watch queued new videos, Watch check started failing
+- One-click test message from Settings
 
 ### Jellyfin playlist sync
 - Maintains one Jellyfin playlist per Watch, named after the channel/playlist, containing everything that Watch has downloaded
@@ -218,6 +232,36 @@ Everything below is optional — set it in `.env` (or `environment:` in `docker-
 | `DOWNLOAD_DIR` | `/downloads` in Docker, `./downloads` otherwise | Where downloaded files are written. |
 | `CONFIG_DIR` | `/config` in Docker, `./config` otherwise | Where the database, sessions, and cookies are stored. |
 
+## File naming
+
+**Settings → File naming** controls where new downloads go inside `./downloads`, as a [yt-dlp output template](https://github.com/yt-dlp/yt-dlp#output-template). Presets:
+
+| Preset | Example result |
+|---|---|
+| Channel folder (default) | `Example Channel/Video title [id].mp4` |
+| Flat | `Video title [id].mp4` |
+| Channel / Year | `Example Channel/2026/Video title [id].mp4` |
+| Channel / date-prefixed title | `Example Channel/2026-09-14 Video title [id].mp4` |
+| Site / Channel | `Youtube/Example Channel/Video title [id].mp4` |
+
+Or write your own — the page shows a live example of the result. Each Watch can override the global template in its **Quality & Format** tab, which is handy for sending a channel to its own media-server library (e.g. `Kids/%(uploader)s/%(title)s [%(id)s].%(ext)s`). Music downloads always use their Artist/Album layout.
+
+Templates must be relative to the downloads folder, can't contain `..`, must end in `.%(ext)s`, and must include `%(title)s` or `%(id)s`. Changing the template only affects new downloads; existing files aren't moved.
+
+## Notifications
+
+**Settings → Notifications** sends a message to one webhook when things happen:
+
+| Service | What to paste as the URL |
+|---|---|
+| Discord | A channel webhook URL (Channel settings → Integrations → Webhooks) |
+| Slack / Mattermost / Rocket.Chat | An incoming-webhook URL |
+| ntfy | Your topic URL, e.g. `https://ntfy.sh/my-topic` (self-hosted servers work too) |
+| Gotify | `https://<server>/message?token=<app token>` |
+| Generic JSON | Any URL; receives `{event, title, message, url, thumbnail, timestamp}` |
+
+Choose which events notify you, and optionally limit completion/failure messages to Watch downloads. A Watch that keeps failing only notifies once, when it starts failing. Use **Send test** to check the webhook before saving. Webhook URLs usually act as secrets, so treat them like passwords.
+
 ## Site cookies (YouTube, Twitch, and others)
 
 Some videos — age-restricted, members-only, private, subscriber-only, or anything a site is being extra suspicious about — require you to be logged in.
@@ -257,7 +301,7 @@ Dependency updates are skipped while downloads are active, so they never interru
 
 | Host path | Container path | Contents |
 |---|---|---|
-| `./downloads` | `/downloads` | Downloaded media, in a subfolder per uploader/channel, plus `.nfo`/poster files |
+| `./downloads` | `/downloads` | Downloaded media (a subfolder per uploader/channel by default — see [File naming](#file-naming)), plus `.nfo`/poster files |
 | `./config` | `/config` | SQLite database (`app.db`), sessions, saved cookies, and app-managed tool builds |
 
 **Back up `./config`** to keep your history, Watches, and settings. Everything in it can be restored by copying the folder back before starting the container.
@@ -281,6 +325,10 @@ Dependency updates are skipped while downloads are active, so they never interru
 **YouTube says "Sign in to confirm you're not a bot" or a video is unavailable** — add cookies (see [Site cookies](#site-cookies-youtube-twitch-and-others)) and update yt-dlp from Settings; switching to the Nightly channel often helps when YouTube changes something.
 
 **A URL to a local service is rejected** — that's the private-address guard. Set `ALLOW_LOCAL_URLS=1` if it's intentional.
+
+**A file won't play in the Library** — browsers can't play every format (for example `.ts` recordings, or some codecs inside `.mkv`). Use **Download file** and open it in VLC, or choose MP4 as the container for future downloads.
+
+**Notifications aren't arriving** — use **Send test** in Settings → Notifications; the error it shows comes straight from the webhook. Failed deliveries are also logged with a `[notify]` prefix.
 
 **Something failed and I want details** — every job in History shows the exact yt-dlp command and its full log. Server logs are available with `docker compose logs -f ytdlp-gui`.
 
@@ -311,12 +359,12 @@ node --test
 
 ```
 client/              React (Vite) frontend
-  src/pages/         Top-level pages (Dashboard, History, Watches, Music, Twitch, Settings, ...)
+  src/pages/         Top-level pages (Dashboard, Library, History, Watches, Music, Twitch, Settings, ...)
   src/components/    Shared UI components
 server/
   src/index.js       Express + socket.io entry point
   src/routes/        REST API routes
-  src/services/      yt-dlp runner, queue, scheduler, Jellyfin, music, cleanup, updaters
+  src/services/      yt-dlp runner, queue, scheduler, Jellyfin, music, cleanup, notifications, updaters
 Dockerfile           Multi-stage build: client bundle + runtime with yt-dlp, FFmpeg, Deno
 docker-compose.yml   Compose file (pulls the published image, or builds locally)
 ```
@@ -325,6 +373,7 @@ docker-compose.yml   Compose file (pulls the published image, or builds locally)
 
 - **Backend** — Node.js + Express, `better-sqlite3` for storage, `socket.io` for live progress, and `node-cron` for scheduling. yt-dlp is invoked via `child_process.spawn` rather than a library binding, so any yt-dlp version and any site it supports works without code changes.
 - **Frontend** — React (Vite), built and served as static files by the Express server: one container, one port.
+- **Library playback** — files are streamed from disk (with HTTP range requests, so seeking works) behind the same login as the rest of the app. Files are only served by download ID, from the path yt-dlp reported when the download finished — never from a path the browser supplies.
 - **YouTube JS runtime** — since yt-dlp 2025.11.12, full YouTube support requires an external JavaScript runtime to solve YouTube's JS challenges. The image ships [Deno](https://deno.com), yt-dlp's recommended runtime, for both amd64 and arm64. Outside Docker, install Deno yourself.
 - **Watches** — the first check on a new Watch only records existing videos; later checks auto-queue anything new.
 - **Auto-delete** — evaluates only Watch-downloaded videos; see [Jellyfin integration](#jellyfin-integration) for how "watched" is determined.

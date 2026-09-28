@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const db = require('../db');
 const ytdlp = require('./ytdlp');
 const queue = require('./queue');
+const notify = require('./notify');
 
 let io = null;
 let running = false;
@@ -111,6 +112,7 @@ async function checkWatch(watch, { manual = false, forceDownloadCount = 0 } = {}
 
     let newCount = 0;
     let enqueuedCount = 0;
+    const enqueuedTitles = [];
     const downloadLimit = forceDownloadCount > 0 ? forceDownloadCount : (watch.download_limit || 5);
 
     for (const entry of entries) {
@@ -176,6 +178,7 @@ async function checkWatch(watch, { manual = false, forceDownloadCount = 0 } = {}
           },
         });
         enqueuedCount++;
+        enqueuedTitles.push(title || id);
       }
     }
 
@@ -192,6 +195,7 @@ async function checkWatch(watch, { manual = false, forceDownloadCount = 0 } = {}
 
     console.log(`[watch] #${watch.id} Check finished: ${entries.length} scanned, ${newCount} new recorded, ${enqueuedCount} enqueued`);
     emitWatchUpdate(watch.id);
+    if (enqueuedTitles.length > 0) notify.watchNewVideos(watch, enqueuedTitles);
     return newCount;
   } catch (err) {
     console.error(`[watch:error] Check failed for #${watch.id} (${watch.url}):`, err.message);
@@ -201,6 +205,9 @@ async function checkWatch(watch, { manual = false, forceDownloadCount = 0 } = {}
       WHERE id = ?
     `).run(err.message, watch.id);
     emitWatchUpdate(watch.id);
+    // Only on the transition into failing, so a channel that stays broken doesn't ping
+    // every check interval. `watch` is the row as it was before this check started.
+    if (watch.last_status !== 'error') notify.watchError(watch, err.message);
     return 0;
   }
 }

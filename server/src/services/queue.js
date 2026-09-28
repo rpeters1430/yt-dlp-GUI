@@ -4,6 +4,8 @@ const ytdlp = require('./ytdlp');
 const siteProfiles = require('./siteProfiles');
 const nfo = require('./nfo');
 const jellyfinSync = require('./jellyfinSync');
+const outputTemplate = require('./outputTemplate');
+const notify = require('./notify');
 
 function isNfoEnabled() {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'nfo_enabled'").get();
@@ -143,6 +145,12 @@ async function runJob(job) {
     jobId: job.id,
     ...extraOptions,
   };
+  // Music downloads carry their own library layout; everything else follows the Watch's
+  // filename template, else the global one from Settings.
+  if (!downloadOptions.outputTemplate) {
+    const watch = job.watch_id ? db.prepare('SELECT output_template FROM watches WHERE id = ?').get(job.watch_id) : null;
+    downloadOptions.outputTemplate = outputTemplate.resolveTemplate({ watchTemplate: watch && watch.output_template });
+  }
 
   const ffmpegDir = ytdlp.getFfmpegDir();
 
@@ -276,6 +284,7 @@ async function runJob(job) {
       pid: null,
       log: logLines.join('\n'),
     });
+    notify.downloadCompleted(getJob(job.id), result);
 
     // Music tracks get their own metadata/artwork handling below; the generic .nfo/poster
     // sidecar uses a Kodi <movie> schema and the raw YouTube thumbnail, which is meaningless
@@ -313,6 +322,7 @@ async function runJob(job) {
       pid: null,
       log: logLines.join('\n'),
     });
+    notify.downloadFailed(getJob(job.id), err.message);
   }
 }
 
