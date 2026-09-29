@@ -7,7 +7,7 @@ import {
 import { api } from '../api.js';
 import QueueItem from '../components/QueueItem.jsx';
 import MediaPreviewModal from '../components/MediaPreviewModal.jsx';
-import DownloadOptionsFields, { defaultDownloadOptions, isYouTubeUrl, capsFromUrl, mergeCapabilities } from '../components/DownloadOptionsFields.jsx';
+import DownloadOptionsFields, { defaultDownloadOptions, isYouTubeUrl, capsFromUrl, mergeCapabilities, normalizeUrl } from '../components/DownloadOptionsFields.jsx';
 import { useDownloads } from '../context/DownloadsContext.jsx';
 
 export default function Dashboard() {
@@ -38,7 +38,7 @@ export default function Dashboard() {
     [urlText]
   );
   const validUrls = useMemo(
-    () => parsedUrls.filter((u) => /^https?:\/\//i.test(u)),
+    () => parsedUrls.map(normalizeUrl).filter((u) => /^https?:\/\//i.test(u)),
     [parsedUrls]
   );
 

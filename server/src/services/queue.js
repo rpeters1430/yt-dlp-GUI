@@ -207,7 +207,11 @@ async function runJob(job) {
         appendLog(`Metadata lookup failed: ${e.message}`);
         throw e;
       }
-      appendLog(`Metadata lookup note: ${e.message} (proceeding to download)`);
+      if (ytdlp.isNotLiveError(e.message) && downloadOptions.waitForLive) {
+        appendLog('Channel is offline right now (proceeding to wait for it to go live)');
+      } else {
+        appendLog(`Metadata lookup note: ${e.message} (proceeding to download)`);
+      }
     }
 
     const { options: resolvedOptions, adjustments } = ytdlp.resolveDownloadOptions(job.url, {

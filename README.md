@@ -56,6 +56,7 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 - **YouTube and any other yt-dlp live extractor** — a URL that's currently live is detected automatically in the Analyze modal
 - Join at the live edge, or record the whole broadcast from the start (`--live-from-start`)
 - Scheduled streams that haven't started yet can be waited on and recorded the moment they go live (`--wait-for-video`)
+- **TikTok Live** — paste a `tiktok.com/@user/live` link; if they're offline, queue **Wait & Auto-Record** and recording starts the next time they go live (also works for offline Twitch channels)
 - Recordings use MPEG-TS-safe HLS segments (`--hls-use-mpegts`), so the file stays playable even if interrupted
 - Live jobs show a pulsing **LIVE** badge and elapsed time, with a one-click **Stop Recording** that keeps everything captured so far
 

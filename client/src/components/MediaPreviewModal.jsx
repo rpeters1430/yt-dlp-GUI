@@ -56,12 +56,13 @@ function toResolutionOptions(data) {
 }
 
 function toLiveInfo(data) {
-  return data?.liveStatus ? { liveStatus: data.liveStatus } : null;
+  return data?.liveStatus ? { liveStatus: data.liveStatus, offline: !!data.offline } : null;
 }
 
 function aggregateLiveInfo(items) {
   if (items.some((it) => it.data?.liveStatus === 'is_live')) return { liveStatus: 'is_live' };
-  if (items.some((it) => it.data?.liveStatus === 'is_upcoming')) return { liveStatus: 'is_upcoming' };
+  const upcoming = items.filter((it) => it.data?.liveStatus === 'is_upcoming');
+  if (upcoming.length) return { liveStatus: 'is_upcoming', offline: upcoming.every((it) => it.data.offline) };
   return null;
 }
 
@@ -300,7 +301,7 @@ export default function MediaPreviewModal({
                               )}
                               {it.data.liveStatus === 'is_upcoming' && (
                                 <span className="live-pulsing-badge-sm upcoming-badge" style={{ marginRight: 6 }}>
-                                  <Clock size={10} /> UPCOMING
+                                  <Clock size={10} /> {it.data.offline ? 'OFFLINE' : 'UPCOMING'}
                                 </span>
                               )}
                               {[
@@ -401,7 +402,7 @@ function SingleVideoDetails({ data }) {
               </span>
             ) : data.liveStatus === 'is_upcoming' ? (
               <span className="live-pulsing-badge upcoming-badge">
-                <Clock size={11} /> UPCOMING
+                <Clock size={11} /> {data.offline ? 'OFFLINE' : 'UPCOMING'}
               </span>
             ) : data.duration ? (
               <span className="preview-duration-badge">
@@ -416,7 +417,7 @@ function SingleVideoDetails({ data }) {
           </div>
         ) : (
           <div className="preview-thumb-empty">
-            {data.isPlaylist ? <ListVideo size={36} /> : <Film size={36} />}
+            {data.isPlaylist ? <ListVideo size={36} /> : data.offline ? <Radio size={36} /> : <Film size={36} />}
           </div>
         )}
 
@@ -426,6 +427,9 @@ function SingleVideoDetails({ data }) {
           </h3>
           {data.uploader && (
             <div className="preview-uploader">{data.uploader}</div>
+          )}
+          {data.offline && (
+            <div className="muted small">Not live right now — you can queue it to record when they go live.</div>
           )}
           {data.liveStatus === 'is_upcoming' && formatReleaseTime(data.releaseTimestamp) && (
             <div className="muted small">Scheduled for {formatReleaseTime(data.releaseTimestamp)}</div>
