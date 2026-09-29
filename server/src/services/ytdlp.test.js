@@ -333,3 +333,11 @@ test('isNotLiveError / parseNotLiveError recognize an offline channel', () => {
   assert.equal(isNotLiveError('ERROR: [tiktok:live] This livestream has ended'), false);
   assert.deepEqual(parseNotLiveError('The channel is not currently live'), { extractor: null, channel: null });
 });
+
+test('buildDownloadArgs un-silences the ffmpeg downloader so live capture failures say why', () => {
+  const { buildDownloadArgs } = require('./ytdlp');
+  const args = buildDownloadArgs('https://www.tiktok.com/@user/live', { isLive: true });
+  const i = args.indexOf('--downloader-args');
+  assert.notEqual(i, -1);
+  assert.equal(args[i + 1], 'ffmpeg_i:-loglevel error');
+});
