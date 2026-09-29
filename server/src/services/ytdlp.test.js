@@ -333,3 +333,18 @@ test('isNotLiveError / parseNotLiveError recognize an offline channel', () => {
   assert.equal(isNotLiveError('ERROR: [tiktok:live] This livestream has ended'), false);
   assert.deepEqual(parseNotLiveError('The channel is not currently live'), { extractor: null, channel: null });
 });
+
+test('buildDownloadArgs un-silences the ffmpeg downloader so its failures say why', () => {
+  const { buildDownloadArgs } = require('./ytdlp');
+  // Every download, not only known-live ones: yt-dlp also hands non-live jobs (e.g.
+  // --download-sections) to ffmpeg, and a live URL isn't always flagged isLive up front.
+  for (const [url, options] of [
+    ['https://www.tiktok.com/@user/live', { isLive: true }],
+    ['https://example.com/video.mp4', { isLive: false, downloadSections: '*0-60' }],
+  ]) {
+    const args = buildDownloadArgs(url, options);
+    const i = args.indexOf('--downloader-args');
+    assert.notEqual(i, -1, url);
+    assert.equal(args[i + 1], 'ffmpeg_i:-loglevel error', url);
+  }
+});
