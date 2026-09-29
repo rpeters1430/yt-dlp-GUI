@@ -52,6 +52,17 @@ export function defaultDownloadOptions(overrides = {}) {
   };
 }
 
+// Pasted links often lack a scheme ("www.tiktok.com/@user/live"). Give anything that looks
+// like a host an https:// prefix so it's treated as a link; mirrors the server's normalizeUrl.
+export function normalizeUrl(input) {
+  const raw = String(input || '').trim();
+  if (raw.startsWith('//')) return `https:${raw}`;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(raw) && /^[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}(?:[/?#]|$)/i.test(raw)) {
+    return `https://${raw}`;
+  }
+  return raw;
+}
+
 export function isYouTubeUrl(url, extractor = null) {
   if (extractor && typeof extractor === 'string') {
     return /^youtube/i.test(extractor);
@@ -60,11 +71,7 @@ export function isYouTubeUrl(url, extractor = null) {
   if (!raw) return false;
   if (/^ytsearch/i.test(raw)) return true;
   try {
-    const looksLikeHostWithoutScheme = !/^[a-z][a-z0-9+.-]*:/i.test(raw) && /^[\w.-]+\.[a-z]{2,}(?:\/|$)/i.test(raw);
-    const normalized = raw.startsWith('//')
-      ? `https:${raw}`
-      : (looksLikeHostWithoutScheme ? `https://${raw}` : raw);
-    const parsed = new URL(normalized, 'https://example.invalid');
+    const parsed = new URL(normalizeUrl(raw), 'https://example.invalid');
     const host = parsed.hostname.toLowerCase();
     return /(^|\.)youtube\.com$/i.test(host) || host === 'youtu.be' || /(^|\.)youtube-nocookie\.com$/i.test(host);
   } catch (_) {
@@ -149,6 +156,8 @@ export default function DownloadOptionsFields({
   const noThumbnail = c.thumbnail === false;
   const isLive = liveInfo?.liveStatus === 'is_live';
   const isUpcoming = liveInfo?.liveStatus === 'is_upcoming';
+  // A channel's live page while nobody is broadcasting (e.g. a TikTok user who is offline).
+  const isOffline = isUpcoming && !!liveInfo?.offline;
   const isAudioMode = audioOnly || !!c.audioOnlyMedia;
 
   function set(patch) {
@@ -184,13 +193,26 @@ export default function DownloadOptionsFields({
         <div className="live-options-panel">
           <div className="segmented-choice">
             <button type="button" className={waitForLive ? 'active' : ''} onClick={() => set({ waitForLive: true })}>
-              <Clock size={14} /> Wait for it to start
+              <Clock size={14} /> {isOffline ? 'Wait for them to go live' : 'Wait for it to start'}
             </button>
             <button type="button" className={!waitForLive ? 'active' : ''} onClick={() => set({ waitForLive: false })}>
               <Radio size={14} /> Don't wait
             </button>
           </div>
-          {waitForLive ? (
+          {isOffline ? (
+            waitForLive ? (
+              <p className="muted small">
+                This channel isn't live right now. Recording will begin automatically the next time
+                they go live — yt-dlp checks every {waitInterval}s in the background, so this job can
+                sit queued for hours before it starts. Stop it from the queue at any time.
+              </p>
+            ) : (
+              <p className="muted small text-danger">
+                This channel isn't live right now, so there's nothing to record — the job will fail
+                immediately unless you enable "Wait for them to go live".
+              </p>
+            )
+          ) : waitForLive ? (
             <p className="muted small">
               This broadcast hasn't started yet. Recording will begin automatically the moment it
               goes live — yt-dlp checks every {waitInterval}s in the background, so this job can

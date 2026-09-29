@@ -106,10 +106,12 @@ const SITE_PROFILES = [
       category: 'Social Media',
       video: true,
       audio: true,
-      live: false,
+      live: true,
       subtitles: 'Limited',
-      cookies: 'Recommended for age-gated clips',
-      notes: 'Downloads high quality videos without platform watermarks where available. Audio-only tracks also supported.',
+      cookies: 'Recommended for age-gated clips and region-limited lives',
+      notes: 'Downloads high quality videos without platform watermarks where available. Audio-only tracks also supported. '
+        + 'Record TikTok Live from a tiktok.com/@user/live link: join a broadcast in progress, or queue it while the user '
+        + 'is offline and recording starts automatically when they go live.',
     },
   },
   {

@@ -12,8 +12,9 @@ router.use(requireAuth);
 router.post('/info', async (req, res) => {
   const { url: rawUrl } = req.body || {};
   if (!rawUrl) return res.status(400).json({ error: 'url is required' });
+  let url = ytdlp.normalizeUrl(rawUrl);
   try {
-    const url = await ytdlp.resolveShareUrl(String(rawUrl).trim());
+    url = await ytdlp.resolveShareUrl(url);
     let info = await ytdlp.getInfo(url, { flatPlaylist: true, resolveShare: false, reuseRecent: true });
     const isPlaylist = info._type === 'playlist' || Array.isArray(info.entries);
 
@@ -106,6 +107,30 @@ router.post('/info', async (req, res) => {
       releaseTimestamp: info.release_timestamp || null,
     });
   } catch (err) {
+    // A live page (e.g. tiktok.com/@user/live) whose owner isn't broadcasting right now.
+    // Offer it like a scheduled stream so it can be queued to record once they go live.
+    if (ytdlp.isNotLiveError(err.message)) {
+      const { extractor, channel } = ytdlp.parseNotLiveError(err.message);
+      const name = channel ? (/^tiktok/i.test(extractor || '') ? `@${channel}` : channel) : null;
+      return res.json({
+        isPlaylist: false,
+        title: name ? `${name} (offline)` : 'Channel offline',
+        uploader: name,
+        duration: null,
+        thumbnail: null,
+        viewCount: null,
+        extractor,
+        capabilities: { ...siteProfiles.capabilitiesFromUrl(url, extractor), liveStatus: 'is_upcoming' },
+        highestQuality: null,
+        resolutions: [],
+        formats: [],
+        isLive: false,
+        liveStatus: 'is_upcoming',
+        offline: true,
+        liveViewers: null,
+        releaseTimestamp: null,
+      });
+    }
     res.status(502).json({ error: err.message });
   }
 });
@@ -131,7 +156,7 @@ router.post('/', async (req, res) => {
     waitInterval,
   } = req.body || {};
   const list = urls ? urls : url ? [url] : [];
-  const trimmed = list.map((u) => String(u).trim()).filter(Boolean);
+  const trimmed = list.map(ytdlp.normalizeUrl).filter(Boolean);
 
   if (trimmed.length === 0) return res.status(400).json({ error: 'At least one URL is required' });
   const MAX_URLS_PER_REQUEST = 100;

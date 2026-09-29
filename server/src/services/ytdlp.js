@@ -236,6 +236,34 @@ function isBotCheckError(message) {
   return BOT_CHECK_RE.test(String(message || ''));
 }
 
+// Pasted links often lack a scheme ("www.tiktok.com/@user/live", "youtu.be/abc"). yt-dlp
+// treats those as search terms or local paths, so give anything that looks like a host an
+// https:// prefix. Everything else (including ytsearch: queries) passes through untouched.
+function normalizeUrl(input) {
+  const raw = String(input || '').trim();
+  if (raw.startsWith('//')) return `https:${raw}`;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(raw) && /^[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}(?:[/?#]|$)/i.test(raw)) {
+    return `https://${raw}`;
+  }
+  return raw;
+}
+
+// yt-dlp's UserNotLive error ("The channel is not currently live") — raised by extractors
+// for a channel's live page (TikTok, Twitch, Kick, ...) while nobody is broadcasting. With
+// --wait-for-video, yt-dlp keeps polling that page and starts recording once they go live.
+const NOT_LIVE_RE = /The channel is not currently live/i;
+
+function isNotLiveError(message) {
+  return NOT_LIVE_RE.test(String(message || ''));
+}
+
+// "ERROR: [tiktok:live] cinnanako: The channel is not currently live" → the extractor and
+// channel id, so an offline channel can still be shown by name.
+function parseNotLiveError(message) {
+  const m = String(message || '').match(/\[([^\]]+)\]\s*([^:\s]+):\s*The channel is not currently live/i);
+  return m ? { extractor: m[1], channel: m[2] } : { extractor: null, channel: null };
+}
+
 const BOT_CHECK_HINT = 'YouTube rejected the request with its bot check. Your cookies are likely expired or were '
   + 'rotated by YouTube: export a fresh cookies.txt from a private/incognito window (log in, open '
   + 'youtube.com/robots.txt, export, then close that window without browsing further) and re-upload it in '
@@ -1934,6 +1962,9 @@ module.exports = {
   isYouTube,
   isBotCheckError,
   BOT_CHECK_HINT,
+  normalizeUrl,
+  isNotLiveError,
+  parseNotLiveError,
   withPrivateCookies,
   sweepPrivateCookieDirs,
   PRIVATE_COOKIES_ROOT,

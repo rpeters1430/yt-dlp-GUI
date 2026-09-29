@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isPlaylistUrl, getDownloadIdleTimeoutMs, clearRecentCaches } = require('./ytdlp');
+const {
+  isPlaylistUrl, getDownloadIdleTimeoutMs, clearRecentCaches, normalizeUrl, isNotLiveError, parseNotLiveError,
+} = require('./ytdlp');
 
 test.beforeEach(() => clearRecentCaches());
 
@@ -312,4 +314,22 @@ test('isBusyCpuDelta requires a small but real share of CPU over the window', ()
   assert.equal(isBusyCpuDelta(0, 60000), false);
   assert.equal(isBusyCpuDelta(29, 60000), false);
   assert.equal(isBusyCpuDelta(30, 60000), true);
+});
+
+test('normalizeUrl adds https:// to pasted links that have no scheme', () => {
+  assert.equal(normalizeUrl('www.tiktok.com/@cinnanako/live'), 'https://www.tiktok.com/@cinnanako/live');
+  assert.equal(normalizeUrl('  tiktok.com/@user/live '), 'https://tiktok.com/@user/live');
+  assert.equal(normalizeUrl('youtu.be/abc123'), 'https://youtu.be/abc123');
+  assert.equal(normalizeUrl('//www.twitch.tv/somechannel'), 'https://www.twitch.tv/somechannel');
+  assert.equal(normalizeUrl('https://www.tiktok.com/@user/live'), 'https://www.tiktok.com/@user/live');
+  assert.equal(normalizeUrl('ytsearch5:lofi beats'), 'ytsearch5:lofi beats');
+  assert.equal(normalizeUrl('not a url'), 'not a url');
+});
+
+test('isNotLiveError / parseNotLiveError recognize an offline channel', () => {
+  const msg = 'ERROR: [tiktok:live] cinnanako: The channel is not currently live';
+  assert.equal(isNotLiveError(msg), true);
+  assert.deepEqual(parseNotLiveError(msg), { extractor: 'tiktok:live', channel: 'cinnanako' });
+  assert.equal(isNotLiveError('ERROR: [tiktok:live] This livestream has ended'), false);
+  assert.deepEqual(parseNotLiveError('The channel is not currently live'), { extractor: null, channel: null });
 });
