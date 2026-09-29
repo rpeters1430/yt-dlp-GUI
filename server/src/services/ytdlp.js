@@ -802,10 +802,12 @@ function buildDownloadArgs(url, rawOptions = {}) {
     '--progress-template', 'postprocess:YTDLP_POSTPROCESS %(progress._percent_str)s',
     '-o', targetOutput,
     '--print', 'after_move:FILEPATH %(filepath)s',
-    // --print implies --quiet, and in quiet mode yt-dlp starts its ffmpeg downloader (used for
-    // live HLS/FLV captures) with "-loglevel quiet", so a failure surfaces only as "ffmpeg
-    // exited with code N" with no reason. Raising ffmpeg back to "error" keeps its progress
-    // stats silent but lets the real cause (HTTP 403/404, bad input, ...) reach the job log.
+    // --print implies --quiet, and in quiet mode yt-dlp starts its ffmpeg downloader (live
+    // HLS/FLV captures, --download-sections, ...) with "-loglevel quiet", so a failure surfaces
+    // only as "ffmpeg exited with code N" with no reason. Raising ffmpeg back to "error" keeps
+    // its progress stats silent but lets the real cause (HTTP 403/404, bad input, ...) reach
+    // the job log. Deliberately unconditional: a live URL isn't always flagged isLive up front,
+    // and the flag has no effect on downloads yt-dlp doesn't hand to ffmpeg.
     '--downloader-args', 'ffmpeg_i:-loglevel error',
   ];
 
