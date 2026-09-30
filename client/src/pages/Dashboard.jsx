@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   ListChecks, CheckCircle2, XCircle, AlertCircle,
   Inbox, PartyPopper, Sparkles, SlidersHorizontal, ChevronDown, Globe,
+  ClipboardPaste, Trash2, Video, Tv, Music2, Clock,
 } from 'lucide-react';
 import { api } from '../api.js';
 import QueueItem from '../components/QueueItem.jsx';
@@ -51,6 +52,32 @@ export default function Dashboard() {
     () => hasUrls && validUrls.some((u) => !isYouTubeUrl(u)),
     [hasUrls, validUrls]
   );
+
+  const platformCounts = useMemo(() => {
+    let yt = 0;
+    let twitch = 0;
+    let audio = 0;
+    let other = 0;
+    for (const u of validUrls) {
+      const lower = u.toLowerCase();
+      if (lower.includes('youtube.com') || lower.includes('youtu.be')) yt++;
+      else if (lower.includes('twitch.tv')) twitch++;
+      else if (lower.includes('soundcloud.com') || lower.includes('bandcamp.com') || lower.includes('spotify.com')) audio++;
+      else other++;
+    }
+    return { yt, twitch, audio, other };
+  }, [validUrls]);
+
+  async function handlePasteClipboard() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        setUrlText((prev) => (prev.trim() ? `${prev.trim()}\n${text.trim()}` : text.trim()));
+      }
+    } catch {
+      // ignore clipboard permission error
+    }
+  }
 
   const advancedActiveCount = [subtitles, embedThumbnail, embedMetadata, embedChapters, sponsorblock]
     .filter(Boolean).length;
@@ -124,7 +151,7 @@ export default function Dashboard() {
         <div className="stat-card accent">
           <div className="stat-top">
             <span className="stat-label">In queue</span>
-            <span className="stat-icon"><ListChecks size={16} /></span>
+            <span className="stat-icon"><Clock size={16} /></span>
           </div>
           <span className="stat-value">{activeJobs.length}</span>
           {activeJobs.length > 0 && (
@@ -159,22 +186,72 @@ export default function Dashboard() {
               <span className="count-badge accent">{validUrls.length} link{validUrls.length > 1 ? 's' : ''} ready</span>
             )}
           </div>
-          <Link
-            to="/sites"
-            className="btn-ghost btn-sm"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            title="View supported sites and feature requirements"
-          >
-            <Globe size={13} /> Supported Sites Guide
-          </Link>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button
+              type="button"
+              className="btn-ghost btn-sm"
+              onClick={handlePasteClipboard}
+              title="Paste link from clipboard"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+            >
+              <ClipboardPaste size={13} /> Paste
+            </button>
+            {urlText && (
+              <button
+                type="button"
+                className="btn-ghost btn-sm text-danger"
+                onClick={() => setUrlText('')}
+                title="Clear input"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+              >
+                <Trash2 size={13} /> Clear
+              </button>
+            )}
+            <Link
+              to="/sites"
+              className="btn-ghost btn-sm"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              title="View supported sites and feature requirements"
+            >
+              <Globe size={13} /> Sites Guide
+            </Link>
+          </div>
         </div>
         <form onSubmit={handleAnalyze}>
-          <textarea
-            placeholder="Paste or enter one or more URLs (one per line). You can add as many links as you want, then click Analyze."
-            rows={4}
-            value={urlText}
-            onChange={(e) => setUrlText(e.target.value)}
-          />
+          <div className="url-intake-wrapper">
+            <textarea
+              placeholder="Paste or enter one or more URLs (one per line). You can add as many links as you want, then click Analyze."
+              rows={4}
+              value={urlText}
+              onChange={(e) => setUrlText(e.target.value)}
+            />
+          </div>
+
+          {validUrls.length > 0 && (
+            <div className="detected-platforms-row">
+              {platformCounts.yt > 0 && (
+                <span className="detected-platform-pill yt">
+                  <Video size={12} /> {platformCounts.yt} YouTube video{platformCounts.yt > 1 ? 's' : ''}
+                </span>
+              )}
+              {platformCounts.twitch > 0 && (
+                <span className="detected-platform-pill twitch">
+                  <Tv size={12} /> {platformCounts.twitch} Twitch link{platformCounts.twitch > 1 ? 's' : ''}
+                </span>
+              )}
+              {platformCounts.audio > 0 && (
+                <span className="detected-platform-pill audio">
+                  <Music2 size={12} /> {platformCounts.audio} Audio stream{platformCounts.audio > 1 ? 's' : ''}
+                </span>
+              )}
+              {platformCounts.other > 0 && (
+                <span className="detected-platform-pill other">
+                  <Globe size={12} /> {platformCounts.other} Supported site{platformCounts.other > 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+          )}
+
           <div className="options-row">
             <button
               type="button"
@@ -189,7 +266,7 @@ export default function Dashboard() {
             </button>
 
             <div className="spacer">
-              <button type="submit" disabled={submitting || validUrls.length === 0}>
+              <button type="submit" className="btn-primary-gradient" disabled={submitting || validUrls.length === 0}>
                 {submitting ? (
                   'Analyzing…'
                 ) : (

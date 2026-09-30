@@ -23,7 +23,7 @@ export default function Sidebar({ open, onNavigate, onLogout, username }) {
         yt-dlp GUI
       </div>
 
-      <nav style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <nav style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         {LINKS.map(({ to, end, label, icon: Icon }) => (
           <NavLink
             key={to}
@@ -32,19 +32,27 @@ export default function Sidebar({ open, onNavigate, onLogout, username }) {
             className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
             onClick={onNavigate}
           >
-            <Icon size={17} />
-            {label}
+            <span className="nav-icon-wrap">
+              <Icon size={16} />
+            </span>
+            <span>{label}</span>
           </NavLink>
         ))}
       </nav>
 
       <div className="sidebar-footer">
+        {username && (
+          <div className="sidebar-user-pill">
+            <span className="user-avatar">{username.charAt(0).toUpperCase()}</span>
+            <span className="user-name" title={username}>{username}</span>
+          </div>
+        )}
         <div className="sidebar-footer-toggles">
           <ThemeToggle />
           <DensityToggle />
         </div>
-        <button type="button" className="btn-ghost btn-sm" onClick={onLogout} title={username ? `Signed in as ${username}` : undefined}>
-          <LogOut size={15} />
+        <button type="button" className="btn-ghost btn-sm btn-logout" onClick={onLogout} title={username ? `Signed in as ${username}` : undefined}>
+          <LogOut size={14} />
           Log out
         </button>
       </div>

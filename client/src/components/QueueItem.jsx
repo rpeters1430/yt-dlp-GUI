@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Clock, Loader2, CheckCircle2, XCircle, Film, X, Terminal, Copy, Check, Trash2, Square } from 'lucide-react';
+import { Clock, Loader2, CheckCircle2, XCircle, Film, X, Terminal, Copy, Check, Trash2, Square, Video, Tv, Music, Globe } from 'lucide-react';
 import { api } from '../api.js';
 import ConfirmDialog from './ConfirmDialog.jsx';
 
@@ -10,6 +10,16 @@ const STATUS_META = {
   failed: { label: 'Failed', icon: XCircle },
   deleted: { label: 'Auto-deleted', icon: Trash2 },
 };
+
+function getExtractorInfo(extractor) {
+  if (!extractor) return null;
+  const lower = extractor.toLowerCase();
+  if (lower.includes('youtube')) return { name: 'YouTube', className: 'tag-extractor-youtube', icon: Video };
+  if (lower.includes('twitch')) return { name: 'Twitch', className: 'tag-extractor-twitch', icon: Tv };
+  if (lower.includes('sound') || lower.includes('bandcamp') || lower.includes('spotify') || lower.includes('music')) return { name: extractor, className: 'tag-extractor-music', icon: Music };
+  if (lower.includes('twitter') || lower.includes('x.com') || lower.includes('tiktok')) return { name: extractor, className: 'tag-extractor-social', icon: Globe };
+  return { name: extractor, className: 'tag-extractor-generic', icon: Film };
+}
 
 function formatElapsed(ms) {
   const totalSec = Math.max(0, Math.floor(ms / 1000));
@@ -111,7 +121,17 @@ export default function QueueItem({ job, onDeleted }) {
         <div className="queue-item-body">
           <div className="queue-item-title">{job.title || job.url}</div>
           <div className="queue-item-meta">
-            {job.extractor && <span className="tag">{job.extractor}</span>}
+            {(() => {
+              const extInfo = getExtractorInfo(job.extractor);
+              if (!extInfo) return null;
+              const ExtIcon = extInfo.icon;
+              return (
+                <span className={`tag ${extInfo.className}`}>
+                  <ExtIcon size={11} />
+                  {extInfo.name}
+                </span>
+              );
+            })()}
             <span className={`tag status-tag status-${job.status}`}>
               <StatusIcon size={11} className={job.status === 'downloading' ? 'spin-icon' : undefined} />
               {meta.label}
@@ -131,7 +151,7 @@ export default function QueueItem({ job, onDeleted }) {
                   {job.eta ? <span>ETA {job.eta}</span> : <span className="muted">Estimating time remaining…</span>}
                 </div>
                 <div className="progress-bar">
-                  <div className="progress-fill" style={{ width: `${Math.min(99, Math.max(0, job.percent || 0))}%` }} />
+                  <div className="progress-fill progress-fill-active" style={{ width: `${Math.min(99, Math.max(0, job.percent || 0))}%` }} />
                 </div>
                 <div className="progress-meta">
                   <span>{Math.round(job.percent || 0)}%</span>
@@ -158,7 +178,7 @@ export default function QueueItem({ job, onDeleted }) {
             <div>
               <div className="progress-bar">
                 <div
-                  className="progress-fill"
+                  className="progress-fill progress-fill-active"
                   style={{ width: `${Math.min(100, Math.max(0, job.percent || 0))}%` }}
                 />
               </div>

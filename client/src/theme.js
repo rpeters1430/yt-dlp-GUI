@@ -10,7 +10,7 @@ export function getStoredTheme() {
 
 export function applyTheme(theme) {
   const root = document.documentElement;
-  if (theme === 'light' || theme === 'dark') {
+  if (theme === 'light' || theme === 'dark' || theme === 'midnight') {
     root.setAttribute('data-theme', theme);
   } else {
     root.removeAttribute('data-theme');
@@ -29,7 +29,7 @@ export function setTheme(theme) {
 
 export function getEffectiveTheme() {
   const stored = getStoredTheme();
-  if (stored === 'light' || stored === 'dark') return stored;
+  if (stored === 'light' || stored === 'dark' || stored === 'midnight') return stored;
   return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 

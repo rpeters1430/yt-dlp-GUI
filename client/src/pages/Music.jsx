@@ -344,13 +344,12 @@ export default function MusicPage() {
     return (
       <div
         key={item.id}
-        className="card"
+        className="card music-release-card"
         style={{
           padding: 12,
           cursor: 'pointer',
           display: 'flex',
           flexDirection: 'column',
-          transition: 'transform 0.15s ease, box-shadow 0.15s ease',
         }}
         onClick={() => handleSelectAlbum(item)}
       >
@@ -373,11 +372,11 @@ export default function MusicPage() {
             </span>
           )}
           {item.isSingle ? (
-            <span className="badge" style={{ position: 'absolute', top: 8, left: 8, backgroundColor: 'rgba(0, 180, 216, 0.85)', color: '#fff', fontSize: '0.72rem', fontWeight: 600, backdropFilter: 'blur(4px)' }}>
+            <span className="badge badge-single" style={{ position: 'absolute', top: 8, left: 8, fontSize: '0.72rem', backdropFilter: 'blur(4px)' }}>
               Single / EP
             </span>
           ) : (
-            <span className="badge" style={{ position: 'absolute', top: 8, left: 8, backgroundColor: 'rgba(91, 109, 248, 0.85)', color: '#fff', fontSize: '0.72rem', fontWeight: 600, backdropFilter: 'blur(4px)' }}>
+            <span className="badge badge-album" style={{ position: 'absolute', top: 8, left: 8, fontSize: '0.72rem', backdropFilter: 'blur(4px)' }}>
               Album
             </span>
           )}
@@ -692,19 +691,19 @@ export default function MusicPage() {
   return (
     <div className="music-hub-container" style={{ maxWidth: 1200, margin: '0 auto', paddingBottom: 60 }}>
       {/* Top Header Banner */}
-      <div className="card" style={{ marginBottom: 20, background: 'linear-gradient(135deg, rgba(91, 109, 248, 0.12) 0%, rgba(155, 107, 255, 0.08) 100%)', border: '1px solid var(--border)' }}>
+      <div className="card" style={{ marginBottom: 20, background: 'linear-gradient(135deg, var(--accent-music-soft) 0%, var(--accent-cyan-soft) 100%)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm), var(--card-highlight)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <div style={{
               width: 48,
               height: 48,
               borderRadius: 12,
-              background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%)',
+              background: 'linear-gradient(135deg, var(--accent-music) 0%, var(--accent-cyan) 100%)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               color: '#fff',
-              boxShadow: 'var(--shadow-sm)',
+              boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
             }}>
               <Disc3 size={28} />
             </div>
@@ -719,7 +718,7 @@ export default function MusicPage() {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button
               type="button"
-              className={`btn btn-sm ${activeTab === 'search' ? 'btn-primary' : 'btn-secondary'}`}
+              className={`btn btn-sm ${activeTab === 'search' ? 'btn-music-active' : 'btn-secondary'}`}
               onClick={() => { setActiveTab('search'); setSelectedAlbum(null); }}
             >
               <Search size={15} />
@@ -727,7 +726,7 @@ export default function MusicPage() {
             </button>
             <button
               type="button"
-              className={`btn btn-sm ${activeTab === 'direct' ? 'btn-primary' : 'btn-secondary'}`}
+              className={`btn btn-sm ${activeTab === 'direct' ? 'btn-music-active' : 'btn-secondary'}`}
               onClick={() => setActiveTab('direct')}
             >
               <FileAudio size={15} />
@@ -735,7 +734,7 @@ export default function MusicPage() {
             </button>
             <button
               type="button"
-              className={`btn btn-sm ${activeTab === 'watches' ? 'btn-primary' : 'btn-secondary'}`}
+              className={`btn btn-sm ${activeTab === 'watches' ? 'btn-music-active' : 'btn-secondary'}`}
               onClick={() => setActiveTab('watches')}
             >
               <Radar size={15} />
@@ -743,7 +742,7 @@ export default function MusicPage() {
             </button>
             <button
               type="button"
-              className={`btn btn-sm ${activeTab === 'settings' ? 'btn-primary' : 'btn-secondary'}`}
+              className={`btn btn-sm ${activeTab === 'settings' ? 'btn-music-active' : 'btn-secondary'}`}
               onClick={() => setActiveTab('settings')}
             >
               <Settings size={15} />
