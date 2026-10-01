@@ -18,6 +18,7 @@ function isTruthy(value) {
 function getSyncConfig() {
   return {
     enabled: isTruthy(getSetting('jellyfin_sync_enabled', '0')),
+    autoScanEnabled: isTruthy(getSetting('jellyfin_auto_scan_enabled', '1')),
     url: getSetting('jellyfin_url', ''),
     apiKey: getSetting('jellyfin_api_key', ''),
     userId: getSetting('jellyfin_user_id', ''),
@@ -125,6 +126,28 @@ async function syncAllWatches() {
   return { skipped: false, results };
 }
 
+let libraryRefreshTimeout = null;
+
+function scheduleLibraryScan(delayMs = 6000) {
+  const cfg = getSyncConfig();
+  if (!cfg.autoScanEnabled || !cfg.url || !cfg.apiKey) return;
+
+  if (libraryRefreshTimeout) {
+    clearTimeout(libraryRefreshTimeout);
+  }
+
+  libraryRefreshTimeout = setTimeout(async () => {
+    libraryRefreshTimeout = null;
+    try {
+      console.log('[jellyfin] Triggering debounced Jellyfin library refresh scan...');
+      await jellyfin.refreshLibrary(cfg.url, cfg.apiKey);
+      console.log('[jellyfin] Jellyfin library refresh scan triggered successfully');
+    } catch (err) {
+      console.error(`[jellyfin] Automated library refresh failed: ${err.message}`);
+    }
+  }, delayMs);
+}
+
 function start() {
   // A newly downloaded video is also synced right after it finishes (see queue.js), but
   // Jellyfin may not have scanned it into its library yet at that moment — this periodic
@@ -134,4 +157,4 @@ function start() {
   });
 }
 
-module.exports = { getSyncConfig, syncWatch, syncAllWatches, start };
+module.exports = { getSyncConfig, syncWatch, syncAllWatches, scheduleLibraryScan, start };

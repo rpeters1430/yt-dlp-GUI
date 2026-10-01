@@ -304,6 +304,16 @@ async function runJob(job) {
         .catch((e) => console.error(`[queue] [job:${job.id}] Failed to embed cover art: ${e.message}`));
     }
 
+    // Trigger debounced Jellyfin library scan so newly downloaded media shows up automatically
+    try {
+      const syncConfig = jellyfinSync.getSyncConfig();
+      if (syncConfig.url && syncConfig.apiKey) {
+        jellyfinSync.scheduleLibraryScan();
+      }
+    } catch (e) {
+      console.error(`[queue] [job:${job.id}] Jellyfin library scan schedule failed: ${e.message}`);
+    }
+
     // Best-effort: Jellyfin may not have scanned this file into its library yet, in which
     // case this is a no-op and the periodic sync job (jellyfinSync.start) picks it up later.
     if (job.watch_id) {

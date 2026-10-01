@@ -183,10 +183,62 @@ async function createPlaylist(baseUrl, apiKey, userId, name, itemIds) {
   return data && data.Id;
 }
 
-async function addPlaylistItems(baseUrl, apiKey, userId, playlistId, itemIds) {
-  if (!itemIds || itemIds.length === 0) return;
-  const qs = new URLSearchParams({ ids: itemIds.join(','), userId });
-  await jellyfinRequest(baseUrl, apiKey, `/Playlists/${encodeURIComponent(playlistId)}/Items?${qs}`, { method: 'POST' });
+async function refreshLibrary(baseUrl, apiKey) {
+  if (!baseUrl) throw new Error('Jellyfin URL is required');
+  if (!apiKey) throw new Error('Jellyfin API key is required');
+  return jellyfinRequest(baseUrl, apiKey, '/Library/Refresh', { method: 'POST' });
+}
+
+// Searches the user's Jellyfin library to check if an album or its tracks are already present
+async function checkMusicAlbum(baseUrl, apiKey, userId, { artist, album }) {
+  if (!baseUrl || !apiKey || !album) return { inLibrary: false, tracks: [] };
+  const uid = userId ? await resolveUserId(baseUrl, apiKey, userId) : null;
+  const uidPart = uid ? `/Users/${encodeURIComponent(uid)}` : '';
+  const qs = new URLSearchParams({
+    Recursive: 'true',
+    IncludeItemTypes: 'MusicAlbum,Audio',
+    SearchTerm: album,
+    Fields: 'Path,Artists,Album,IndexNumber,ParentIndexNumber',
+  });
+  let data;
+  try {
+    data = await jellyfinFetch(baseUrl, apiKey, `${uidPart}/Items?${qs}`);
+  } catch (err) {
+    console.error(`[jellyfin] checkMusicAlbum failed: ${err.message}`);
+    return { inLibrary: false, tracks: [] };
+  }
+  const items = (data && data.Items) || [];
+
+  const normAlbum = album.toLowerCase().trim();
+  const normArtist = (artist || '').toLowerCase().trim();
+
+  // Find matching album item
+  const matchedAlbum = items.find((i) =>
+    i.Type === 'MusicAlbum' &&
+    i.Name && i.Name.toLowerCase().trim() === normAlbum &&
+    (!normArtist || (i.AlbumArtist && i.AlbumArtist.toLowerCase().includes(normArtist)) || (i.Artists && i.Artists.some((a) => a.toLowerCase().includes(normArtist))))
+  );
+
+  // Find matching audio tracks
+  const matchedTracks = items.filter((i) =>
+    i.Type === 'Audio' &&
+    i.Album && i.Album.toLowerCase().trim() === normAlbum &&
+    (!normArtist || (i.AlbumArtist && i.AlbumArtist.toLowerCase().includes(normArtist)) || (i.Artists && i.Artists.some((a) => a.toLowerCase().includes(normArtist))))
+  );
+
+  return {
+    inLibrary: !!matchedAlbum || matchedTracks.length > 0,
+    albumId: matchedAlbum ? matchedAlbum.Id : null,
+    albumName: matchedAlbum ? matchedAlbum.Name : (matchedTracks[0]?.Album || null),
+    trackCount: matchedTracks.length,
+    tracks: matchedTracks.map((t) => ({
+      id: t.Id,
+      name: t.Name,
+      trackNumber: t.IndexNumber || null,
+      discNumber: t.ParentIndexNumber || null,
+      path: t.Path || null,
+    })),
+  };
 }
 
 module.exports = {
@@ -199,5 +251,7 @@ module.exports = {
   getPlaylistItemIds,
   createPlaylist,
   addPlaylistItems,
+  refreshLibrary,
+  checkMusicAlbum,
   normalizeBaseUrl,
 };

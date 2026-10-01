@@ -73,6 +73,9 @@ export const api = {
   getJellyfinSyncSettings: () => request('/jellyfin/settings'),
   updateJellyfinSyncSettings: (payload) => request('/jellyfin/settings', { method: 'PUT', body: JSON.stringify(payload) }),
   syncJellyfinPlaylists: () => request('/jellyfin/sync', { method: 'POST' }),
+  refreshJellyfinLibrary: () => request('/jellyfin/refresh', { method: 'POST' }),
+  getJellyfinStatus: () => request('/jellyfin/status'),
+  checkJellyfinAlbum: (artist, album) => request(`/jellyfin/music-check?artist=${encodeURIComponent(artist || '')}&album=${encodeURIComponent(album || '')}`),
 
   // Twitch
   getTwitchChannel: (channel) => request(`/twitch/channel/${encodeURIComponent(channel)}`),
@@ -89,6 +92,7 @@ export const api = {
   getMusicAlbum: (id) => request(`/music/album/${encodeURIComponent(id)}`),
   getMusicArtist: (id) => request(`/music/artist/${encodeURIComponent(id)}`),
   matchMusicTrack: (track) => request('/music/match-track', { method: 'POST', body: JSON.stringify({ track }) }),
+  getMusicMatchCandidates: (track, limit = 5) => request('/music/match-candidates', { method: 'POST', body: JSON.stringify({ track, limit }) }),
   matchMusicBatch: (tracks) => request('/music/match-batch', { method: 'POST', body: JSON.stringify({ tracks }) }),
   inspectMusicUrl: (url) => request('/music/inspect-url', { method: 'POST', body: JSON.stringify({ url }) }),
   downloadMusic: (payload) => request('/music/download', { method: 'POST', body: JSON.stringify(payload) }),

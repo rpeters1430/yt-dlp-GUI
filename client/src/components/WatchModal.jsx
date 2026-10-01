@@ -541,10 +541,10 @@ export default function WatchModal({
                         </>
                       ) : (
                         <>
-                          <option value="mp3">MP3</option>
+                          <option value="opus">Opus (Highest Quality - YouTube Native)</option>
+                          <option value="mp3">MP3 (Universal, 320k)</option>
                           <option value="m4a">M4A (AAC)</option>
-                          <option value="opus">Opus</option>
-                          <option value="flac">FLAC (Lossless)</option>
+                          <option value="flac">FLAC (Transcoded)</option>
                         </>
                       )}
                     </select>

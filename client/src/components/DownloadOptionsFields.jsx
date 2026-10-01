@@ -249,10 +249,18 @@ export default function DownloadOptionsFields({
 
       <div className="preview-options-grid">
         <div className="segmented">
-          <button type="button" className={!audioOnly ? 'active' : ''} onClick={() => set({ audioOnly: false })}>
+          <button
+            type="button"
+            className={!audioOnly ? 'active' : ''}
+            onClick={() => set({ audioOnly: false, container: ['mp3', 'opus', 'm4a', 'flac'].includes(container) ? 'mp4' : container })}
+          >
             <Film size={13} /> Video
           </button>
-          <button type="button" className={audioOnly ? 'active' : ''} onClick={() => set({ audioOnly: true })}>
+          <button
+            type="button"
+            className={audioOnly ? 'active' : ''}
+            onClick={() => set({ audioOnly: true, container: ['mp4', 'mkv', 'webm', 'ts'].includes(container) ? 'mp3' : container })}
+          >
             <Music size={13} /> Audio only
           </button>
         </div>
@@ -280,7 +288,20 @@ export default function DownloadOptionsFields({
           </label>
         )}
 
-        {!audioOnly && (
+        {audioOnly ? (
+          <label className="field-inline">
+            Audio Format
+            <select
+              value={['mp3', 'opus', 'm4a', 'flac'].includes(container) ? container : 'mp3'}
+              onChange={(e) => set({ container: e.target.value })}
+            >
+              <option value="opus">Opus (Highest Quality - Native)</option>
+              <option value="mp3">MP3 (Universal, 320k)</option>
+              <option value="m4a">M4A (AAC)</option>
+              <option value="flac">FLAC (Transcoded)</option>
+            </select>
+          </label>
+        ) : (
           <label className="field-inline">
             Format
             <select value={container} onChange={(e) => set({ container: e.target.value })}>

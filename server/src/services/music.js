@@ -267,13 +267,17 @@ async function getAlbumDetails(collectionId) {
     copyright: albumItem.copyright || null,
   };
 
+  const totalDiscs = albumItem.discCount || Math.max(...songItems.map((s) => s.discNumber || 1), 1);
   const tracks = songItems
     .sort((a, b) => (a.discNumber || 1) - (b.discNumber || 1) || (a.trackNumber || 0) - (b.trackNumber || 0))
     .map((t, index) => ({
       trackNumber: t.trackNumber || index + 1,
+      totalTracks: songItems.length,
       discNumber: t.discNumber || 1,
+      totalDiscs,
       title: t.trackName,
       artist: t.artistName || album.artist,
+      albumArtist: album.artist,
       album: album.name,
       duration: t.trackTimeMillis ? Math.round(t.trackTimeMillis / 1000) : null,
       previewUrl: t.previewUrl || null,
@@ -298,6 +302,7 @@ async function searchTracks(query, limit = 25) {
     discNumber: t.discNumber || 1,
     title: t.trackName,
     artist: t.artistName,
+    albumArtist: t.artistName,
     album: t.collectionName,
     collectionId: t.collectionId,
     artwork: upgradeArtworkUrl(t.artworkUrl100 || t.artworkUrl60, 600),
@@ -311,71 +316,107 @@ async function searchTracks(query, limit = 25) {
   }));
 }
 
-async function matchTrackToYouTube(track) {
+function scoreCandidate(c, artist, title, targetDuration) {
+  let score = 0;
+  if (targetDuration && c.duration) {
+    const diff = Math.abs(c.duration - targetDuration);
+    if (diff <= 2) score += 60;
+    else if (diff <= 5) score += 40;
+    else if (diff <= 10) score += 20;
+    else if (diff <= 20) score += 5;
+    else if (diff > 30 && diff <= 60) score -= 45;
+    else if (diff > 60) score -= 100;
+  }
+  const cTitle = (c.title || '').toLowerCase();
+  const cUploader = (c.uploader || '').toLowerCase();
+  const artLower = (artist || '').toLowerCase();
+  const titLower = (title || '').toLowerCase();
+
+  // YouTube auto-generated Topic channels provide the pure record-label studio album audio
+  const isTopicChannel = cUploader.endsWith('- topic') || cUploader.includes('topic');
+  if (isTopicChannel) score += 55;
+  else if (artLower && cUploader.includes(artLower)) score += 30;
+  if (cUploader.includes('vevo')) score += 20;
+
+  // Title matching
+  if (titLower && cTitle.includes(titLower)) score += 25;
+  if (cTitle.includes('official audio') || cTitle.includes('original audio')) score += 35;
+  if (cTitle.includes('provided to youtube')) score += 40;
+  if (cTitle.includes('remaster')) score += 10;
+
+  // Music video penalty: music videos often contain sound effects, dialogue, or extended intro scenes
+  if (cTitle.includes('music video') || cTitle.includes('official video')) score -= 15;
+
+  // Heavy penalties for non-studio versions
+  if (cTitle.includes('live') && !titLower.includes('live')) score -= 50;
+  if (cTitle.includes('cover') && !titLower.includes('cover')) score -= 60;
+  if (cTitle.includes('karaoke') || (cTitle.includes('instrumental') && !titLower.includes('instrumental'))) score -= 60;
+  if (cTitle.includes('reaction') || cTitle.includes('review') || cTitle.includes('parody')) score -= 100;
+  if (cTitle.includes('slowed') || cTitle.includes('reverb') || cTitle.includes('bass boosted') || cTitle.includes('nightcore') || cTitle.includes('8d audio')) score -= 80;
+  if (cTitle.includes('teaser') || cTitle.includes('trailer') || cTitle.includes('snippet')) score -= 90;
+  if (cTitle.includes('clean') && !titLower.includes('clean')) score -= 25;
+  if (cTitle.includes('censored')) score -= 40;
+
+  return score;
+}
+
+async function getMatchCandidates(track, limit = 5) {
   const artist = track.artist || '';
   const title = track.title || '';
   const targetDuration = typeof track.duration === 'number' ? track.duration : null;
 
   const queries = [
+    `${artist} - ${title} topic`,
     `${artist} - ${title} official audio`,
-    `${artist} - ${title} audio`,
     `${artist} ${title}`,
   ];
 
-  let candidates = [];
+  const candidateMap = new Map();
   for (const q of queries) {
     try {
       const results = await ytdlp.searchYouTube(q, 3);
       if (results && results.length > 0) {
-        candidates = results;
-        break;
+        for (const item of results) {
+          if (item && item.id && !candidateMap.has(item.id)) {
+            candidateMap.set(item.id, item);
+          }
+        }
       }
+      if (candidateMap.size >= 6) break;
     } catch (_) {}
   }
 
+  const list = Array.from(candidateMap.values());
+  if (list.length === 0) return [];
+
+  const scored = list.map((c) => ({
+    ...c,
+    youtubeUrl: c.url,
+    videoId: c.id,
+    score: scoreCandidate(c, artist, title, targetDuration),
+    durationDiff: targetDuration && c.duration ? Math.abs(c.duration - targetDuration) : null,
+    isTopic: !!((c.uploader || '').toLowerCase().includes('topic')),
+  }));
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit);
+}
+
+async function matchTrackToYouTube(track) {
+  const candidates = await getMatchCandidates(track, 5);
   if (candidates.length === 0) {
-    throw new Error(`Could not find a YouTube match for "${artist} - ${title}"`);
+    throw new Error(`Could not find a YouTube match for "${track.artist || ''} - ${track.title || ''}"`);
   }
-
-  // Score candidates: prioritize duration match (within 10s) and channel/uploader match
-  let best = candidates[0];
-  let bestScore = -1000;
-
-  for (const c of candidates) {
-    let score = 0;
-    if (targetDuration && c.duration) {
-      const diff = Math.abs(c.duration - targetDuration);
-      if (diff <= 3) score += 50;
-      else if (diff <= 8) score += 30;
-      else if (diff <= 15) score += 15;
-      else if (diff > 45) score -= 40;
-    }
-    const cTitle = (c.title || '').toLowerCase();
-    const cUploader = (c.uploader || '').toLowerCase();
-    const artLower = artist.toLowerCase();
-    const titLower = title.toLowerCase();
-
-    if (cUploader.includes(artLower)) score += 25;
-    if (cTitle.includes(titLower)) score += 25;
-    if (cTitle.includes('official audio') || cTitle.includes('topic')) score += 20;
-    if (cTitle.includes('music video')) score += 10;
-    if (cTitle.includes('live') && !titLower.includes('live')) score -= 30;
-    if (cTitle.includes('cover') && !titLower.includes('cover')) score -= 40;
-    if (cTitle.includes('karaoke') || cTitle.includes('instrumental')) score -= 40;
-
-    if (score > bestScore) {
-      bestScore = score;
-      best = c;
-    }
-  }
-
+  const best = candidates[0];
   return {
-    youtubeUrl: best.url,
-    videoId: best.id,
+    youtubeUrl: best.youtubeUrl,
+    videoId: best.videoId,
     title: best.title,
     duration: best.duration,
     uploader: best.uploader,
     thumbnail: best.thumbnail,
+    score: best.score,
+    isTopic: best.isTopic,
   };
 }
 
@@ -554,19 +595,21 @@ async function enqueueMusicDownload({
     saveCoverArt(targetDir, track.artwork).catch(() => {});
   }
 
+  const discPrefix = track.discNumber > 1 || (track.totalDiscs && track.totalDiscs > 1) ? `${track.discNumber}-` : '';
   const trackNumStr = String(track.trackNumber || 1).padStart(2, '0');
   const titleStr = sanitizeFilename(track.title || 'Track');
-  const outputTemplate = path.join(targetDir, `${trackNumStr} - ${titleStr}.%(ext)s`);
+  const outputTemplate = path.join(targetDir, `${discPrefix}${trackNumStr} - ${titleStr}.%(ext)s`);
 
   // Build ID3 / Vorbis metadata arguments for FFmpeg via --postprocessor-args
+  const albumArtist = track.albumArtist || track.artist;
   const ppaParts = [
     `-metadata title=${escapeFfmpegMeta(track.title)}`,
     `-metadata artist=${escapeFfmpegMeta(track.artist)}`,
-    `-metadata album_artist=${escapeFfmpegMeta(track.artist)}`,
+    `-metadata album_artist=${escapeFfmpegMeta(albumArtist)}`,
     `-metadata album=${escapeFfmpegMeta(track.album || 'Single')}`,
     `-metadata track=${track.trackNumber || 1}/${track.totalTracks || track.trackNumber || 1}`,
   ];
-  if (track.discNumber) ppaParts.push(`-metadata disc=${track.discNumber}`);
+  if (track.discNumber) ppaParts.push(`-metadata disc=${track.discNumber}/${track.totalDiscs || track.discNumber || 1}`);
   if (track.year) {
     ppaParts.push(`-metadata date=${escapeFfmpegMeta(track.year)}`);
     ppaParts.push(`-metadata year=${escapeFfmpegMeta(track.year)}`);
@@ -582,6 +625,7 @@ async function enqueueMusicDownload({
     optionsJson: {
       audioQuality: audioQuality || '320k',
       outputTemplate,
+      sponsorblockRemove: 'music_offtopic',
       // Deliberately NOT embedThumbnail/embedMetadata: yt-dlp's FFmpegMetadata/EmbedThumbnail
       // postprocessors run *after* the ExtractAudio postprocessor-args below (see yt-dlp's
       // get_postprocessors() ordering) and would stomp the clean iTunes-sourced tags with the
@@ -593,10 +637,12 @@ async function enqueueMusicDownload({
       musicMetadata: {
         title: track.title,
         artist: track.artist,
+        albumArtist,
         album: track.album,
         trackNumber: track.trackNumber,
         totalTracks: track.totalTracks,
         discNumber: track.discNumber,
+        totalDiscs: track.totalDiscs,
         year: track.year,
         genre: track.genre,
         artworkUrl: track.artwork,
@@ -622,6 +668,7 @@ module.exports = {
   getAlbumDetails,
   searchTracks,
   matchTrackToYouTube,
+  getMatchCandidates,
   inspectUrl,
   saveCoverArt,
   embedCoverArt,

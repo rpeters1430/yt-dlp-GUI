@@ -73,6 +73,21 @@ router.post('/match-track', async (req, res) => {
   }
 });
 
+// Get all candidate YouTube matches for inspection or manual selection
+router.post('/match-candidates', async (req, res) => {
+  const { track, limit = 5 } = req.body || {};
+  if (!track || !track.title) {
+    return res.status(400).json({ error: 'Track title is required' });
+  }
+  try {
+    const candidates = await music.getMatchCandidates(track, Math.min(10, Math.max(1, parseInt(limit, 10) || 5)));
+    res.json({ candidates });
+  } catch (err) {
+    console.error('[music:match-candidates] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Match a batch of tracks to YouTube (with controlled concurrency)
 router.post('/match-batch', async (req, res) => {
   const { tracks } = req.body || {};

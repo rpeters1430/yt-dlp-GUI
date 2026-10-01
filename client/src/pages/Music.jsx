@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Music,
   Disc3,
@@ -28,8 +29,12 @@ import {
   User,
   Users,
   Filter,
+  Library,
+  X,
+  Link as LinkIcon,
 } from 'lucide-react';
 import { api } from '../api.js';
+import { useDownloads } from '../context/DownloadsContext.jsx';
 
 function formatDuration(sec) {
   if (!sec && sec !== 0) return '';
@@ -40,36 +45,38 @@ function formatDuration(sec) {
 }
 
 const FORMAT_OPTIONS = [
-  { value: 'mp3', label: 'MP3 (Universal, tagged)' },
-  { value: 'flac', label: 'FLAC (Lossless Studio Quality)' },
-  { value: 'm4a', label: 'M4A / AAC (Apple / High Efficiency)' },
-  { value: 'opus', label: 'OPUS (Modern / Low Bitrate)' },
-  { value: 'wav', label: 'WAV (Uncompressed Lossless)' },
+  { value: 'opus', label: 'OPUS (Highest Quality - YouTube Native ~160k VBR)' },
+  { value: 'mp3', label: 'MP3 (Universal 320 kbps CBR, Tagged)' },
+  { value: 'm4a', label: 'M4A / AAC (Apple Compatible)' },
+  { value: 'flac', label: 'FLAC (Transcoded - large file, not native lossless)' },
+  { value: 'wav', label: 'WAV (Transcoded - uncompressed PCM)' },
 ];
 
 const QUALITY_OPTIONS_BY_FORMAT = {
+  opus: [
+    { value: '0', label: 'Native / Best Quality (Direct stream copy, ~160 kbps VBR)' },
+    { value: '160k', label: '160 kbps (Transparent Quality)' },
+    { value: '128k', label: '128 kbps (Standard)' },
+    { value: '96k', label: '96 kbps (Compact)' },
+  ],
   mp3: [
-    { value: '320k', label: '320 kbps (High Quality CBR)' },
+    { value: '320k', label: '320 kbps (Highest Quality CBR)' },
     { value: '256k', label: '256 kbps (High Quality)' },
     { value: '192k', label: '192 kbps (Standard Quality)' },
     { value: '128k', label: '128 kbps (Compact)' },
     { value: '0', label: 'VBR 0 (Best Variable)' },
   ],
-  flac: [
-    { value: '0', label: 'Lossless (Original / Bit-perfect)' },
-  ],
   m4a: [
-    { value: '256k', label: '256 kbps (iTunes / Apple Standard)' },
-    { value: '320k', label: '320 kbps (High Bitrate AAC)' },
+    { value: '256k', label: '256 kbps (High Bitrate AAC)' },
+    { value: '320k', label: '320 kbps (Max Bitrate AAC)' },
+    { value: '128k', label: '128 kbps (YouTube Native AAC)' },
     { value: '192k', label: '192 kbps' },
   ],
-  opus: [
-    { value: '160k', label: '160 kbps (Transparent Quality)' },
-    { value: '128k', label: '128 kbps (Standard OPUS)' },
-    { value: '96k', label: '96 kbps (High Efficiency)' },
+  flac: [
+    { value: '0', label: 'Transcode only (YouTube has no native lossless)' },
   ],
   wav: [
-    { value: '0', label: 'Lossless Uncompressed (16/24-bit PCM)' },
+    { value: '0', label: 'Transcode only (Uncompressed PCM from lossy source)' },
   ],
 };
 
@@ -137,6 +144,96 @@ export default function MusicPage() {
   const [newWatchError, setNewWatchError] = useState('');
   const [addingWatch, setAddingWatch] = useState(false);
 
+  // Live downloads from context
+  const { jobs } = useDownloads() || { jobs: [] };
+  const activeMusicJobs = (jobs || []).filter(
+    (j) => (j.status === 'queued' || j.status === 'downloading') && (j.optionsJson?.isMusicDownload || j.optionsJson?.audioOnly || j.audio_only)
+  );
+
+  // Match inspection modal state
+  const [inspectingTrack, setInspectingTrack] = useState(null);
+  const [matchCandidates, setMatchCandidates] = useState([]);
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [customMatchUrl, setCustomMatchUrl] = useState('');
+  const [trackMatches, setTrackMatches] = useState({}); // trackNumber -> { youtubeUrl, title, uploader, duration, isTopic }
+
+  // Direct URL selected tracks state
+  const [directSelectedTracks, setDirectSelectedTracks] = useState(new Set());
+
+  // Jellyfin library sync & matching state
+  const [jellyfinStatus, setJellyfinStatus] = useState(null);
+  const [jellyfinAlbumData, setJellyfinAlbumData] = useState(null);
+  const [jellyfinCheckingAlbum, setJellyfinCheckingAlbum] = useState(false);
+  const [jellyfinScanning, setJellyfinScanning] = useState(false);
+
+  // Toast notification state
+  const [toastMessage, setToastMessage] = useState(null);
+  function showToast(text, type = 'success') {
+    setToastMessage({ text, type });
+    setTimeout(() => setToastMessage(null), 4500);
+  }
+
+  function getTrackJobStatus(trackTitle) {
+    if (!trackTitle || !jobs) return null;
+    const titLower = trackTitle.toLowerCase().trim();
+    return jobs.find((j) => {
+      const metaTitle = j.optionsJson?.musicMetadata?.title;
+      if (metaTitle && metaTitle.toLowerCase().trim() === titLower) return true;
+      if (j.title && j.title.toLowerCase().includes(titLower)) return true;
+      return false;
+    });
+  }
+
+  async function handleOpenMatchModal(track) {
+    setInspectingTrack(track);
+    setCustomMatchUrl(trackMatches[track.trackNumber]?.youtubeUrl || track.youtubeUrl || '');
+    setLoadingCandidates(true);
+    setMatchCandidates([]);
+    try {
+      const res = await api.getMusicMatchCandidates({
+        title: track.title,
+        artist: track.artist || selectedAlbum?.album?.artist,
+        duration: track.duration,
+      }, 5);
+      setMatchCandidates(res.candidates || []);
+    } catch (err) {
+      console.error('Failed to load match candidates:', err);
+    } finally {
+      setLoadingCandidates(false);
+    }
+  }
+
+  function handleSelectMatch(candidate) {
+    if (!inspectingTrack) return;
+    setTrackMatches((prev) => ({
+      ...prev,
+      [inspectingTrack.trackNumber]: {
+        youtubeUrl: candidate.youtubeUrl || candidate.url,
+        title: candidate.title,
+        uploader: candidate.uploader,
+        duration: candidate.duration,
+        isTopic: candidate.isTopic,
+      },
+    }));
+    showToast(`Assigned match for "${inspectingTrack.title}"!`);
+    setInspectingTrack(null);
+  }
+
+  function handleApplyCustomUrl(e) {
+    e.preventDefault();
+    if (!inspectingTrack || !customMatchUrl.trim()) return;
+    setTrackMatches((prev) => ({
+      ...prev,
+      [inspectingTrack.trackNumber]: {
+        youtubeUrl: customMatchUrl.trim(),
+        title: customMatchUrl.trim(),
+        uploader: 'Custom URL',
+      },
+    }));
+    showToast(`Custom URL assigned to "${inspectingTrack.title}"!`);
+    setInspectingTrack(null);
+  }
+
   // Audio preview player
   const [playingPreviewUrl, setPlayingPreviewUrl] = useState(null);
   const audioPlayerRef = useRef(null);
@@ -153,7 +250,33 @@ export default function MusicPage() {
       setNewWatchQuality(s.musicQuality || '320k');
       setNewWatchFolder(s.musicFolder || 'Music');
     }).catch(() => {});
+
+    api.getJellyfinStatus()
+      .then((st) => setJellyfinStatus(st))
+      .catch(() => {});
   }, []);
+
+  async function handleTriggerJellyfinScan() {
+    setJellyfinScanning(true);
+    try {
+      await api.refreshJellyfinLibrary();
+      showToast('Jellyfin library refresh scan triggered!');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setJellyfinScanning(false);
+    }
+  }
+
+  async function handleToggleJellyfinAutoScan(enabled) {
+    try {
+      const updated = await api.updateJellyfinSyncSettings({ autoScanEnabled: enabled });
+      setJellyfinStatus((prev) => ({ ...prev, autoScanEnabled: updated.autoScanEnabled }));
+      showToast(enabled ? 'Enabled auto Jellyfin library scan' : 'Disabled auto Jellyfin library scan');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
 
   // Sync quality options when format changes
   const availableQualities = QUALITY_OPTIONS_BY_FORMAT[downloadFormat] || QUALITY_OPTIONS_BY_FORMAT.mp3;
@@ -438,14 +561,24 @@ export default function MusicPage() {
   async function handleSelectAlbum(album) {
     setAlbumLoading(true);
     setAlbumDownloadMessage(null);
+    setJellyfinAlbumData(null);
     try {
       const data = await api.getMusicAlbum(album.id);
       setSelectedAlbum(data);
       // Default: select all tracks
       const allTrackNums = new Set((data.tracks || []).map((t) => t.trackNumber));
       setSelectedTracks(allTrackNums);
+
+      // Check if already in Jellyfin library
+      if (data?.album) {
+        setJellyfinCheckingAlbum(true);
+        api.checkJellyfinAlbum(data.album.artist, data.album.name)
+          .then((jf) => setJellyfinAlbumData(jf))
+          .catch(() => setJellyfinAlbumData(null))
+          .finally(() => setJellyfinCheckingAlbum(false));
+      }
     } catch (err) {
-      alert(`Could not load album details: ${err.message}`);
+      showToast(`Could not load album details: ${err.message}`, 'error');
     } finally {
       setAlbumLoading(false);
     }
@@ -478,7 +611,7 @@ export default function MusicPage() {
     );
 
     if (tracksToDownload.length === 0) {
-      alert('Please select at least one track to download.');
+      showToast('Please select at least one track to download.', 'error');
       return;
     }
 
@@ -496,6 +629,8 @@ export default function MusicPage() {
           genre: selectedAlbum.album.genre,
           artwork: selectedAlbum.album.artwork,
           totalTracks: selectedAlbum.tracks.length,
+          totalDiscs: selectedAlbum.album.totalDiscs || selectedAlbum.tracks[0]?.totalDiscs || 1,
+          youtubeUrl: trackMatches[t.trackNumber]?.youtubeUrl || t.youtubeUrl || null,
         })),
         audioFormat: downloadFormat,
         audioQuality: downloadQuality,
@@ -506,6 +641,7 @@ export default function MusicPage() {
       const res = await api.downloadMusic(payload);
       const msg = `Successfully queued ${res.enqueued} song${res.enqueued === 1 ? '' : 's'} into "${downloadFolder}/${selectedAlbum.album.artist}/${selectedAlbum.album.name}"!`;
 
+      showToast(msg);
       if (returnToSearch) {
         setQuickDownloadToast({ text: msg });
         setTimeout(() => setQuickDownloadToast(null), 5000);
@@ -517,9 +653,11 @@ export default function MusicPage() {
         });
       }
     } catch (err) {
+      const errText = `Download failed: ${err.message}`;
+      showToast(errText, 'error');
       setAlbumDownloadMessage({
         type: 'error',
-        text: `Download failed: ${err.message}`,
+        text: errText,
       });
     } finally {
       setDownloadingAlbum(false);
@@ -529,11 +667,14 @@ export default function MusicPage() {
   // Download a single track
   async function handleDownloadSingleTrack(track) {
     try {
+      const customMatch = trackMatches[track.trackNumber];
       const payload = {
         track: {
           ...track,
           albumArtist: selectedAlbum?.album?.artist || track.artist,
           totalTracks: selectedAlbum?.tracks?.length || 1,
+          totalDiscs: selectedAlbum?.album?.totalDiscs || track.totalDiscs || 1,
+          youtubeUrl: customMatch?.youtubeUrl || track.youtubeUrl || null,
         },
         audioFormat: downloadFormat,
         audioQuality: downloadQuality,
@@ -541,9 +682,9 @@ export default function MusicPage() {
         saveCover: downloadSaveCover,
       };
       await api.downloadMusic(payload);
-      alert(`Queued "${track.title}" for download in ${downloadFormat.toUpperCase()}!`);
+      showToast(`Queued "${track.title}" for download in ${downloadFormat.toUpperCase()}!`);
     } catch (err) {
-      alert(`Failed to queue track: ${err.message}`);
+      showToast(`Failed to queue track: ${err.message}`, 'error');
     }
   }
 
@@ -561,6 +702,11 @@ export default function MusicPage() {
     try {
       const info = await api.inspectMusicUrl(url);
       setDirectInfo(info);
+      if (info && info.entries && info.entries.length > 0) {
+        setDirectSelectedTracks(new Set(info.entries.map((_, i) => i)));
+      } else {
+        setDirectSelectedTracks(new Set());
+      }
     } catch (err) {
       setDirectError(err.message || 'Failed to inspect URL');
     } finally {
@@ -576,13 +722,20 @@ export default function MusicPage() {
 
     try {
       if (directInfo.isPlaylist && directInfo.entries?.length > 0) {
+        const chosenEntries = directInfo.entries.filter((_, idx) => directSelectedTracks.has(idx));
+        if (chosenEntries.length === 0) {
+          showToast('Please select at least one track to download.', 'error');
+          setDirectDownloading(false);
+          return;
+        }
+
         const payload = {
-          tracks: directInfo.entries.map((e, idx) => ({
+          tracks: chosenEntries.map((e, idx) => ({
             title: e.title,
             artist: directInfo.uploader || 'YouTube Music',
             album: directInfo.title || 'Playlist',
             trackNumber: idx + 1,
-            totalTracks: directInfo.entries.length,
+            totalTracks: chosenEntries.length,
             youtubeUrl: e.url,
             artwork: e.thumbnail || directInfo.thumbnail,
           })),
@@ -592,9 +745,11 @@ export default function MusicPage() {
           saveCover: downloadSaveCover,
         };
         const res = await api.downloadMusic(payload);
+        const msg = `Queued ${res.enqueued} track(s) from playlist into "${downloadFolder}"!`;
+        showToast(msg);
         setDirectDownloadMessage({
           type: 'success',
-          text: `Queued ${res.enqueued} track(s) from playlist into "${downloadFolder}"!`,
+          text: msg,
         });
       } else {
         const payload = {
@@ -611,12 +766,15 @@ export default function MusicPage() {
           saveCover: downloadSaveCover,
         };
         await api.downloadMusic(payload);
+        const msg = `Queued "${directInfo.title}" for download into "${downloadFolder}"!`;
+        showToast(msg);
         setDirectDownloadMessage({
           type: 'success',
-          text: `Queued "${directInfo.title}" for download into "${downloadFolder}"!`,
+          text: msg,
         });
       }
     } catch (err) {
+      showToast(`Download error: ${err.message}`, 'error');
       setDirectDownloadMessage({
         type: 'error',
         text: `Download error: ${err.message}`,
@@ -710,7 +868,7 @@ export default function MusicPage() {
             <div>
               <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700 }}>Music Hub & Watcher</h1>
               <p style={{ margin: '3px 0 0 0', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
-                Discover albums, download YouTube tracks in high-fidelity MP3/FLAC with embedded metadata & artwork, and monitor artists.
+                Discover albums, download YouTube tracks in pristine high-fidelity audio (native OPUS, 320k MP3, M4A) with embedded metadata & artwork, and monitor artists.
               </p>
             </div>
           </div>
@@ -748,9 +906,58 @@ export default function MusicPage() {
               <Settings size={15} />
               Settings
             </button>
+
+            <Link
+              to={`/library?folder=${encodeURIComponent(settings.musicFolder || 'Music')}`}
+              className="btn btn-sm btn-ghost"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              title="Open downloaded music in Library"
+            >
+              <Library size={15} />
+              Library
+            </Link>
           </div>
         </div>
       </div>
+
+      {/* Active Music Downloads Bar */}
+      {activeMusicJobs.length > 0 && (
+        <div style={{
+          marginBottom: 20,
+          padding: '12px 18px',
+          borderRadius: 'var(--radius-md, 10px)',
+          background: 'linear-gradient(90deg, rgba(91, 109, 248, 0.12), rgba(16, 185, 129, 0.12))',
+          border: '1px solid rgba(91, 109, 248, 0.3)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: 12,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <RefreshCw size={18} className="spin" color="var(--accent)" />
+            <div>
+              <div style={{ fontWeight: 600, fontSize: '0.92rem' }}>
+                {activeMusicJobs.length} Music Download{activeMusicJobs.length === 1 ? '' : 's'} In Progress
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                {activeMusicJobs[0]?.title || 'Processing audio track...'}
+                {activeMusicJobs[0]?.progress ? ` • ${activeMusicJobs[0].progress}` : ''}
+                {activeMusicJobs[0]?.speed ? ` • ${activeMusicJobs[0].speed}` : ''}
+                {activeMusicJobs[0]?.eta ? ` • ETA ${activeMusicJobs[0].eta}` : ''}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Link to="/dashboard" className="btn btn-sm btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              View Queue
+            </Link>
+            <Link to={`/library?folder=${encodeURIComponent(settings.musicFolder || 'Music')}`} className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <Library size={14} /> Open Music Folder
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* TAB 1: ALBUM & SONG SEARCH                                                */}
@@ -964,7 +1171,7 @@ export default function MusicPage() {
                         <input
                           type="text"
                           className="input"
-                          style={{ paddingLeft: 38, width: '100%' }}
+                          style={{ paddingLeft: 38, paddingRight: searchQuery ? 34 : 12, width: '100%' }}
                           placeholder={
                             searchType === 'artist'
                               ? 'Search artist name (e.g. "System of a Down", "Daft Punk", "Tool")'
@@ -975,6 +1182,28 @@ export default function MusicPage() {
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
                         />
+                        {searchQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setSearchQuery('')}
+                            style={{
+                              position: 'absolute',
+                              right: 10,
+                              top: '50%',
+                              transform: 'translateY(-50%)',
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--text-tertiary)',
+                              cursor: 'pointer',
+                              padding: 4,
+                              display: 'flex',
+                              alignItems: 'center',
+                            }}
+                            title="Clear search query"
+                          >
+                            <X size={15} />
+                          </button>
+                        )}
                       </div>
 
                       <button type="submit" className="btn btn-primary" disabled={searching || !searchQuery.trim()}>
@@ -1430,6 +1659,34 @@ export default function MusicPage() {
                         </>
                       )}
                     </div>
+
+                    {jellyfinStatus?.configured && (
+                      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {jellyfinCheckingAlbum ? (
+                          <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <RefreshCw size={13} className="spin" /> Checking Jellyfin library…
+                          </span>
+                        ) : jellyfinAlbumData?.inLibrary ? (
+                          <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success)', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', fontSize: '0.82rem' }}>
+                            <CheckCircle2 size={14} /> In Jellyfin Library ({jellyfinAlbumData.trackCount} {jellyfinAlbumData.trackCount === 1 ? 'track' : 'tracks'})
+                          </span>
+                        ) : (
+                          <span className="badge" style={{ background: 'rgba(255, 255, 255, 0.05)', color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', fontSize: '0.82rem' }}>
+                            Not in Jellyfin Library
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          style={{ padding: '2px 8px', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}
+                          disabled={jellyfinScanning}
+                          onClick={handleTriggerJellyfinScan}
+                          title="Trigger a Jellyfin library scan now"
+                        >
+                          <RefreshCw size={12} className={jellyfinScanning ? 'spin' : ''} /> {jellyfinScanning ? 'Scanning…' : 'Rescan Jellyfin'}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1504,6 +1761,34 @@ export default function MusicPage() {
                     </label>
                   </div>
                 </div>
+
+                {(downloadFormat === 'flac' || downloadFormat === 'wav') ? (
+                  <div style={{
+                    marginTop: 12,
+                    padding: '8px 12px',
+                    borderRadius: 6,
+                    fontSize: '0.78rem',
+                    background: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.25)',
+                    color: '#f87171',
+                    lineHeight: 1.4,
+                  }}>
+                    ⚠️ <strong>Notice:</strong> YouTube does not host lossless/FLAC audio. Choosing {downloadFormat.toUpperCase()} transcodes YouTube's lossy 160k Opus stream into a large uncompressed file (~10× larger) without recovering lost audio detail. For genuine best quality, choose <strong>OPUS</strong> or <strong>MP3 (320k)</strong>.
+                  </div>
+                ) : downloadFormat === 'opus' ? (
+                  <div style={{
+                    marginTop: 12,
+                    padding: '8px 12px',
+                    borderRadius: 6,
+                    fontSize: '0.78rem',
+                    background: 'rgba(16, 185, 129, 0.1)',
+                    border: '1px solid rgba(16, 185, 129, 0.25)',
+                    color: 'var(--success, #10b981)',
+                    lineHeight: 1.4,
+                  }}>
+                    ✨ <strong>Highest Quality:</strong> OPUS extracts YouTube's native ~160 kbps VBR audio stream directly with zero transcoding/re-encoding loss.
+                  </div>
+                ) : null}
 
                 {/* Action buttons */}
                 <div style={{ display: 'flex', gap: 10, marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1608,18 +1893,30 @@ export default function MusicPage() {
                             onChange={(e) => (e.target.checked ? selectAllTracks() : deselectAllTracks())}
                           />
                         </th>
-                        <th style={{ width: 44 }}>#</th>
+                        <th style={{ width: 40 }}>#</th>
                         <th style={{ width: 44 }}>Preview</th>
                         <th>Title</th>
                         <th>Artist</th>
-                        <th style={{ width: 70 }}>Time</th>
-                        <th style={{ width: 90, textAlign: 'right' }}>Download</th>
+                        <th style={{ width: 65 }}>Time</th>
+                        <th style={{ width: 95 }}>Match</th>
+                        <th style={{ width: 105 }}>Status</th>
+                        <th style={{ width: 60, textAlign: 'right' }}>Action</th>
                       </tr>
                     </thead>
                     <tbody>
                       {selectedAlbum.tracks?.map((t) => {
                         const isSelected = selectedTracks.has(t.trackNumber);
                         const isPlaying = playingPreviewUrl === t.previewUrl;
+                        const customMatch = trackMatches[t.trackNumber];
+                        const job = getTrackJobStatus(t.title);
+                        const isDownloading = job?.status === 'downloading';
+                        const isQueued = job?.status === 'queued';
+                        const isCompleted = job?.status === 'completed';
+                        const inJellyfin = jellyfinAlbumData?.tracks?.some((jt) =>
+                          (jt.trackNumber && jt.trackNumber === t.trackNumber) ||
+                          (jt.name && jt.name.toLowerCase().trim() === t.title.toLowerCase().trim())
+                        );
+
                         return (
                           <tr key={t.trackNumber} style={{ backgroundColor: isSelected ? 'rgba(91, 109, 248, 0.04)' : undefined }}>
                             <td>
@@ -1650,17 +1947,63 @@ export default function MusicPage() {
                               {t.discNumber > 1 && (
                                 <span className="badge" style={{ marginLeft: 8, fontSize: '0.7rem' }}>Disc {t.discNumber}</span>
                               )}
+                              {inJellyfin && (
+                                <span className="badge" style={{ marginLeft: 6, fontSize: '0.68rem', padding: '1px 5px', background: 'rgba(16, 185, 129, 0.12)', color: 'var(--success)' }} title="Already indexed in Jellyfin library">
+                                  In Jellyfin
+                                </span>
+                              )}
                             </td>
                             <td style={{ color: 'var(--text-secondary)' }}>{t.artist}</td>
                             <td style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>{formatDuration(t.duration)}</td>
+                            <td>
+                              {customMatch ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn-sm"
+                                  style={{ padding: '2px 8px', fontSize: '0.74rem', color: 'var(--success)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                                  onClick={() => handleOpenMatchModal(t)}
+                                  title={`Custom match: ${customMatch.title}`}
+                                >
+                                  <CheckCircle2 size={12} /> Custom
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn-sm"
+                                  style={{ padding: '2px 8px', fontSize: '0.74rem', color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                                  onClick={() => handleOpenMatchModal(t)}
+                                  title="Inspect YouTube match or pick alternate audio stream"
+                                >
+                                  <Search size={12} /> Auto
+                                </button>
+                              )}
+                            </td>
+                            <td>
+                              {isDownloading ? (
+                                <span className="badge" style={{ background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                  <RefreshCw size={10} className="spin" /> {job.progress || 'Downloading'}
+                                </span>
+                              ) : isQueued ? (
+                                <span className="badge" style={{ fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                  <Clock size={10} /> Queued
+                                </span>
+                              ) : isCompleted ? (
+                                <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success)', fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                  <Check size={10} /> Done
+                                </span>
+                              ) : (
+                                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>Ready</span>
+                              )}
+                            </td>
                             <td style={{ textAlign: 'right' }}>
                               <button
                                 type="button"
                                 className="btn btn-ghost btn-sm"
                                 onClick={() => handleDownloadSingleTrack(t)}
+                                disabled={isDownloading || isQueued}
                                 title={`Download this track (${downloadFormat.toUpperCase()})`}
                               >
-                                <Download size={14} />
+                                {isDownloading ? <RefreshCw size={14} className="spin" /> : isCompleted ? <Check size={14} color="var(--success)" /> : <Download size={14} />}
                               </button>
                             </td>
                           </tr>
@@ -1770,14 +2113,124 @@ export default function MusicPage() {
                 </div>
               </div>
 
+              {(downloadFormat === 'flac' || downloadFormat === 'wav') ? (
+                <div style={{
+                  marginBottom: 14,
+                  padding: '8px 12px',
+                  borderRadius: 6,
+                  fontSize: '0.78rem',
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.25)',
+                  color: '#f87171',
+                  lineHeight: 1.4,
+                }}>
+                  ⚠️ <strong>Notice:</strong> YouTube does not host lossless audio. {downloadFormat.toUpperCase()} will transcode YouTube's lossy 160k Opus stream into a large file without improving quality. For the highest native quality, choose <strong>OPUS</strong> or <strong>MP3 (320k)</strong>.
+                </div>
+              ) : downloadFormat === 'opus' ? (
+                <div style={{
+                  marginBottom: 14,
+                  padding: '8px 12px',
+                  borderRadius: 6,
+                  fontSize: '0.78rem',
+                  background: 'rgba(16, 185, 129, 0.1)',
+                  border: '1px solid rgba(16, 185, 129, 0.25)',
+                  color: 'var(--success, #10b981)',
+                  lineHeight: 1.4,
+                }}>
+                  ✨ <strong>Highest Quality:</strong> OPUS copies YouTube's native ~160 kbps VBR audio stream directly with zero transcoding loss.
+                </div>
+              ) : null}
+
+              {/* Playlist Tracks Selection */}
+              {directInfo.isPlaylist && directInfo.entries?.length > 0 && (
+                <div style={{ marginBottom: 18, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+                    <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>
+                      Playlist Tracks ({directSelectedTracks.size} of {directInfo.entries.length} selected)
+                    </h3>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => setDirectSelectedTracks(new Set(directInfo.entries.map((_, i) => i)))}
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => setDirectSelectedTracks(new Set())}
+                      >
+                        Clear Selection
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+                    <table className="table" style={{ width: '100%', margin: 0 }}>
+                      <thead>
+                        <tr>
+                          <th style={{ width: 36 }}>
+                            <input
+                              type="checkbox"
+                              checked={directSelectedTracks.size === directInfo.entries.length && directInfo.entries.length > 0}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setDirectSelectedTracks(new Set(directInfo.entries.map((_, i) => i)));
+                                } else {
+                                  setDirectSelectedTracks(new Set());
+                                }
+                              }}
+                            />
+                          </th>
+                          <th style={{ width: 36 }}>#</th>
+                          <th>Title</th>
+                          <th>Channel</th>
+                          <th style={{ width: 65 }}>Time</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {directInfo.entries.map((e, idx) => {
+                          const isSelected = directSelectedTracks.has(idx);
+                          return (
+                            <tr key={e.id || idx} style={{ backgroundColor: isSelected ? 'rgba(91, 109, 248, 0.04)' : undefined }}>
+                              <td>
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => {
+                                    setDirectSelectedTracks((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(idx)) next.delete(idx);
+                                      else next.add(idx);
+                                      return next;
+                                    });
+                                  }}
+                                />
+                              </td>
+                              <td style={{ color: 'var(--text-tertiary)', fontWeight: 600 }}>{idx + 1}</td>
+                              <td style={{ fontWeight: 600 }}>{e.title}</td>
+                              <td style={{ color: 'var(--text-secondary)' }}>{e.uploader || directInfo.uploader}</td>
+                              <td style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>{formatDuration(e.duration)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={directDownloading}
+                disabled={directDownloading || (directInfo.isPlaylist && directSelectedTracks.size === 0)}
                 onClick={handleDownloadDirect}
               >
                 {directDownloading ? <RefreshCw size={16} className="spin" /> : <Download size={16} />}
-                Download into "{downloadFolder}" ({downloadFormat.toUpperCase()} • {downloadQuality})
+                {directInfo.isPlaylist
+                  ? `Download ${directSelectedTracks.size} Track(s) into "${downloadFolder}"`
+                  : `Download into "${downloadFolder}"`} ({downloadFormat.toUpperCase()} • {downloadQuality})
               </button>
 
               {directDownloadMessage && (
@@ -2032,7 +2485,8 @@ export default function MusicPage() {
       {/* TAB 4: SETTINGS                                                           */}
       {/* ========================================================================= */}
       {activeTab === 'settings' && (
-        <div className="card" style={{ maxWidth: 640 }}>
+        <>
+          <div className="card" style={{ maxWidth: 640 }}>
           <h2 style={{ fontSize: '1.2rem', marginTop: 0, marginBottom: 12 }}>Music Hub Defaults</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 20 }}>
             Configure default audio encoding options and storage folder for music downloads and watches.
@@ -2066,7 +2520,14 @@ export default function MusicPage() {
                     className="select"
                     style={{ width: '100%' }}
                     value={settings.musicFormat}
-                    onChange={(e) => setSettings({ ...settings, musicFormat: e.target.value })}
+                    onChange={(e) => {
+                      const nextFmt = e.target.value;
+                      const nextQuals = QUALITY_OPTIONS_BY_FORMAT[nextFmt] || QUALITY_OPTIONS_BY_FORMAT.mp3;
+                      const nextQual = nextQuals.some((q) => q.value === settings.musicQuality)
+                        ? settings.musicQuality
+                        : (nextQuals[0]?.value || '320k');
+                      setSettings({ ...settings, musicFormat: nextFmt, musicQuality: nextQual });
+                    }}
                   >
                     {FORMAT_OPTIONS.map((f) => (
                       <option key={f.value} value={f.value}>{f.label}</option>
@@ -2089,6 +2550,27 @@ export default function MusicPage() {
                     ))}
                   </select>
                 </div>
+              </div>
+
+              <div style={{
+                padding: '12px 14px',
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid var(--border)',
+                borderRadius: 8,
+                fontSize: '0.8rem',
+                color: 'var(--text-secondary)',
+                lineHeight: 1.5,
+              }}>
+                <strong style={{ color: 'var(--text-primary)', display: 'block', marginBottom: 4 }}>
+                  💡 YouTube Audio Quality Guide:
+                </strong>
+                YouTube encodes all uploaded audio to lossy streams. It does <em>not</em> host FLAC or uncompressed lossless audio.
+                <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
+                  <li><strong>OPUS:</strong> The true highest-quality stream YouTube provides (~160 kbps VBR 48kHz). Extracted directly with <em>zero transcoding loss</em>.</li>
+                  <li><strong>MP3 (320 kbps):</strong> Transcoded from YouTube's Opus stream at maximum bitrate with full ID3v2 tags and cover art for 100% universal player compatibility.</li>
+                  <li><strong>M4A (AAC):</strong> High compatibility with Apple devices and iTunes.</li>
+                  <li><strong>FLAC / WAV:</strong> Re-encodes YouTube's lossy 160k stream into an uncompressed container. It inflates file size by ~10× without restoring lost audio frequencies.</li>
+                </ul>
               </div>
 
               <div>
@@ -2114,6 +2596,301 @@ export default function MusicPage() {
               </div>
             </div>
           </form>
+        </div>
+
+        <div className="card" style={{ maxWidth: 640, marginTop: 20 }}>
+          <h2 style={{ fontSize: '1.2rem', marginTop: 0, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Radio size={20} color="var(--accent)" /> Jellyfin Music Library Sync
+          </h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 16 }}>
+            Automatically notifies your Jellyfin media server whenever music downloads complete so new albums and songs appear in your Jellyfin libraries (and apps like Finamp/Feishin) immediately.
+          </p>
+
+          {jellyfinStatus?.configured ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{
+                padding: '10px 14px',
+                borderRadius: 8,
+                background: 'rgba(16, 185, 129, 0.1)',
+                border: '1px solid rgba(16, 185, 129, 0.25)',
+                fontSize: '0.85rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}>
+                <CheckCircle2 size={16} color="var(--success)" />
+                <span>
+                  Connected to Jellyfin at <strong>{jellyfinStatus.url}</strong>
+                </span>
+              </div>
+
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.9rem', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={jellyfinStatus.autoScanEnabled !== false}
+                    onChange={(e) => handleToggleJellyfinAutoScan(e.target.checked)}
+                  />
+                  Automatically notify Jellyfin to scan library after music downloads complete
+                </label>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 4, marginLeft: 24 }}>
+                  Debounced to wait until all tracks in an album or playlist finish before triggering a single scan.
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4 }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={jellyfinScanning}
+                  onClick={handleTriggerJellyfinScan}
+                >
+                  <RefreshCw size={15} className={jellyfinScanning ? 'spin' : ''} />
+                  {jellyfinScanning ? 'Triggering Scan…' : 'Trigger Jellyfin Library Scan Now'}
+                </button>
+                <Link to="/settings" className="btn btn-ghost btn-sm" style={{ color: 'var(--text-tertiary)', fontSize: '0.82rem' }}>
+                  Jellyfin Server Settings →
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <div style={{
+              padding: '14px',
+              borderRadius: 8,
+              background: 'rgba(255, 255, 255, 0.03)',
+              border: '1px solid var(--border)',
+              fontSize: '0.86rem',
+              color: 'var(--text-secondary)',
+            }}>
+              <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+                Jellyfin is not yet connected
+              </div>
+              <div style={{ marginTop: 4, lineHeight: 1.4 }}>
+                To enable automatic library refresh and in-library album indicators, set your Jellyfin URL and API key in the main Settings page.
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <Link to="/settings" className="btn btn-secondary btn-sm">
+                  Configure Jellyfin in Settings →
+                </Link>
+              </div>
+            </div>
+          )}
+        </div>
+        </>
+      )}
+
+      {/* Match Inspection & Custom Source Modal */}
+      {inspectingTrack && (
+        <div
+          className="modal-backdrop"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.65)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: 16,
+          }}
+          onClick={() => setInspectingTrack(null)}
+        >
+          <div
+            className="card"
+            style={{
+              maxWidth: 640,
+              width: '100%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              boxShadow: 'var(--shadow-lg, 0 10px 30px rgba(0,0,0,0.5))',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700 }}>YouTube Audio Stream Match</h3>
+                <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: 2 }}>
+                  "{inspectingTrack.title}" by {inspectingTrack.artist} {inspectingTrack.duration ? `(${formatDuration(inspectingTrack.duration)})` : ''}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                style={{ padding: 4 }}
+                onClick={() => setInspectingTrack(null)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {trackMatches[inspectingTrack.trackNumber] && (
+              <div style={{
+                marginBottom: 16,
+                padding: '10px 14px',
+                borderRadius: 8,
+                background: 'rgba(16, 185, 129, 0.12)',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                fontSize: '0.84rem',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                  <div>
+                    <strong style={{ color: 'var(--success)' }}>✓ Custom match active:</strong>{' '}
+                    <span>{trackMatches[inspectingTrack.trackNumber].title}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    style={{ padding: '2px 8px', fontSize: '0.75rem', color: 'var(--danger)' }}
+                    onClick={() => {
+                      setTrackMatches((prev) => {
+                        const copy = { ...prev };
+                        delete copy[inspectingTrack.trackNumber];
+                        return copy;
+                      });
+                      showToast(`Reset to auto-match for "${inspectingTrack.title}"`);
+                    }}
+                  >
+                    Reset to Auto
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontWeight: 600, marginBottom: 8, display: 'block', fontSize: '0.85rem' }}>
+                Candidate Audio Sources from YouTube
+              </label>
+              {loadingCandidates ? (
+                <div style={{ textAlign: 'center', padding: 30, color: 'var(--text-tertiary)' }}>
+                  <RefreshCw size={22} className="spin" style={{ margin: '0 auto 10px auto' }} />
+                  <div style={{ fontSize: '0.88rem' }}>Searching YouTube for official studio audio streams...</div>
+                </div>
+              ) : matchCandidates.length === 0 ? (
+                <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
+                  No candidate streams found. You can paste a direct YouTube link below.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
+                  {matchCandidates.map((c, idx) => {
+                    const isSelected = trackMatches[inspectingTrack.trackNumber]?.youtubeUrl === c.youtubeUrl;
+                    return (
+                      <div
+                        key={c.id || idx}
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: 8,
+                          border: isSelected ? '2px solid var(--accent)' : '1px solid var(--border)',
+                          background: isSelected ? 'rgba(91, 109, 248, 0.08)' : 'var(--bg-subtle, rgba(255,255,255,0.02))',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 12,
+                        }}
+                      >
+                        {c.thumbnail ? (
+                          <img src={c.thumbnail} alt="" style={{ width: 44, height: 44, borderRadius: 6, objectFit: 'cover' }} />
+                        ) : (
+                          <div style={{ width: 44, height: 44, borderRadius: 6, background: 'var(--surface-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Music size={18} />
+                          </div>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: '0.88rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {c.title}
+                          </div>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, flexWrap: 'wrap' }}>
+                            <span>{c.uploader}</span>
+                            {c.isTopic && (
+                              <span className="badge" style={{ fontSize: '0.68rem', padding: '1px 5px', background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success)' }}>
+                                Official Album Master
+                              </span>
+                            )}
+                            <span>• {formatDuration(c.duration)}</span>
+                            {c.durationDiff !== null && (
+                              <span style={{ color: c.durationDiff <= 3 ? 'var(--success)' : c.durationDiff > 30 ? 'var(--danger)' : 'var(--warning)' }}>
+                                ({c.durationDiff === 0 ? 'Exact time' : `±${c.durationDiff}s`})
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          <a
+                            href={c.youtubeUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btn-ghost btn-sm"
+                            style={{ padding: '5px 8px' }}
+                            title="Preview on YouTube"
+                          >
+                            <ExternalLink size={14} />
+                          </a>
+                          <button
+                            type="button"
+                            className={`btn btn-sm ${isSelected ? 'btn-primary' : 'btn-secondary'}`}
+                            style={{ padding: '4px 10px', fontSize: '0.8rem' }}
+                            onClick={() => handleSelectMatch(c)}
+                          >
+                            {isSelected ? 'Selected' : 'Use This'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+              <form onSubmit={handleApplyCustomUrl}>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 6 }}>
+                  Or paste a custom YouTube URL for this track
+                </label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    type="text"
+                    className="input"
+                    style={{ flex: 1, fontSize: '0.85rem' }}
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    value={customMatchUrl}
+                    onChange={(e) => setCustomMatchUrl(e.target.value)}
+                  />
+                  <button type="submit" className="btn btn-secondary btn-sm" disabled={!customMatchUrl.trim()}>
+                    Apply URL
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modern Toast Notification */}
+      {toastMessage && (
+        <div style={{
+          position: 'fixed',
+          bottom: 24,
+          right: 24,
+          zIndex: 9999,
+          padding: '12px 18px',
+          borderRadius: 8,
+          background: toastMessage.type === 'error' ? 'var(--danger, #ef4444)' : 'var(--accent, #5b6df8)',
+          color: '#fff',
+          boxShadow: '0 6px 20px rgba(0,0,0,0.35)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          fontSize: '0.9rem',
+          fontWeight: 500,
+          maxWidth: 420,
+        }}>
+          {toastMessage.type === 'error' ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
+          <span style={{ flex: 1 }}>{toastMessage.text}</span>
+          <button
+            type="button"
+            onClick={() => setToastMessage(null)}
+            style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 2, display: 'flex', alignItems: 'center' }}
+          >
+            <X size={15} />
+          </button>
         </div>
       )}
     </div>

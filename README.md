@@ -68,7 +68,7 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 
 ### Music Hub & Music Watcher
 - Search and discover albums or songs with clean metadata and high-resolution album art, and preview 30-second snippets
-- Auto-match and download tracks from YouTube as MP3 (up to 320 kbps CBR), FLAC, M4A (AAC), or OPUS, with embedded ID3/Vorbis tags and cover art
+- Auto-match and download tracks from YouTube as OPUS (highest quality native stream, ~160 kbps VBR bitstream copy), MP3 (up to 320 kbps CBR), M4A (AAC), or FLAC, with embedded ID3/Vorbis tags and cover art
 - Organized into `{MusicFolder}/{Artist}/{Album}/{TrackNumber} - {Title}.{ext}`, with an optional `cover.jpg` for Jellyfin/Plex/Navidrome
 - Music Watches follow artist channels or playlists for new releases and add them to your library
 

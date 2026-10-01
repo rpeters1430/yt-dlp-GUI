@@ -299,6 +299,38 @@ export default function Settings() {
     }
   }
 
+  async function handleToggleJellyfinAutoScan(checked) {
+    setJellyfinSync((prev) => ({ ...prev, autoScanEnabled: checked }));
+    setJellyfinSyncMessage('');
+    setJellyfinSyncBusy(true);
+    try {
+      const updated = await api.updateJellyfinSyncSettings({ autoScanEnabled: checked });
+      setJellyfinSync(updated);
+      setJellyfinSyncMessage(checked
+        ? 'Enabled — Jellyfin will be automatically notified to scan libraries after downloads complete.'
+        : 'Disabled — Jellyfin will rely on its own periodic library scans.');
+    } catch (err) {
+      setJellyfinSyncMessage(err.message);
+      setJellyfinSync((prev) => ({ ...prev, autoScanEnabled: !checked }));
+    } finally {
+      setJellyfinSyncBusy(false);
+    }
+  }
+
+  async function handleRefreshJellyfin() {
+    setTestMessage('');
+    setTestError('');
+    setTestBusy(true);
+    try {
+      await api.refreshJellyfinLibrary();
+      setTestMessage('Jellyfin library refresh scan triggered.');
+    } catch (err) {
+      setTestError(err.message);
+    } finally {
+      setTestBusy(false);
+    }
+  }
+
   async function handleSyncJellyfinNow() {
     setJellyfinSyncNowError('');
     setJellyfinSyncNowResult(null);
@@ -584,6 +616,9 @@ export default function Settings() {
               <button type="button" className="btn-secondary" onClick={handleTestJellyfin} disabled={testBusy}>
                 {testBusy ? 'Testing…' : 'Test Jellyfin connection'}
               </button>
+              <button type="button" className="btn-secondary" onClick={handleRefreshJellyfin} disabled={testBusy}>
+                {testBusy ? 'Scanning…' : 'Scan Jellyfin library'}
+              </button>
               <button type="button" className="btn-secondary" onClick={handlePreviewCleanup} disabled={previewBusy}>
                 {previewBusy ? 'Checking…' : 'Preview (dry run)'}
               </button>
@@ -659,6 +694,16 @@ export default function Settings() {
           <div className="empty-state"><div className="spinner" /></div>
         ) : (
           <div className="settings-form">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={jellyfinSync.autoScanEnabled !== false}
+                onChange={(e) => handleToggleJellyfinAutoScan(e.target.checked)}
+                disabled={jellyfinSyncBusy}
+              />
+              Automatically trigger Jellyfin library scan when downloads complete (video &amp; music)
+            </label>
+
             <label className="checkbox-label">
               <input
                 type="checkbox"
