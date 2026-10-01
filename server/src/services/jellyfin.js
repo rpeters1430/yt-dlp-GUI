@@ -183,6 +183,17 @@ async function createPlaylist(baseUrl, apiKey, userId, name, itemIds) {
   return data && data.Id;
 }
 
+async function addPlaylistItems(baseUrl, apiKey, userId, playlistId, itemIds) {
+  if (!itemIds || itemIds.length === 0) return;
+  const qs = new URLSearchParams({ ids: itemIds.join(','), userId });
+  await jellyfinRequest(
+    baseUrl,
+    apiKey,
+    `/Playlists/${encodeURIComponent(playlistId)}/Items?${qs}`,
+    { method: 'POST' }
+  );
+}
+
 async function refreshLibrary(baseUrl, apiKey) {
   if (!baseUrl) throw new Error('Jellyfin URL is required');
   if (!apiKey) throw new Error('Jellyfin API key is required');
