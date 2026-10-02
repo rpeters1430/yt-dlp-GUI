@@ -117,6 +117,12 @@ ensureColumn('watch_seen_ids', 'created_at', "TEXT DEFAULT (datetime('now'))");
 
 ensureColumn('downloads', 'watch_item_id', 'INTEGER');
 
+// Which YouTube channel tabs a watch follows (see services/watch/tabs.js), and which of them
+// already have their existing videos recorded as baseline. NULL baselined_tabs on a watch
+// that has been checked means it predates tabs, when the bare channel URL covered them all.
+ensureColumn('watches', 'content_types', 'TEXT');
+ensureColumn('watches', 'baselined_tabs', 'TEXT');
+
 // The watch ledger: one row per video a watch has discovered (watch_items) and one row per
 // check (watch_runs). An item being discovered is separate from it being eligible, and being
 // eligible is separate from its download succeeding — so a failed or over-the-limit video is
@@ -170,6 +176,10 @@ CREATE INDEX IF NOT EXISTS idx_watch_items_state ON watch_items (watch_id, downl
 CREATE INDEX IF NOT EXISTS idx_watch_runs_watch ON watch_runs (watch_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_downloads_watch_item ON downloads (watch_item_id);
 `);
+
+// The channel tab a watch item was found on (NULL for playlists and older items), so a tab
+// switched off stops downloading its backlog too.
+ensureColumn('watch_items', 'source_tab', 'TEXT');
 
 // One-time move of the old seen-ID list into the ledger. Every seen ID becomes a baseline
 // item (so upgrading never triggers a mass download); where a download for that video can be

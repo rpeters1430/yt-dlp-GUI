@@ -33,6 +33,8 @@ import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import WatchModal from '../components/WatchModal.jsx';
 import WatchActivityModal from '../components/WatchActivityModal.jsx';
 
+const TAB_LABELS = { videos: 'Videos', shorts: 'Shorts', streams: 'Streams' };
+
 // The card badge describes the latest check: an initial baseline is never "new".
 function runBadge(w) {
   if (!w.latest_run_status || w.latest_run_status === 'running') return null;
@@ -511,6 +513,12 @@ export default function Watches() {
                       ? `Audio Only (${(w.container || 'mp3').toUpperCase()})`
                       : `${w.quality ? `${w.quality}p` : 'Best Quality'} ${(w.container || 'mp4').toUpperCase()}`}
                   </span>
+
+                  {w.content_types ? (
+                    <span className="watch-chip" title="Channel tabs this watch follows">
+                      {w.content_types.split(',').map((t) => TAB_LABELS[t] || t).join(' + ')}
+                    </span>
+                  ) : null}
 
                   {w.subtitles ? (
                     <span className="watch-chip">

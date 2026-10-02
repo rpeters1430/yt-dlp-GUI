@@ -1,6 +1,7 @@
 const path = require('path');
 const { evaluateEntry, watchConfigError } = require('./filters');
 const { scanToBoundary, HARD_SCAN_LIMIT } = require('./discovery');
+const { CONTENT_TYPES, scanSources, mergeNewestFirst, isMissingTabError, parseContentTypes, watchContentTypes } = require('./tabs');
 
 function extractThumbnail(info) {
   if (info.thumbnails && Array.isArray(info.thumbnails)) {
@@ -57,6 +58,65 @@ function itemEntry(item) {
 function createWatchService({ repository, ytdlp, queue, notify = null, emitWatchUpdate = () => {} }) {
   const running = new Map(); // watchId -> { runId, promise }
 
+  // Scans every source of a watch (each selected tab of a channel, or the URL itself) to its
+  // known boundary and merges the results. A tab the watch hasn't scanned before — one just
+  // switched on for an existing watch — only has its first page recorded as baseline, so
+  // turning on Shorts doesn't queue years of old Shorts.
+  async function scanAllSources(watch, { known, pageSize, hardLimit, initial }) {
+    const sources = scanSources(watch);
+    const tabs = sources.map((s) => s.tab).filter(Boolean);
+    // NULL means the watch predates tabs: its earlier checks went through the bare channel
+    // URL, which covered every tab, so every tab already has a baseline.
+    const baselined = new Set(watch.baselined_tabs == null ? CONTENT_TYPES : (parseContentTypes(watch.baselined_tabs) || []));
+    const merged = { entries: [], info: null, boundaryReached: false, saturated: false, baselineOnly: new Set(), tabs, baselinedTabs: [] };
+    const seen = new Set();
+    const perTab = [];
+    let lastError = null;
+
+    for (const source of sources) {
+      const freshTab = !!source.tab && !initial && !baselined.has(source.tab);
+      let scan;
+      try {
+        scan = await scanToBoundary({
+          getInfo: ytdlp.getInfo, url: source.url, knownIds: known, pageSize, hardLimit: freshTab ? pageSize : hardLimit,
+        });
+      } catch (err) {
+        if (source.tab && isMissingTabError(err.message)) {
+          // The channel has no such tab (yet); nothing to record, but it counts as baselined
+          // so its first uploads later are treated as new.
+          merged.baselinedTabs.push(source.tab);
+          continue;
+        }
+        lastError = err;
+        continue;
+      }
+      if (!merged.info) merged.info = scan.info;
+      const list = [];
+      for (const entry of scan.entries) {
+        if (seen.has(entry.id)) continue;
+        seen.add(entry.id);
+        list.push(source.tab ? { ...entry, tab: source.tab } : entry);
+        if (freshTab) merged.baselineOnly.add(entry.id);
+      }
+      perTab.push(list);
+      if (!freshTab) {
+        merged.boundaryReached = merged.boundaryReached || scan.boundaryReached;
+        merged.saturated = merged.saturated || scan.saturated;
+      }
+      if (source.tab) merged.baselinedTabs.push(source.tab);
+    }
+
+    // A real failure on any source fails the run, so nothing is mis-recorded; the next check
+    // tries again. Missing tabs alone are fine.
+    // A tab switched off is dropped from the baselined list, so switching it back on later
+    // re-baselines it instead of downloading everything posted there in between.
+    if (lastError) throw lastError;
+    // Backfill and queue order rely on one newest-first list across tabs.
+    merged.entries = mergeNewestFirst(perTab);
+    merged.info = merged.info || {};
+    return merged;
+  }
+
   function log(watch, runId, message) {
     console.log(`[watch] #${watch.id} run ${runId}: ${message}`);
   }
@@ -90,7 +150,7 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
       const pageSize = Math.max(10, Math.min(100, watch.max_scan_entries || 30));
       const known = repository.knownIds(watch.id);
       const hardLimit = initial ? Math.min(HARD_SCAN_LIMIT, Math.max(pageSize, backfillCount)) : HARD_SCAN_LIMIT;
-      const scan = await scanToBoundary({ getInfo: ytdlp.getInfo, url: watch.url, knownIds: known, pageSize, hardLimit });
+      const scan = await scanAllSources(watch, { known, pageSize, hardLimit, initial });
 
       const counts = { baseline: 0, new: 0, backfill: 0, matched: 0, excluded: 0 };
       let backfillLeft = initial ? backfillCount : 0;
@@ -98,7 +158,8 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
         if (known.has(entry.id)) return { entry };
         const { eligible, reason } = evaluateEntry(entry, watch);
         let discoveryType;
-        if (!initial) discoveryType = 'new';
+        if (scan.baselineOnly.has(entry.id)) discoveryType = 'baseline';
+        else if (!initial) discoveryType = 'new';
         else if (eligible && backfillLeft > 0) { discoveryType = 'backfill'; backfillLeft--; }
         else discoveryType = 'baseline';
         counts[discoveryType]++;
@@ -109,11 +170,14 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
       repository.transaction(() => {
         repository.reconcileOrphans(watch.id);
         repository.upsertItems(watch.id, items);
+        repository.setItemTabs(watch.id, scan.entries);
         repository.reevaluateItems(watch.id, (item) => evaluateEntry(itemEntry(item), watch));
       })();
 
       const budget = initial ? backfillCount : (watch.download_limit || 5);
-      const candidates = repository.queueCandidates(watch.id, repository.now(), budget);
+      // A tab switched off stops queueing, including its pending backlog and retries.
+      const selectedTabs = scanSources(watch).some((src) => src.tab) ? watchContentTypes(watch) : null;
+      const candidates = repository.queueCandidates(watch.id, repository.now(), budget, { tabs: selectedTabs });
       const queued = queueItems(watch, candidates, runId);
 
       const agg = repository.aggregateWatch(watch.id);
@@ -140,6 +204,8 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
         last_new_count: counts.new,
         thumbnail: latest.thumbnail || extractThumbnail(scan.info),
         channel_name: latest.channel_name || scan.info.uploader || scan.info.channel || null,
+        // Only tabs still selected: a tab switched off while this check ran stays unbaselined.
+        ...(scan.tabs.length ? { baselined_tabs: scan.baselinedTabs.filter((t) => watchContentTypes(latest).includes(t)).join(',') } : {}),
       });
 
       log(watch, runId, `${run.status}: ${scan.entries.length} scanned, ${counts.baseline} baseline, ${counts.new} new, `
