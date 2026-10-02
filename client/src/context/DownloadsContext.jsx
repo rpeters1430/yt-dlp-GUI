@@ -27,6 +27,7 @@ export function DownloadsProvider({ children, isAuthenticated }) {
 
     socket.on('jobs:init', (initialJobs) => setJobs(initialJobs || []));
     socket.on('job:update', (job) => {
+      if (!job || !job.id) return;
       setJobs((prev) => {
         const exists = prev.some((j) => j.id === job.id);
         if (exists) return prev.map((j) => (j.id === job.id ? job : j));

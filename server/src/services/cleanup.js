@@ -132,7 +132,27 @@ function emitJobUpdate(id) {
   if (job) io.emit('job:update', job);
 }
 
+const SUBTITLE_EXTS = new Set(['.vtt', '.srt', '.ass', '.ssa', '.lrc']);
+
+// The sidecars this app (or yt-dlp, for subtitles) writes next to a media file: the .nfo and
+// poster from nfo.js, plus any subtitle tracks named after the file.
+function listSidecars(filepath) {
+  const dir = path.dirname(filepath);
+  const ext = path.extname(filepath);
+  const base = path.basename(filepath, ext);
+  const names = [`${base}.nfo`, `${base}.jpg`];
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      if (name.startsWith(`${base}.`) && SUBTITLE_EXTS.has(path.extname(name).toLowerCase())) names.push(name);
+    }
+  } catch (_) {}
+  return names.map((name) => path.join(dir, name));
+}
+
+// Removes the media file plus its sidecars, so neither the nightly job nor a Library delete
+// leaves orphaned .nfo/poster/subtitle files behind for Jellyfin to pick up.
 function deleteDownloadFile(id, filepath, title, reason) {
+  const sidecars = listSidecars(filepath);
   try {
     if (fs.existsSync(filepath)) {
       fs.unlinkSync(filepath);
@@ -140,6 +160,11 @@ function deleteDownloadFile(id, filepath, title, reason) {
   } catch (err) {
     console.error(`[cleanup] Failed to delete file for download ${id} (${filepath}): ${err.message}`);
     return false;
+  }
+  for (const sidecar of sidecars) {
+    try {
+      fs.unlinkSync(sidecar);
+    } catch (_) {}
   }
   console.log(`[cleanup] Deleted "${title || filepath}" (${reason})`);
   db.prepare("UPDATE downloads SET status = 'deleted', filepath = NULL WHERE id = ?").run(id);

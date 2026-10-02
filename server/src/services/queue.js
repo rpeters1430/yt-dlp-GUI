@@ -39,7 +39,8 @@ function init(socketIo) {
 }
 
 function emit(job) {
-  if (io) io.emit('job:update', job);
+  // A job removed from the list mid-run has no row left to report.
+  if (io && job) io.emit('job:update', job);
 }
 
 function getJob(id) {
@@ -214,6 +215,12 @@ async function runJob(job) {
       }
     }
 
+    // Removed from the list while the metadata lookup ran: don't start a download for it.
+    if (!getJob(job.id)) {
+      console.log(`[queue] [job:${job.id}] Removed before download started; skipping`);
+      return;
+    }
+
     const { options: resolvedOptions, adjustments } = ytdlp.resolveDownloadOptions(job.url, {
       ...downloadOptions,
       extractor: extractor || job.extractor,
@@ -261,6 +268,13 @@ async function runJob(job) {
         appendLog(logLine);
       }
     );
+
+    // Removed from the list mid-download (DELETE stops the process): there's no row left to
+    // complete, tag, notify about or sync, so don't treat it as a finished download.
+    if (!getJob(job.id)) {
+      console.log(`[queue] [job:${job.id}] Removed during download; skipping post-processing`);
+      return;
+    }
 
     if (resolvedOptions.thumbnailFallbackUrl && result.filepath) {
       try {
@@ -329,6 +343,10 @@ async function runJob(job) {
       }
     }
   } catch (err) {
+    if (!getJob(job.id)) {
+      console.log(`[queue] [job:${job.id}] Removed during download (${err.message})`);
+      return;
+    }
     const errorMsg = ytdlp.isBotCheckError(err.message)
       ? `${ytdlp.BOT_CHECK_HINT}\n\n${err.message}`
       : err.message;
