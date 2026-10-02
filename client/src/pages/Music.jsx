@@ -53,11 +53,9 @@ const FORMAT_OPTIONS = [
 ];
 
 const QUALITY_OPTIONS_BY_FORMAT = {
+  // YouTube's Opus stream is always kept as-is (no re-encode), so there's no bitrate to pick.
   opus: [
     { value: '0', label: 'Native / Best Quality (Direct stream copy, ~160 kbps VBR)' },
-    { value: '160k', label: '160 kbps (Transparent Quality)' },
-    { value: '128k', label: '128 kbps (Standard)' },
-    { value: '96k', label: '96 kbps (Compact)' },
   ],
   mp3: [
     { value: '320k', label: '320 kbps (Highest Quality CBR)' },
@@ -67,10 +65,10 @@ const QUALITY_OPTIONS_BY_FORMAT = {
     { value: '0', label: 'VBR 0 (Best Variable)' },
   ],
   m4a: [
-    { value: '256k', label: '256 kbps (High Bitrate AAC)' },
-    { value: '320k', label: '320 kbps (Max Bitrate AAC)' },
-    { value: '128k', label: '128 kbps (YouTube Native AAC)' },
-    { value: '192k', label: '192 kbps' },
+    { value: '0', label: 'Native AAC (Direct stream copy, ~128 kbps)' },
+    { value: '256k', label: '256 kbps (Re-encoded from Opus)' },
+    { value: '320k', label: '320 kbps (Re-encoded from Opus)' },
+    { value: '192k', label: '192 kbps (Re-encoded from Opus)' },
   ],
   flac: [
     { value: '0', label: 'Transcode only (YouTube has no native lossless)' },
@@ -2407,7 +2405,14 @@ export default function MusicPage() {
                           className="select"
                           style={{ width: '100%' }}
                           value={newWatchFormat}
-                          onChange={(e) => setNewWatchFormat(e.target.value)}
+                          onChange={(e) => {
+                            const nextFmt = e.target.value;
+                            const nextQuals = QUALITY_OPTIONS_BY_FORMAT[nextFmt] || QUALITY_OPTIONS_BY_FORMAT.mp3;
+                            setNewWatchFormat(nextFmt);
+                            if (!nextQuals.some((q) => q.value === newWatchQuality)) {
+                              setNewWatchQuality(nextQuals[0]?.value || '320k');
+                            }
+                          }}
                         >
                           {FORMAT_OPTIONS.map((f) => (
                             <option key={f.value} value={f.value}>{f.label}</option>

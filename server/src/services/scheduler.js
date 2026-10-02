@@ -171,7 +171,7 @@ async function checkWatch(watch, { manual = false, forceDownloadCount = 0 } = {}
             embedThumbnail: !!watch.embed_thumbnail || !!watch.is_music,
             embedMetadata: !!watch.embed_metadata || !!watch.is_music,
             embedChapters: !!watch.embed_chapters,
-            sponsorblockCategories,
+            sponsorblockRemove: sponsorblockCategories,
             outputTemplate,
             audioQuality,
             isMusicDownload: !!watch.is_music,

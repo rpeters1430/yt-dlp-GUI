@@ -560,8 +560,23 @@ function getTwitchClientId() {
   }
 }
 
-function buildFormatSelector({ audioOnly, formatSelector, quality }) {
-  if (audioOnly) return 'bestaudio/best/Audio_Only/audio_only';
+// Native-copy audio quality values: "0" (best VBR) or empty means "keep the source as-is".
+function isNativeAudioQuality(audioQuality) {
+  return audioQuality == null || String(audioQuality).trim() === '' || String(audioQuality).trim() === '0';
+}
+
+// yt-dlp's ExtractAudio only skips re-encoding when the downloaded stream's codec already
+// matches --audio-format, and plain "bestaudio" on YouTube is almost always Opus. So for
+// Opus (and for M4A at native quality) prefer a source stream in that codec — otherwise an
+// M4A download is a lossy Opus->AAC transcode even though YouTube serves AAC directly.
+function buildAudioFormatSelector({ container, audioQuality }) {
+  if (container === 'opus') return 'bestaudio[acodec^=opus]/bestaudio/best/Audio_Only/audio_only';
+  if (container === 'm4a' && isNativeAudioQuality(audioQuality)) return 'bestaudio[ext=m4a]/bestaudio/best/Audio_Only/audio_only';
+  return 'bestaudio/best/Audio_Only/audio_only';
+}
+
+function buildFormatSelector({ audioOnly, formatSelector, quality, container, audioQuality }) {
+  if (audioOnly) return buildAudioFormatSelector({ container, audioQuality });
   if (formatSelector) return formatSelector;
   if (!quality) return 'bestvideo*+bestaudio/best';
   const parsed = parseInt(quality, 10);
@@ -813,7 +828,7 @@ function buildDownloadArgs(url, rawOptions = {}) {
 
   if (audioOnly) {
     const audioFormat = AUDIO_FORMATS.includes(container) ? container : 'mp3';
-    args.push('-x', '--audio-format', audioFormat, '-f', buildFormatSelector({ audioOnly }));
+    args.push('-x', '--audio-format', audioFormat, '-f', buildFormatSelector({ audioOnly, container: audioFormat, audioQuality }));
     if (audioQuality) {
       args.push('--audio-quality', String(audioQuality));
     }
@@ -1941,7 +1956,9 @@ module.exports = {
   searchYouTube,
   download,
   buildDownloadArgs,
+  buildFormatSelector,
   resolveDownloadOptions,
+  expectedOutputExt,
   embedThumbnailFromUrl,
   formatCommand,
   getVersions,

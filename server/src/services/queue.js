@@ -272,6 +272,17 @@ async function runJob(job) {
       }
     }
 
+    if (result.filepath && extraOptions.musicMetadata) {
+      try {
+        updateJob(job.id, { stage: 'Tagging…' });
+        const music = require('./music');
+        const tagged = await music.tagMusicFile(result.filepath, extraOptions.musicMetadata);
+        if (tagged.tagged) appendLog(`Tagged music file${tagged.artwork ? ' and embedded album art' : ''}`);
+      } catch (e) {
+        appendLog(`WARNING: Couldn't write music tags/artwork (audio kept): ${e.message}`);
+      }
+    }
+
     const completionMsg = result.stoppedByUser
       ? `Live stream recording stopped by user -> ${result.filepath || 'saved stream'}`
       : result.completedWithErrors
@@ -296,12 +307,6 @@ async function runJob(job) {
     if (nfoInfo && result.filepath && isNfoEnabled() && !extraOptions.isMusicDownload) {
       nfo.writeSidecarFiles(result.filepath, nfoInfo)
         .catch((e) => console.error(`[queue] [job:${job.id}] Failed to write .nfo/poster: ${e.message}`));
-    }
-
-    if (result.filepath && extraOptions.musicMetadata && extraOptions.musicMetadata.artworkUrl) {
-      const music = require('./music');
-      music.embedCoverArt(result.filepath, extraOptions.musicMetadata.artworkUrl)
-        .catch((e) => console.error(`[queue] [job:${job.id}] Failed to embed cover art: ${e.message}`));
     }
 
     // Trigger debounced Jellyfin library scan so newly downloaded media shows up automatically
