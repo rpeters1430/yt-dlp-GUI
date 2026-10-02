@@ -12,6 +12,10 @@ const scheduler = require('./services/scheduler');
 const cleanup = require('./services/cleanup');
 const jellyfinSync = require('./services/jellyfinSync');
 const dependencyUpdater = require('./services/dependencyUpdater');
+const ytdlp = require('./services/ytdlp');
+const notify = require('./services/notify');
+const { createRepository } = require('./services/watch/repository');
+const { createWatchService } = require('./services/watch/service');
 
 const sqliteSessionDb = {
   exec(sql, callback) {
@@ -73,7 +77,7 @@ const sqliteSessionDb = {
 
 const authRoutes = require('./routes/auth');
 const downloadsRoutes = require('./routes/downloads');
-const watchesRoutes = require('./routes/watches');
+const { createWatchesRouter } = require('./routes/watches');
 const settingsRoutes = require('./routes/settings');
 const twitchRoutes = require('./routes/twitch');
 const cleanupRoutes = require('./routes/cleanup');
@@ -89,6 +93,27 @@ const SqliteStore = SqliteStoreFactory(session);
 auth.ensureBootstrapAdmin();
 
 const app = express();
+
+// Socket.IO is created further down; watch updates are dropped until it exists.
+let io = null;
+const watchRepository = createRepository(db);
+function emitWatchUpdate(watchId) {
+  if (!io) return;
+  try {
+    const watch = watchRepository.getWatch(watchId);
+    if (watch) io.emit('watch:update', watch);
+  } catch (e) {
+    console.error(`[watch] #${watchId} update broadcast failed: ${e.message}`);
+  }
+}
+const watchService = createWatchService({ repository: watchRepository, ytdlp, queue, notify, emitWatchUpdate });
+queue.setWatchItemListener((itemId, status, info) => {
+  const item = watchRepository.applyDownloadState(itemId, status, info);
+  if (item) {
+    console.log(`[watch] #${item.watch_id} item ${itemId} (${item.video_id}) download ${info.downloadId} -> ${status}`);
+    emitWatchUpdate(item.watch_id);
+  }
+});
 
 // Set TRUST_PROXY=1 when running behind a reverse proxy that terminates TLS, so
 // express-session sees the proxy's forwarded HTTPS scheme and the `secure` cookie flag
@@ -126,7 +151,11 @@ app.use(sessionMiddleware);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/downloads', downloadsRoutes);
-app.use('/api/watches', watchesRoutes);
+app.use('/api/watches', createWatchesRouter({
+  repository: watchRepository,
+  watchService,
+  checkAllWatches: scheduler.checkAllWatches,
+}));
 app.use('/api/settings', settingsRoutes);
 app.use('/api/twitch', twitchRoutes);
 app.use('/api/cleanup', cleanupRoutes);
@@ -144,7 +173,7 @@ app.get('/*splat', (req, res, next) => {
 });
 
 const server = http.createServer(app);
-const io = new Server(server);
+io = new Server(server);
 
 // Run the same session middleware over the socket.io handshake so an unauthenticated
 // client can't connect and read the full job list (URLs, titles, file paths) over the
@@ -160,7 +189,7 @@ io.on('connection', (socket) => {
 });
 
 queue.init(io);
-scheduler.init(io);
+scheduler.init(watchService);
 scheduler.start();
 cleanup.init(io);
 cleanup.start();

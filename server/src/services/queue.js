@@ -7,6 +7,12 @@ const jellyfinSync = require('./jellyfinSync');
 const outputTemplate = require('./outputTemplate');
 const notify = require('./notify');
 
+// The channel's own page, for its name, description, avatar and banner (TV-layout show
+// artwork). One entry per tab is enough; only the channel-level fields are used.
+function fetchChannelListing(channelUrl) {
+  return ytdlp.getInfo(channelUrl, { flatPlaylist: true, playlistStart: 1, playlistEnd: 1 });
+}
+
 function isNfoEnabled() {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'nfo_enabled'").get();
   return !row || row.value !== '0'; // opt-out, defaults to enabled
@@ -51,17 +57,18 @@ function listJobs() {
   return db.prepare('SELECT * FROM downloads ORDER BY created_at DESC').all();
 }
 
-function enqueue(url, options = {}) {
+// Inserts a queued job without announcing or starting it, so a caller can create it inside
+// its own transaction (e.g. linking it to a watch item) and start it only after commit.
+function createQueuedJob(url, options = {}) {
   const id = uuidv4();
-  console.log(`[queue] [job:${id}] Enqueued download for: ${url}`);
   const isLive = options.isLive ? 1 : 0;
   const optionsJson = options.optionsJson
     ? (typeof options.optionsJson === 'string' ? options.optionsJson : JSON.stringify(options.optionsJson))
     : null;
 
   db.prepare(`
-    INSERT INTO downloads (id, url, status, format_selector, audio_only, subtitles, quality, container, sub_langs, watch_id, is_live, options_json, command_args, log)
-    VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+    INSERT INTO downloads (id, url, status, format_selector, audio_only, subtitles, quality, container, sub_langs, watch_id, watch_item_id, is_live, options_json, command_args, log)
+    VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
   `).run(
     id,
     url,
@@ -72,12 +79,42 @@ function enqueue(url, options = {}) {
     options.container || 'mp4',
     options.subLangs || null,
     options.watchId || null,
+    options.watchItemId || null,
     isLive,
     optionsJson
   );
-  emit(getJob(id));
+  return { id, job: getJob(id) };
+}
+
+function startQueuedJobs(ids) {
+  for (const id of ids) {
+    const job = getJob(id);
+    if (!job) continue;
+    console.log(`[queue] [job:${id}] Enqueued download for: ${job.url}`);
+    emit(job);
+  }
   processNext();
+}
+
+function enqueue(url, options = {}) {
+  const { id } = createQueuedJob(url, options);
+  startQueuedJobs([id]);
   return id;
+}
+
+// Set by index.js: mirrors a watch-linked job's status changes onto its watch item.
+let onWatchItemStatus = null;
+function setWatchItemListener(fn) {
+  onWatchItemStatus = fn;
+}
+
+function notifyWatchItem(job) {
+  if (!onWatchItemStatus || !job || !job.watch_item_id) return;
+  try {
+    onWatchItemStatus(job.watch_item_id, job.status, { downloadId: job.id, error: job.error });
+  } catch (e) {
+    console.error(`[queue] [job:${job.id}] Watch item ${job.watch_item_id} sync failed: ${e.message}`);
+  }
 }
 
 function updateJob(id, fields) {
@@ -86,7 +123,9 @@ function updateJob(id, fields) {
   const setClause = keys.map((k) => `${k} = ?`).join(', ');
   db.prepare(`UPDATE downloads SET ${setClause}, updated_at = datetime('now') WHERE id = ?`)
     .run(...keys.map((k) => fields[k]), id);
-  emit(getJob(id));
+  const job = getJob(id);
+  emit(job);
+  if (fields.status) notifyWatchItem(job);
 }
 
 function isWaitForLiveJob(job) {
@@ -195,6 +234,8 @@ async function runJob(job) {
         thumbnailUrl: thumbnail,
         videoId,
         sourceUrl: info.webpage_url || job.url,
+        channelUrl: info.channel_url || null,
+        channelId: info.channel_id || null,
       };
       caps = siteProfiles.getCapabilities(info, job.url);
       appendLog(`Metadata: "${title || 'Unknown'}" (${extractor || 'extractor'}) [ID: ${videoId || 'unknown'}]`);
@@ -325,7 +366,7 @@ async function runJob(job) {
     // sidecar uses a Kodi <movie> schema and the raw YouTube thumbnail, which is meaningless
     // (and visually wrong) clutter next to a song file.
     if (nfoInfo && result.filepath && isNfoEnabled() && !extraOptions.isMusicDownload) {
-      nfo.writeSidecarFiles(result.filepath, nfoInfo)
+      nfo.writeSidecarFiles(result.filepath, nfoInfo, { fetchChannelInfo: fetchChannelListing })
         .catch((e) => console.error(`[queue] [job:${job.id}] Failed to write .nfo/poster: ${e.message}`));
     }
 
@@ -381,12 +422,16 @@ function stopJob(id) {
 }
 
 function removeJob(id) {
+  const job = getJob(id);
   ytdlp.stopDownload(id);
   db.prepare('DELETE FROM downloads WHERE id = ?').run(id);
+  if (job) notifyWatchItem({ ...job, status: 'removed' });
 }
 
 function getActiveCount() {
   return activeCount;
 }
 
-module.exports = { init, enqueue, listJobs, getJob, stopJob, removeJob, getActiveCount };
+module.exports = {
+  init, enqueue, createQueuedJob, startQueuedJobs, setWatchItemListener, listJobs, getJob, stopJob, removeJob, getActiveCount,
+};

@@ -2,6 +2,10 @@ const express = require('express');
 const music = require('../services/music');
 const db = require('../db');
 const scheduler = require('../services/scheduler');
+const { createRepository } = require('../services/watch/repository');
+const { validateWatchFilters } = require('../services/watch/filters');
+
+const watchRepository = createRepository(db);
 const { requireAuth } = require('../auth');
 
 const router = express.Router();
@@ -173,15 +177,7 @@ router.post('/download', async (req, res) => {
 
 // List music watches
 router.get('/watches', (req, res) => {
-  const rows = db.prepare(`
-    SELECT w.*,
-      (SELECT COUNT(*) FROM watch_seen_ids WHERE watch_id = w.id) AS seen_count,
-      (SELECT COUNT(*) FROM downloads WHERE watch_id = w.id) AS download_count
-    FROM watches w
-    WHERE w.is_music = 1
-    ORDER BY w.created_at DESC
-  `).all();
-  res.json(rows);
+  res.json(watchRepository.listWatches({ music: true }));
 });
 
 // Create a music watch
@@ -201,6 +197,12 @@ router.post('/watches', async (req, res) => {
   if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
     return res.status(400).json({ error: 'A valid http(s) URL is required' });
   }
+
+  const filterErrors = validateWatchFilters({
+    matchTitle: matchTitle ? String(matchTitle).trim() : null,
+    rejectTitle: rejectTitle ? String(rejectTitle).trim() : null,
+  });
+  if (filterErrors.length) return res.status(400).json({ error: filterErrors[0], errors: filterErrors });
 
   try {
     const info = await music.inspectUrl(url).catch(() => ({}));
@@ -238,17 +240,10 @@ router.post('/watches', async (req, res) => {
       audioQuality || '320k'
     );
 
-    const watch = db.prepare(`
-      SELECT w.*,
-        (SELECT COUNT(*) FROM watch_seen_ids WHERE watch_id = w.id) AS seen_count,
-        (SELECT COUNT(*) FROM downloads WHERE watch_id = w.id) AS download_count
-      FROM watches w WHERE w.id = ?
-    `).get(result.lastInsertRowid);
+    const watch = db.prepare('SELECT * FROM watches WHERE id = ?').get(result.lastInsertRowid);
+    scheduler.startCheck(watch, { manual: true, trigger: 'initial' });
 
-    scheduler.checkWatch(watch, { manual: true })
-      .catch((e) => console.error('Initial music watch check failed:', e.message));
-
-    res.json(watch);
+    res.json(watchRepository.getWatch(watch.id));
   } catch (err) {
     console.error('[music:watches] Create error:', err.message);
     res.status(500).json({ error: err.message });

@@ -44,8 +44,17 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 
 ### Watches (auto-download new uploads)
 - Point a Watch at a playlist or channel URL and it's checked on a schedule (every 30 minutes by default, adjustable per Watch) — new videos are downloaded automatically
-- The first check only records what's already there (no surprise bulk backfill); later checks queue anything new
+- **Channel tabs** — a Watch on a YouTube channel (`youtube.com/@name`) follows any mix of its **Videos**, **Shorts**, and **Live streams** tabs, each scanned separately (new channel Watches follow Videos only). Switching a tab on later records what's already on it as baseline, so old Shorts aren't suddenly downloaded
+- The first check records what's already there as a **baseline** and downloads nothing, unless you ask for a backfill of the newest N matching videos when creating the Watch; later checks queue anything new
+- **Include / exclude title regex** — optional, case-insensitive regular expressions, entered without `/…/` delimiters. A title must match the include pattern (if set) and must not match the exclude pattern; exclude wins when both match. Duration limits are applied after the title rules, and a video with unknown duration isn't excluded by them. For example, to follow only IGN's trailers: `\b(movie|video game|gameplay|official)\s+trailer\b`. Invalid or unsafe patterns are rejected when saving, and **Preview against recent videos** shows which of the 20 latest uploads would match before you save
+- Every discovered video is kept with what happened to it (baseline, filtered and why, pending, queued, completed, failed), viewable in the Watch's **Activity** view alongside a history of checks
+- **Nothing is dropped by the per-check limit** — matching videos beyond a Watch's download limit stay *pending* and are queued by later checks, newest first
+- **Failed downloads retry automatically** — up to four attempts in total, waiting at least 15 minutes, 1 hour, then 6 hours between them (picked up by the next check after that time). After that the video stays failed until you click **Retry** in Activity
+- If a big upload burst means a check reads 1,000 videos without reaching ones it already knows, the check is reported as a **partial scan** with a warning; everything it found is still kept
+- Watch cards show **Cataloged** (every video discovered), **Pending** (matching, waiting to be queued), **Queued** (queued or downloading), **Completed** (downloaded) and **Failed**, plus a badge for the latest check: `89 baseline`, `3 new / 2 queued`, `No new videos`, `Partial scan`, or `Check failed`
+- Checks of the same Watch never overlap, so a scheduled check and a "Check now" can't queue the same video twice
 - Failures are surfaced in the UI instead of hiding in server logs
+- **Upgrading:** the old list of seen video IDs is converted into baseline videos (linked to their existing downloads where possible) the first time the new version starts, so upgrading never triggers a mass download
 
 ### Auto-delete
 - Optionally clean up Watch-downloaded videos: delete after N days, once watched in Jellyfin, or both
@@ -243,9 +252,12 @@ Everything below is optional — set it in `.env` (or `environment:` in `docker-
 | Flat | `Video title [id].mp4` |
 | Channel / Year | `Example Channel/2026/Video title [id].mp4` |
 | Channel / date-prefixed title | `Example Channel/2026-09-14 Video title [id].mp4` |
+| TV show | `Example Channel/Season 2026/S2026E0914 - Video title [id].mp4` |
 | Site / Channel | `Youtube/Example Channel/Video title [id].mp4` |
 
 Or write your own — the page shows a live example of the result. Each Watch can override the global template in its **Quality & Format** tab, which is handy for sending a channel to its own media-server library (e.g. `Kids/%(uploader)s/%(title)s [%(id)s].%(ext)s`). Music downloads always use their Artist/Album layout.
+
+**TV show layout.** With the TV show preset (or any template that puts files in a `Season N` folder), each channel shows up as a series in a Jellyfin, Plex, Emby, or Kodi *Shows* library: the upload year is the season and the month and day are the episode number. The `.nfo` next to each video is written as an episode, and the channel folder gets a `tvshow.nfo` plus the channel's avatar as `poster.jpg` and banner as `fanart.jpg`. Those three are only written when missing, so you can replace them with your own. Two uploads on the same day share an episode number; both still show up.
 
 Templates must be relative to the downloads folder, can't contain `..`, must end in `.%(ext)s`, and must include `%(title)s` or `%(id)s`. Changing the template only affects new downloads; existing files aren't moved.
 
@@ -376,7 +388,7 @@ docker-compose.yml   Compose file (pulls the published image, or builds locally)
 - **Frontend** — React (Vite), built and served as static files by the Express server: one container, one port.
 - **Library playback** — files are streamed from disk (with HTTP range requests, so seeking works) behind the same login as the rest of the app. Files are only served by download ID, from the path yt-dlp reported when the download finished — never from a path the browser supplies.
 - **YouTube JS runtime** — since yt-dlp 2025.11.12, full YouTube support requires an external JavaScript runtime to solve YouTube's JS challenges. The image ships [Deno](https://deno.com), yt-dlp's recommended runtime, for both amd64 and arm64. Outside Docker, install Deno yourself.
-- **Watches** — the first check on a new Watch only records existing videos; later checks auto-queue anything new.
+- **Watches** — every video a Watch discovers is a row in a ledger (`watch_items`) with its filter decision and download state, and every check is a row in `watch_runs`; download jobs link back to their item, so a failure is retried rather than forgotten. The first check on a new Watch only records existing videos; later checks auto-queue anything new. **Reset history** forgets everything except completed downloads and re-baselines on the next check.
 - **Auto-delete** — evaluates only Watch-downloaded videos; see [Jellyfin integration](#jellyfin-integration) for how "watched" is determined.
 - **Jellyfin playlist sync** — each Watch's playlist is created on first sync and its Jellyfin item ID is cached on the Watch, so renaming it doesn't create a duplicate.
 

@@ -18,6 +18,37 @@ import {
   Zap,
 } from 'lucide-react';
 import { api } from '../api.js';
+
+// Mirrors server/src/services/watch/tabs.js: a bare YouTube channel page, which has tabs.
+const CHANNEL_ROOT_RE = /^https?:\/\/(?:www\.|m\.)?youtube\.com\/(?:@[^/?#]+|channel\/[\w-]+|c\/[^/?#]+|user\/[^/?#]+)(?:\/(?:featured|home))?\/?(?:[?#].*)?$/i;
+const CONTENT_TYPE_OPTIONS = [
+  { value: 'videos', label: 'Videos' },
+  { value: 'shorts', label: 'Shorts' },
+  { value: 'streams', label: 'Live streams' },
+];
+const ALL_CONTENT_TYPES = CONTENT_TYPE_OPTIONS.map((o) => o.value);
+
+function parseContentTypes(value) {
+  if (!value) return null;
+  const wanted = String(value).split(',').map((v) => v.trim());
+  return ALL_CONTENT_TYPES.filter((t) => wanted.includes(t));
+}
+
+const IGN_TRAILER_EXAMPLE = '\\b(movie|video game|gameplay|official)\\s+trailer\\b';
+
+// Syntax check only; the server also screens for unsafe (catastrophic-backtracking) patterns.
+function regexSyntaxError(value, label) {
+  const pattern = value.trim();
+  if (!pattern) return '';
+  if (pattern.length > 200) return `${label} regex must be 200 characters or fewer`;
+  if (/^\/.*\/[a-z]*$/i.test(pattern)) return `${label} regex: enter the pattern without /…/ delimiters`;
+  try {
+    new RegExp(pattern, 'i');
+  } catch (e) {
+    return `${label} must be a valid regular expression (${e.message})`;
+  }
+  return '';
+}
 import { previewTemplate } from '../outputTemplatePreview.js';
 import { useModalA11y } from '../hooks/useModalA11y.js';
 
@@ -95,6 +126,7 @@ export default function WatchModal({
   const [rejectTitle, setRejectTitle] = useState('');
   const [minDuration, setMinDuration] = useState('');
   const [maxDuration, setMaxDuration] = useState('');
+  const [contentTypes, setContentTypes] = useState(['videos']);
 
   // Limits
   const [downloadLimit, setDownloadLimit] = useState(5);
@@ -112,11 +144,23 @@ export default function WatchModal({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
 
+  // Filter preview state
+  const [previewing, setPreviewing] = useState(false);
+  const [previewRows, setPreviewRows] = useState(null);
+  const [previewError, setPreviewError] = useState('');
+  const filterErrors = {
+    matchTitle: regexSyntaxError(matchTitle, 'Include title'),
+    rejectTitle: regexSyntaxError(rejectTitle, 'Exclude title'),
+  };
+  const hasFilterErrors = !!(filterErrors.matchTitle || filterErrors.rejectTitle);
+
   useEffect(() => {
     if (!open) return;
     setFormError('');
     setInspectError('');
     setActiveTab('general');
+    setPreviewRows(null);
+    setPreviewError('');
 
     if (watch) {
       setUrl(watch.url || '');
@@ -141,6 +185,8 @@ export default function WatchModal({
       setRejectTitle(watch.reject_title || '');
       setMinDuration(watch.min_duration ? String(watch.min_duration) : '');
       setMaxDuration(watch.max_duration ? String(watch.max_duration) : '');
+      // Watches saved before tabs existed follow every tab.
+      setContentTypes(parseContentTypes(watch.content_types) || ALL_CONTENT_TYPES);
       setDownloadLimit(watch.download_limit || 5);
       setMaxScanEntries(watch.max_scan_entries || 30);
       setCleanupExempt(!!watch.cleanup_exempt);
@@ -166,6 +212,7 @@ export default function WatchModal({
       setRejectTitle('');
       setMinDuration('');
       setMaxDuration('');
+      setContentTypes(['videos']);
       setDownloadLimit(5);
       setMaxScanEntries(30);
       setCleanupExempt(false);
@@ -211,10 +258,43 @@ export default function WatchModal({
     }
   }
 
+  async function handlePreview() {
+    if (!url.trim() || hasFilterErrors) return;
+    setPreviewing(true);
+    setPreviewError('');
+    try {
+      const result = await api.previewWatchFilters({
+        url: url.trim(),
+        matchTitle: matchTitle.trim() || null,
+        rejectTitle: rejectTitle.trim() || null,
+        minDuration: minDuration ? parseInt(minDuration, 10) : null,
+        maxDuration: maxDuration ? parseInt(maxDuration, 10) : null,
+      });
+      setPreviewRows(result.entries || []);
+    } catch (err) {
+      setPreviewRows(null);
+      setPreviewError(err.message);
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (!url.trim()) {
       setFormError('A valid URL is required.');
+      return;
+    }
+    if (hasFilterErrors) {
+      setActiveTab('filters');
+      setFormError(filterErrors.matchTitle || filterErrors.rejectTitle);
+      return;
+    }
+
+    const isChannel = CHANNEL_ROOT_RE.test(url.trim());
+    if (isChannel && contentTypes.length === 0) {
+      setActiveTab('general');
+      setFormError('Pick at least one of Videos, Shorts, or Live streams to follow.');
       return;
     }
 
@@ -244,6 +324,7 @@ export default function WatchModal({
       maxScanEntries: Number(maxScanEntries) || 30,
       cleanupExempt: !!cleanupExempt,
       outputTemplate: outputTemplate.trim(),
+      contentTypes: isChannel ? contentTypes : undefined,
       thumbnail: inspectData?.thumbnail || watch?.thumbnail || null,
       channelName: inspectData?.channelName || watch?.channel_name || null,
       backfillCount: !isEdit ? Number(backfillCount) || 0 : undefined,
@@ -417,6 +498,35 @@ export default function WatchModal({
                       </div>
                     )}
                   </div>
+                )}
+
+                {CHANNEL_ROOT_RE.test(url.trim()) && (
+                  <fieldset className="watch-content-types">
+                    <legend className="field-label">Follow these channel tabs</legend>
+                    <div className="watch-content-type-options">
+                      {CONTENT_TYPE_OPTIONS.map((opt) => {
+                        const missing = inspectData?.isChannel && Array.isArray(inspectData.availableTabs)
+                          && !inspectData.availableTabs.includes(opt.value);
+                        return (
+                          <label key={opt.value} className="checkbox-label">
+                            <input
+                              type="checkbox"
+                              checked={contentTypes.includes(opt.value)}
+                              onChange={(e) => setContentTypes(e.target.checked
+                                ? ALL_CONTENT_TYPES.filter((t) => t === opt.value || contentTypes.includes(t))
+                                : contentTypes.filter((t) => t !== opt.value))}
+                            />
+                            <span>{opt.label}</span>
+                            {missing && <span className="muted small">(none yet)</span>}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <span className="muted small" style={{ display: 'block', marginTop: 4 }}>
+                      Each tab is checked separately. Turning a tab on later only records what's already
+                      there; its uploads from then on are downloaded.
+                    </span>
+                  </fieldset>
                 )}
 
                 <div className="watch-fields-row">
@@ -663,37 +773,61 @@ export default function WatchModal({
             {activeTab === 'filters' && (
               <div className="watch-form-section">
                 <p className="muted small" style={{ margin: 0 }}>
-                  Smart filters allow you to selectively download only specific videos (e.g. only podcasts or full episodes) while skipping shorts or teasers.
+                  Only new uploads that pass every rule are downloaded. Patterns are regular expressions matched
+                  case-insensitively against the title; enter them without <code>/…/</code> delimiters. If a title
+                  matches both, the exclude rule wins. Rules apply to new videos and to ones not yet downloaded.
                 </p>
 
                 <div>
-                  <label className="field-label" style={{ display: 'block', marginBottom: 4 }}>
-                    Title Must Contain (Keyword or Regex)
+                  <label className="field-label" htmlFor="watch-include-regex" style={{ display: 'block', marginBottom: 4 }}>
+                    Include title regex
                   </label>
                   <input
+                    id="watch-include-regex"
                     type="text"
-                    placeholder="e.g. Podcast|Interview|Episode"
+                    className={filterErrors.matchTitle ? 'input-invalid' : undefined}
+                    placeholder="e.g. podcast|interview|full episode"
                     value={matchTitle}
-                    onChange={(e) => setMatchTitle(e.target.value)}
+                    onChange={(e) => { setMatchTitle(e.target.value); setPreviewRows(null); }}
+                    aria-invalid={!!filterErrors.matchTitle}
                   />
-                  <span className="muted small" style={{ marginTop: 2, display: 'block' }}>
-                    Leave empty to download all uploads regardless of title.
-                  </span>
+                  {filterErrors.matchTitle ? (
+                    <span className="field-error">{filterErrors.matchTitle}</span>
+                  ) : (
+                    <span className="muted small" style={{ marginTop: 2, display: 'block' }}>
+                      Leave empty to consider every upload.{' '}
+                      <button
+                        type="button"
+                        className="link-btn"
+                        onClick={() => { setMatchTitle(IGN_TRAILER_EXAMPLE); setPreviewRows(null); }}
+                        title="Use this example as the include pattern"
+                      >
+                        Example: <code>{IGN_TRAILER_EXAMPLE}</code>
+                      </button>
+                    </span>
+                  )}
                 </div>
 
                 <div>
-                  <label className="field-label" style={{ display: 'block', marginBottom: 4 }}>
-                    Title Must NOT Contain (Exclude Pattern)
+                  <label className="field-label" htmlFor="watch-exclude-regex" style={{ display: 'block', marginBottom: 4 }}>
+                    Exclude title regex
                   </label>
                   <input
+                    id="watch-exclude-regex"
                     type="text"
-                    placeholder="e.g. #shorts|trailer|teaser"
+                    className={filterErrors.rejectTitle ? 'input-invalid' : undefined}
+                    placeholder="e.g. #shorts|reaction|teaser"
                     value={rejectTitle}
-                    onChange={(e) => setRejectTitle(e.target.value)}
+                    onChange={(e) => { setRejectTitle(e.target.value); setPreviewRows(null); }}
+                    aria-invalid={!!filterErrors.rejectTitle}
                   />
-                  <span className="muted small" style={{ marginTop: 2, display: 'block' }}>
-                    Videos matching this pattern will be marked as seen and skipped.
-                  </span>
+                  {filterErrors.rejectTitle ? (
+                    <span className="field-error">{filterErrors.rejectTitle}</span>
+                  ) : (
+                    <span className="muted small" style={{ marginTop: 2, display: 'block' }}>
+                      Matching videos are recorded as filtered (with the reason) and not downloaded.
+                    </span>
+                  )}
                 </div>
 
                 <div className="watch-fields-row">
@@ -703,13 +837,13 @@ export default function WatchModal({
                     </label>
                     <input
                       type="number"
-                      placeholder="e.g. 60 (Skips YouTube Shorts)"
+                      placeholder="e.g. 60"
                       value={minDuration}
-                      onChange={(e) => setMinDuration(e.target.value)}
+                      onChange={(e) => { setMinDuration(e.target.value); setPreviewRows(null); }}
                       min={0}
                     />
                     <span className="muted small" style={{ marginTop: 2, display: 'block' }}>
-                      Set to 60 to automatically skip YouTube Shorts under 1 min.
+                      Skips videos shorter than this. To skip Shorts on a channel, untick Shorts under General instead; channel listings don't include a Short's length.
                     </span>
                   </div>
 
@@ -721,13 +855,50 @@ export default function WatchModal({
                       type="number"
                       placeholder="e.g. 7200 (2 hours)"
                       value={maxDuration}
-                      onChange={(e) => setMaxDuration(e.target.value)}
+                      onChange={(e) => { setMaxDuration(e.target.value); setPreviewRows(null); }}
                       min={0}
                     />
                     <span className="muted small" style={{ marginTop: 2, display: 'block' }}>
                       Leave blank for no upper length limit.
                     </span>
                   </div>
+                </div>
+
+                <div className="filter-preview">
+                  <div className="filter-preview-toolbar">
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={handlePreview}
+                      disabled={previewing || !url.trim() || hasFilterErrors}
+                    >
+                      {previewing ? <Loader2 size={14} className="spin-icon" /> : <Search size={14} />}
+                      Preview against recent videos
+                    </button>
+                    <span className="muted small">Checks the 20 most recent uploads. Nothing is saved.</span>
+                  </div>
+                  {previewError && (
+                    <div className="alert alert-error">
+                      <AlertCircle size={15} />
+                      <span>{previewError}</span>
+                    </div>
+                  )}
+                  {previewRows && previewRows.length === 0 && (
+                    <div className="muted small">No recent videos were found for this URL.</div>
+                  )}
+                  {previewRows && previewRows.length > 0 && (
+                    <ul className="filter-preview-list">
+                      {previewRows.map((row) => (
+                        <li key={row.id} className="filter-preview-row">
+                          <span className={`filter-chip ${row.eligible ? 'filter-chip-match' : 'filter-chip-excluded'}`}>
+                            {row.eligible ? 'Matches' : 'Excluded'}
+                          </span>
+                          <span className="filter-preview-title" title={row.title || row.id}>{row.title || row.id}</span>
+                          {row.reason && <span className="filter-preview-reason muted small">{row.reason}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </div>
             )}
@@ -795,7 +966,7 @@ export default function WatchModal({
             <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>
               Cancel
             </button>
-            <button type="submit" disabled={saving || inspecting || !url.trim()}>
+            <button type="submit" disabled={saving || inspecting || !url.trim() || hasFilterErrors}>
               {saving ? (
                 <>
                   <Loader2 size={15} className="spin-icon" /> Saving…

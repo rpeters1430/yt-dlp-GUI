@@ -24,11 +24,30 @@ import {
   Shield,
   ShieldOff,
   ListMusic,
+  Activity,
+  AlertTriangle,
+  Hourglass,
 } from 'lucide-react';
 import { api } from '../api.js';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import WatchModal from '../components/WatchModal.jsx';
-import WatchDownloadsModal from '../components/WatchDownloadsModal.jsx';
+import WatchActivityModal from '../components/WatchActivityModal.jsx';
+
+const TAB_LABELS = { videos: 'Videos', shorts: 'Shorts', streams: 'Streams' };
+
+// The card badge describes the latest check: an initial baseline is never "new".
+function runBadge(w) {
+  if (!w.latest_run_status || w.latest_run_status === 'running') return null;
+  if (w.latest_run_status === 'partial') return { label: 'Partial scan', kind: 'warning' };
+  if (w.latest_run_status === 'failed') return { label: 'Check failed', kind: 'failed' };
+  if (w.latest_run_trigger === 'initial') {
+    const backfill = w.latest_backfill_count > 0 ? ` / ${w.latest_backfill_count} backfill` : '';
+    if (w.latest_baseline_count > 0 || backfill) return { label: `${w.latest_baseline_count} baseline${backfill}`, kind: 'neutral' };
+  }
+  if (w.latest_new_count > 0) return { label: `${w.latest_new_count} new / ${w.latest_queued_count} queued`, kind: 'new' };
+  if (w.latest_queued_count > 0) return { label: `${w.latest_queued_count} queued`, kind: 'new' };
+  return { label: 'No new videos', kind: 'neutral' };
+}
 
 function timeAgo(dateStr) {
   if (!dateStr) return 'Never checked';
@@ -57,7 +76,7 @@ export default function Watches() {
   // Modals
   const [modalOpen, setModalOpen] = useState(false);
   const [editingWatch, setEditingWatch] = useState(null);
-  const [downloadsWatch, setDownloadsWatch] = useState(null);
+  const [activityWatch, setActivityWatch] = useState(null); // { watch, tab }
   const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
   const [pendingReset, setPendingReset] = useState(null); // { id, label }
 
@@ -187,9 +206,18 @@ export default function Watches() {
     const active = watches.filter((w) => w.enabled !== 0).length;
     const paused = total - active;
     const errors = watches.filter((w) => w.last_status === 'error').length;
-    const totalSeen = watches.reduce((acc, w) => acc + (w.seen_count || 0), 0);
-    const totalDownloads = watches.reduce((acc, w) => acc + (w.download_count || 0), 0);
-    return { total, active, paused, errors, totalSeen, totalDownloads };
+    const sum = (key) => watches.reduce((acc, w) => acc + (w[key] || 0), 0);
+    return {
+      total,
+      active,
+      paused,
+      errors,
+      cataloged: sum('cataloged_count'),
+      pending: sum('pending_count'),
+      queued: sum('queued_count'),
+      completed: sum('completed_count'),
+      failed: sum('failed_count'),
+    };
   }, [watches]);
 
   // Filtered Watches
@@ -240,9 +268,9 @@ export default function Watches() {
             <Eye size={22} />
           </div>
           <div className="watch-stat-info">
-            <span className="watch-stat-label">Catalog Scanned</span>
-            <span className="watch-stat-value">{stats.totalSeen.toLocaleString()}</span>
-            <span className="watch-stat-sub">Tracked video entries</span>
+            <span className="watch-stat-label">Cataloged</span>
+            <span className="watch-stat-value">{stats.cataloged.toLocaleString()}</span>
+            <span className="watch-stat-sub">{stats.pending} pending · {stats.queued} queued</span>
           </div>
         </div>
 
@@ -251,9 +279,9 @@ export default function Watches() {
             <Download size={22} />
           </div>
           <div className="watch-stat-info">
-            <span className="watch-stat-label">Auto-Downloaded</span>
-            <span className="watch-stat-value">{stats.totalDownloads.toLocaleString()}</span>
-            <span className="watch-stat-sub">Videos delivered to library</span>
+            <span className="watch-stat-label">Completed</span>
+            <span className="watch-stat-value">{stats.completed.toLocaleString()}</span>
+            <span className="watch-stat-sub">{stats.failed > 0 ? `${stats.failed} failed` : 'Videos delivered to library'}</span>
           </div>
         </div>
 
@@ -391,6 +419,8 @@ export default function Watches() {
             const isChecking = busyId === w.id || w.last_status === 'checking';
             const isPaused = w.enabled === 0;
             const isError = w.last_status === 'error';
+            const badge = runBadge(w);
+            const openActivity = (tab = 'items') => setActivityWatch({ watch: w, tab });
 
             return (
               <div key={w.id} className={`watch-card ${isPaused ? 'paused' : ''}`}>
@@ -484,6 +514,12 @@ export default function Watches() {
                       : `${w.quality ? `${w.quality}p` : 'Best Quality'} ${(w.container || 'mp4').toUpperCase()}`}
                   </span>
 
+                  {w.content_types ? (
+                    <span className="watch-chip" title="Channel tabs this watch follows">
+                      {w.content_types.split(',').map((t) => TAB_LABELS[t] || t).join(' + ')}
+                    </span>
+                  ) : null}
+
                   {w.subtitles ? (
                     <span className="watch-chip">
                       Captions ({w.sub_langs || 'en.*'})
@@ -529,35 +565,74 @@ export default function Watches() {
 
                 {/* Error Banner if last check failed */}
                 {isError && w.last_error && (
-                  <div className="alert alert-error" style={{ margin: 0, padding: '8px 12px', fontSize: 12.5 }}>
+                  <div className="alert alert-error watch-card-alert">
                     <AlertCircle size={14} />
                     <span>Last check error: {w.last_error}</span>
+                    <span className="watch-card-alert-actions">
+                      <button type="button" className="link-btn" onClick={() => handleCheckNow(w)} disabled={isChecking}>Retry check</button>
+                      <button type="button" className="link-btn" onClick={() => { setEditingWatch(w); setModalOpen(true); }}>Edit filters</button>
+                      <button type="button" className="link-btn" onClick={() => openActivity('runs')}>View runs</button>
+                    </span>
+                  </div>
+                )}
+
+                {!isError && !isChecking && w.latest_run_status === 'partial' && (
+                  <div className="alert alert-warning watch-card-alert">
+                    <AlertTriangle size={14} />
+                    <span>
+                      The last check scanned {w.latest_scanned_count} videos without reaching ones it already knew, so some
+                      uploads may have been missed. Everything it found is kept.
+                    </span>
+                    <span className="watch-card-alert-actions">
+                      <button type="button" className="link-btn" onClick={() => handleCheckNow(w)}>Check again</button>
+                      <button type="button" className="link-btn" onClick={() => openActivity('runs')}>View runs</button>
+                    </span>
+                  </div>
+                )}
+
+                {w.failed_count > 0 && (
+                  <div className="alert alert-error watch-card-alert">
+                    <AlertCircle size={14} />
+                    <span>{w.failed_count} download{w.failed_count === 1 ? '' : 's'} failed.</span>
+                    <span className="watch-card-alert-actions">
+                      <button type="button" className="link-btn" onClick={() => openActivity('items')}>Review and retry</button>
+                    </span>
                   </div>
                 )}
 
                 {/* Meta Row & Action Buttons */}
                 <div className="watch-meta-row">
                   <div className="watch-metrics-list">
-                    <div className="watch-metric-item">
+                    <button type="button" className="watch-metric-item clickable" onClick={() => openActivity('items')} title="Every video this watch has discovered">
                       <Eye size={13} className="text-muted" />
-                      <span><strong>{w.seen_count || 0}</strong> seen</span>
-                    </div>
-
-                    <div
-                      className="watch-metric-item clickable"
-                      onClick={() => setDownloadsWatch(w)}
-                      title="View videos downloaded by this watch"
-                    >
-                      <Download size={13} />
-                      <span><strong>{w.download_count || 0}</strong> downloaded</span>
-                    </div>
+                      <span><strong>{w.cataloged_count || 0}</strong> cataloged</span>
+                    </button>
+                    <button type="button" className="watch-metric-item clickable" onClick={() => openActivity('items')} title="Matching videos waiting for the next check to queue them">
+                      <Hourglass size={13} className="text-muted" />
+                      <span><strong>{w.pending_count || 0}</strong> pending</span>
+                    </button>
+                    <button type="button" className="watch-metric-item clickable" onClick={() => openActivity('items')} title="Queued or downloading now">
+                      <Download size={13} className="text-muted" />
+                      <span><strong>{w.queued_count || 0}</strong> queued</span>
+                    </button>
+                    <button type="button" className="watch-metric-item clickable" onClick={() => openActivity('downloads')} title="Downloaded successfully">
+                      <CheckCircle2 size={13} />
+                      <span><strong>{w.completed_count || 0}</strong> completed</span>
+                    </button>
+                    {w.failed_count > 0 && (
+                      <button type="button" className="watch-metric-item clickable metric-failed" onClick={() => openActivity('items')} title="Failed downloads">
+                        <AlertCircle size={13} />
+                        <span><strong>{w.failed_count}</strong> failed</span>
+                      </button>
+                    )}
 
                     <div className="watch-metric-item">
                       <Clock size={13} className="text-muted" />
                       <span>Last check: {timeAgo(w.last_checked_at)}</span>
-                      {w.last_new_count > 0 && (
-                        <span className="tag" style={{ background: 'rgba(34, 197, 94, 0.12)', color: '#22c55e', fontSize: 11, padding: '1px 6px' }}>
-                          +{w.last_new_count} new
+                      {badge && !isChecking && (
+                        <span className={`tag watch-run-badge badge-${badge.kind}`}>
+                          {badge.kind === 'warning' && <AlertTriangle size={10} />}
+                          {badge.label}
                         </span>
                       )}
                     </div>
@@ -578,18 +653,18 @@ export default function Watches() {
                     <button
                       type="button"
                       className="btn-secondary btn-sm"
-                      onClick={() => setDownloadsWatch(w)}
-                      title="View downloads history"
+                      onClick={() => openActivity('items')}
+                      title="See discovered videos, checks, and downloads"
                     >
-                      <Download size={13} />
-                      <span>Downloads</span>
+                      <Activity size={13} />
+                      <span>Activity</span>
                     </button>
 
                     <button
                       type="button"
                       className="btn-secondary btn-sm"
                       onClick={() => handleSyncJellyfin(w)}
-                      disabled={jellyfinSyncBusyId === w.id || !w.download_count}
+                      disabled={jellyfinSyncBusyId === w.id || !w.completed_count}
                       title="Create/update a Jellyfin playlist with this watch's downloaded videos"
                     >
                       <ListMusic size={13} className={jellyfinSyncBusyId === w.id ? 'spin-icon' : ''} />
@@ -621,7 +696,7 @@ export default function Watches() {
                       type="button"
                       className="icon-btn"
                       onClick={() => setPendingReset({ id: w.id, label: w.name || w.channel_name || w.url })}
-                      title="Reset seen history (allows re-scanning back catalog)"
+                      title="Reset watch history (keeps completed downloads, rebaselines on the next check)"
                     >
                       <RotateCcw size={14} />
                     </button>
@@ -660,11 +735,13 @@ export default function Watches() {
         onSave={handleSaveWatch}
       />
 
-      {/* View Downloads Modal */}
-      <WatchDownloadsModal
-        open={!!downloadsWatch}
-        watch={downloadsWatch}
-        onClose={() => setDownloadsWatch(null)}
+      {/* Activity Modal: items, check runs, downloads */}
+      <WatchActivityModal
+        open={!!activityWatch}
+        watch={activityWatch?.watch}
+        initialTab={activityWatch?.tab}
+        onClose={() => setActivityWatch(null)}
+        onChanged={refresh}
       />
 
       {/* Confirm Delete Dialog */}
@@ -680,8 +757,8 @@ export default function Watches() {
       {/* Confirm Reset Seen Dialog */}
       <ConfirmDialog
         open={!!pendingReset}
-        title="Reset Watched Seen History"
-        message={`Reset seen history for "${pendingReset?.label}"? This clears the list of tracked video IDs and re-arms the watch. Already downloaded video files will not be deleted.`}
+        title="Reset Watch History"
+        message={`Reset history for "${pendingReset?.label}"? Pending, filtered, and failed videos and past checks are forgotten, and the next check records the channel's current videos as a new baseline. Completed downloads are kept and won't be downloaded again; no files are deleted.`}
         confirmLabel="Reset History"
         danger={false}
         onCancel={() => setPendingReset(null)}
