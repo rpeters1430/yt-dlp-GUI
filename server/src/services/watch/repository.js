@@ -153,9 +153,10 @@ function createRepository(db, { now = () => new Date() } = {}) {
     }
   }
 
-  // Newest pending items first, then failures whose retry time has arrived.
+  // Failures whose retry time has arrived come first (so a steady stream of new uploads
+  // can't starve them), then pending items newest first.
   function queueCandidates(watchId, at = now(), limit = Infinity) {
-    const rows = [...stmts.pendingCandidates.all(watchId), ...stmts.dueRetries.all(watchId, toSqlTime(at))];
+    const rows = [...stmts.dueRetries.all(watchId, toSqlTime(at)), ...stmts.pendingCandidates.all(watchId)];
     return Number.isFinite(limit) ? rows.slice(0, Math.max(0, limit)) : rows;
   }
 

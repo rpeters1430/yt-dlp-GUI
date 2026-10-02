@@ -125,12 +125,6 @@ router.post('/inspect-url', async (req, res) => {
   if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
     return res.status(400).json({ error: 'A valid http(s) URL is required' });
   }
-  const filterErrors = validateWatchFilters({
-    matchTitle: matchTitle ? String(matchTitle).trim() : null,
-    rejectTitle: rejectTitle ? String(rejectTitle).trim() : null,
-  });
-  if (filterErrors.length) return res.status(400).json({ error: filterErrors[0], errors: filterErrors });
-
   try {
     const info = await music.inspectUrl(url);
     res.json(info);

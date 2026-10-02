@@ -479,7 +479,9 @@ function createWatchesRouter({
 
   // Delete watch
   router.delete('/:id', (req, res) => {
-    if (!repository.deleteWatch(Number(req.params.id))) return res.status(404).json({ error: 'Watch not found' });
+    const watchId = Number(req.params.id);
+    if (watchService.isRunning(watchId)) return res.status(409).json({ error: 'This watch is being checked right now; try again in a moment' });
+    if (!repository.deleteWatch(watchId)) return res.status(404).json({ error: 'Watch not found' });
     res.json({ ok: true });
   });
 

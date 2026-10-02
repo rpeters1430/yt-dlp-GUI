@@ -130,3 +130,16 @@ test('the real queue stores watch_item_id and reports removal of a linked job', 
   queue.removeJob(id);
   assert.deepEqual(events, [[42, 'removed', id]]);
 });
+
+test('a due retry is queued ahead of a full pending backlog', async (t) => {
+  const { s, clock, watchId, itemId, downloadId } = await queuedItem(t);
+  s.repository.applyDownloadState(itemId, 'failed', { downloadId, error: 'network' });
+  s.db.prepare('UPDATE watches SET download_limit = 2 WHERE id = ?').run(watchId);
+  s.state.entries = [entry('n1'), entry('n2'), entry('n3'), entry('v1'), entry('known')];
+  clock.now = new Date(clock.now.getTime() + 20 * MIN);
+  const result = await s.service.checkWatch(s.getWatch(watchId), { manual: true });
+  assert.equal(result.queuedCount, 2);
+  assert.equal(s.repository.getItem(itemId).download_status, 'queued', 'the retry is not starved');
+  assert.equal(s.itemByVideo(watchId, 'n1').download_status, 'queued');
+  assert.equal(result.pendingCount, 2);
+});
