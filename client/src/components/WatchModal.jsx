@@ -18,6 +18,22 @@ import {
   Zap,
 } from 'lucide-react';
 import { api } from '../api.js';
+
+const IGN_TRAILER_EXAMPLE = '\\b(movie|video game|gameplay|official)\\s+trailer\\b';
+
+// Syntax check only; the server also screens for unsafe (catastrophic-backtracking) patterns.
+function regexSyntaxError(value, label) {
+  const pattern = value.trim();
+  if (!pattern) return '';
+  if (pattern.length > 200) return `${label} regex must be 200 characters or fewer`;
+  if (/^\/.*\/[a-z]*$/i.test(pattern)) return `${label} regex: enter the pattern without /…/ delimiters`;
+  try {
+    new RegExp(pattern, 'i');
+  } catch (e) {
+    return `${label} must be a valid regular expression (${e.message})`;
+  }
+  return '';
+}
 import { previewTemplate } from '../outputTemplatePreview.js';
 import { useModalA11y } from '../hooks/useModalA11y.js';
 
@@ -112,11 +128,23 @@ export default function WatchModal({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
 
+  // Filter preview state
+  const [previewing, setPreviewing] = useState(false);
+  const [previewRows, setPreviewRows] = useState(null);
+  const [previewError, setPreviewError] = useState('');
+  const filterErrors = {
+    matchTitle: regexSyntaxError(matchTitle, 'Include title'),
+    rejectTitle: regexSyntaxError(rejectTitle, 'Exclude title'),
+  };
+  const hasFilterErrors = !!(filterErrors.matchTitle || filterErrors.rejectTitle);
+
   useEffect(() => {
     if (!open) return;
     setFormError('');
     setInspectError('');
     setActiveTab('general');
+    setPreviewRows(null);
+    setPreviewError('');
 
     if (watch) {
       setUrl(watch.url || '');
@@ -211,10 +239,36 @@ export default function WatchModal({
     }
   }
 
+  async function handlePreview() {
+    if (!url.trim() || hasFilterErrors) return;
+    setPreviewing(true);
+    setPreviewError('');
+    try {
+      const result = await api.previewWatchFilters({
+        url: url.trim(),
+        matchTitle: matchTitle.trim() || null,
+        rejectTitle: rejectTitle.trim() || null,
+        minDuration: minDuration ? parseInt(minDuration, 10) : null,
+        maxDuration: maxDuration ? parseInt(maxDuration, 10) : null,
+      });
+      setPreviewRows(result.entries || []);
+    } catch (err) {
+      setPreviewRows(null);
+      setPreviewError(err.message);
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (!url.trim()) {
       setFormError('A valid URL is required.');
+      return;
+    }
+    if (hasFilterErrors) {
+      setActiveTab('filters');
+      setFormError(filterErrors.matchTitle || filterErrors.rejectTitle);
       return;
     }
 
@@ -663,37 +717,61 @@ export default function WatchModal({
             {activeTab === 'filters' && (
               <div className="watch-form-section">
                 <p className="muted small" style={{ margin: 0 }}>
-                  Smart filters allow you to selectively download only specific videos (e.g. only podcasts or full episodes) while skipping shorts or teasers.
+                  Only new uploads that pass every rule are downloaded. Patterns are regular expressions matched
+                  case-insensitively against the title; enter them without <code>/…/</code> delimiters. If a title
+                  matches both, the exclude rule wins. Rules apply to new videos and to ones not yet downloaded.
                 </p>
 
                 <div>
-                  <label className="field-label" style={{ display: 'block', marginBottom: 4 }}>
-                    Title Must Contain (Keyword or Regex)
+                  <label className="field-label" htmlFor="watch-include-regex" style={{ display: 'block', marginBottom: 4 }}>
+                    Include title regex
                   </label>
                   <input
+                    id="watch-include-regex"
                     type="text"
-                    placeholder="e.g. Podcast|Interview|Episode"
+                    className={filterErrors.matchTitle ? 'input-invalid' : undefined}
+                    placeholder="e.g. podcast|interview|full episode"
                     value={matchTitle}
-                    onChange={(e) => setMatchTitle(e.target.value)}
+                    onChange={(e) => { setMatchTitle(e.target.value); setPreviewRows(null); }}
+                    aria-invalid={!!filterErrors.matchTitle}
                   />
-                  <span className="muted small" style={{ marginTop: 2, display: 'block' }}>
-                    Leave empty to download all uploads regardless of title.
-                  </span>
+                  {filterErrors.matchTitle ? (
+                    <span className="field-error">{filterErrors.matchTitle}</span>
+                  ) : (
+                    <span className="muted small" style={{ marginTop: 2, display: 'block' }}>
+                      Leave empty to consider every upload.{' '}
+                      <button
+                        type="button"
+                        className="link-btn"
+                        onClick={() => { setMatchTitle(IGN_TRAILER_EXAMPLE); setPreviewRows(null); }}
+                        title="Use this example as the include pattern"
+                      >
+                        Example: <code>{IGN_TRAILER_EXAMPLE}</code>
+                      </button>
+                    </span>
+                  )}
                 </div>
 
                 <div>
-                  <label className="field-label" style={{ display: 'block', marginBottom: 4 }}>
-                    Title Must NOT Contain (Exclude Pattern)
+                  <label className="field-label" htmlFor="watch-exclude-regex" style={{ display: 'block', marginBottom: 4 }}>
+                    Exclude title regex
                   </label>
                   <input
+                    id="watch-exclude-regex"
                     type="text"
-                    placeholder="e.g. #shorts|trailer|teaser"
+                    className={filterErrors.rejectTitle ? 'input-invalid' : undefined}
+                    placeholder="e.g. #shorts|reaction|teaser"
                     value={rejectTitle}
-                    onChange={(e) => setRejectTitle(e.target.value)}
+                    onChange={(e) => { setRejectTitle(e.target.value); setPreviewRows(null); }}
+                    aria-invalid={!!filterErrors.rejectTitle}
                   />
-                  <span className="muted small" style={{ marginTop: 2, display: 'block' }}>
-                    Videos matching this pattern will be marked as seen and skipped.
-                  </span>
+                  {filterErrors.rejectTitle ? (
+                    <span className="field-error">{filterErrors.rejectTitle}</span>
+                  ) : (
+                    <span className="muted small" style={{ marginTop: 2, display: 'block' }}>
+                      Matching videos are recorded as filtered (with the reason) and not downloaded.
+                    </span>
+                  )}
                 </div>
 
                 <div className="watch-fields-row">
@@ -705,7 +783,7 @@ export default function WatchModal({
                       type="number"
                       placeholder="e.g. 60 (Skips YouTube Shorts)"
                       value={minDuration}
-                      onChange={(e) => setMinDuration(e.target.value)}
+                      onChange={(e) => { setMinDuration(e.target.value); setPreviewRows(null); }}
                       min={0}
                     />
                     <span className="muted small" style={{ marginTop: 2, display: 'block' }}>
@@ -721,13 +799,50 @@ export default function WatchModal({
                       type="number"
                       placeholder="e.g. 7200 (2 hours)"
                       value={maxDuration}
-                      onChange={(e) => setMaxDuration(e.target.value)}
+                      onChange={(e) => { setMaxDuration(e.target.value); setPreviewRows(null); }}
                       min={0}
                     />
                     <span className="muted small" style={{ marginTop: 2, display: 'block' }}>
                       Leave blank for no upper length limit.
                     </span>
                   </div>
+                </div>
+
+                <div className="filter-preview">
+                  <div className="filter-preview-toolbar">
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={handlePreview}
+                      disabled={previewing || !url.trim() || hasFilterErrors}
+                    >
+                      {previewing ? <Loader2 size={14} className="spin-icon" /> : <Search size={14} />}
+                      Preview against recent videos
+                    </button>
+                    <span className="muted small">Checks the 20 most recent uploads. Nothing is saved.</span>
+                  </div>
+                  {previewError && (
+                    <div className="alert alert-error">
+                      <AlertCircle size={15} />
+                      <span>{previewError}</span>
+                    </div>
+                  )}
+                  {previewRows && previewRows.length === 0 && (
+                    <div className="muted small">No recent videos were found for this URL.</div>
+                  )}
+                  {previewRows && previewRows.length > 0 && (
+                    <ul className="filter-preview-list">
+                      {previewRows.map((row) => (
+                        <li key={row.id} className="filter-preview-row">
+                          <span className={`filter-chip ${row.eligible ? 'filter-chip-match' : 'filter-chip-excluded'}`}>
+                            {row.eligible ? 'Matches' : 'Excluded'}
+                          </span>
+                          <span className="filter-preview-title" title={row.title || row.id}>{row.title || row.id}</span>
+                          {row.reason && <span className="filter-preview-reason muted small">{row.reason}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </div>
             )}
@@ -795,7 +910,7 @@ export default function WatchModal({
             <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>
               Cancel
             </button>
-            <button type="submit" disabled={saving || inspecting || !url.trim()}>
+            <button type="submit" disabled={saving || inspecting || !url.trim() || hasFilterErrors}>
               {saving ? (
                 <>
                   <Loader2 size={15} className="spin-icon" /> Saving…

@@ -3715,3 +3715,136 @@ button.library-card-art:hover .library-card-play svg {
   border-color: var(--border-strong);
 }
 
+
+/* ---- Reliable watch: filter editor, card badges, activity ---- */
+button.watch-metric-item.clickable {
+  background: transparent;
+  font-size: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+button.watch-metric-item.clickable:hover:not(:disabled) { background: var(--accent-soft); }
+button.watch-metric-item.metric-failed { color: var(--danger); }
+button.watch-metric-item.metric-failed:hover:not(:disabled) { background: var(--danger-soft); }
+
+button.link-btn {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: normal;
+  text-align: left;
+}
+button.link-btn:hover:not(:disabled) { background: transparent; opacity: 0.8; }
+button.link-btn code { font-size: 11px; word-break: break-all; }
+
+input.input-invalid,
+input.input-invalid:focus { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
+.field-error { display: block; margin-top: 4px; font-size: 12px; color: var(--danger); }
+
+.filter-preview { display: flex; flex-direction: column; gap: 10px; }
+.filter-preview-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.filter-preview-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  max-height: 280px;
+  overflow-y: auto;
+}
+.filter-preview-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.filter-preview-row:first-child { border-top: none; }
+.filter-preview-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filter-preview-reason { white-space: nowrap; }
+.filter-chip {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 700;
+}
+.filter-chip-match { background: var(--success-soft); color: var(--success); }
+.filter-chip-excluded { background: var(--surface-hover); color: var(--text-secondary); }
+
+.watch-run-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 1px 6px; border-color: transparent; }
+.watch-run-badge.badge-new { background: var(--success-soft); color: var(--success); }
+.watch-run-badge.badge-neutral { background: var(--surface-hover); color: var(--text-secondary); }
+.watch-run-badge.badge-warning { background: var(--warning-soft); color: var(--warning); }
+.watch-run-badge.badge-failed { background: var(--danger-soft); color: var(--danger); }
+
+.watch-card-alert { margin: 0; padding: 8px 12px; font-size: 12.5px; flex-wrap: wrap; }
+.watch-card-alert-actions { display: inline-flex; gap: 12px; margin-left: auto; flex-wrap: wrap; }
+
+.watch-activity-modal { max-width: 860px; width: 100%; }
+.watch-activity-tabs { display: flex; gap: 4px; padding: 0 20px; border-bottom: 1px solid var(--border); }
+button.watch-activity-tab-btn {
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+button.watch-activity-tab-btn:hover:not(:disabled) { background: transparent; color: var(--text); }
+button.watch-activity-tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.watch-activity-tab { display: flex; flex-direction: column; gap: 12px; }
+.watch-activity-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.watch-activity-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.watch-activity-item {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.watch-activity-item:first-child { border-top: none; }
+.watch-activity-thumb-empty { display: flex; align-items: center; justify-content: center; }
+.watch-activity-body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.watch-activity-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.watch-activity-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.watch-activity-error { color: var(--danger); word-break: break-word; }
+.watch-activity-warning { display: flex; align-items: center; gap: 6px; color: var(--warning); }
+.watch-activity-pager { display: flex; align-items: center; justify-content: center; gap: 12px; }
+
+.watch-state-badge { text-transform: capitalize; font-size: 11px; padding: 1px 7px; border-color: transparent; display: inline-flex; align-items: center; gap: 4px; }
+.watch-state-badge.state-completed, .watch-state-badge.run-completed { background: var(--success-soft); color: var(--success); }
+.watch-state-badge.state-failed, .watch-state-badge.run-failed { background: var(--danger-soft); color: var(--danger); }
+.watch-state-badge.state-queued, .watch-state-badge.state-downloading, .watch-state-badge.run-running { background: var(--accent-soft); color: var(--accent); }
+.watch-state-badge.state-pending, .watch-state-badge.run-partial { background: var(--warning-soft); color: var(--warning); }
+.watch-state-badge.state-filtered, .watch-state-badge.state-baseline { background: var(--surface-hover); color: var(--text-secondary); }
+
+.watch-run { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-top: 1px solid var(--border); }
+.watch-run:first-child { border-top: none; }
+.watch-run-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.watch-run-trigger { font-weight: 600; font-size: 13px; text-transform: capitalize; }
+.watch-run-counters { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-secondary); }
+
+@media (max-width: 640px) {
+  .filter-preview-row { grid-template-columns: auto minmax(0, 1fr); }
+  .filter-preview-reason { grid-column: 2; white-space: normal; }
+  .watch-activity-item { grid-template-columns: 40px minmax(0, 1fr); }
+  .watch-activity-item > button { grid-column: 2; justify-self: start; }
+  .watch-activity-tabs { padding: 0 12px; }
+  .watch-card-alert-actions { margin-left: 0; }
+}

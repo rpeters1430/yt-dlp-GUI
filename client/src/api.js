@@ -47,6 +47,10 @@ export const api = {
   checkWatch: (id) => request(`/watches/${id}/check`, { method: 'POST' }),
   checkAllWatches: () => request('/watches/check-all', { method: 'POST' }),
   getWatchDownloads: (id) => request(`/watches/${id}/downloads`),
+  previewWatchFilters: (payload) => request('/watches/preview-filter', { method: 'POST', body: JSON.stringify(payload) }),
+  getWatchRuns: (id) => request(`/watches/${id}/runs`),
+  getWatchItems: (id, query = '') => request(`/watches/${id}/items${query}`),
+  retryWatchItem: (watchId, itemId) => request(`/watches/${watchId}/items/${itemId}/retry`, { method: 'POST' }),
   resetWatchSeen: (id) => request(`/watches/${id}/reset-seen`, { method: 'POST' }),
   syncWatchJellyfin: (id) => request(`/watches/${id}/sync-jellyfin`, { method: 'POST' }),
 
