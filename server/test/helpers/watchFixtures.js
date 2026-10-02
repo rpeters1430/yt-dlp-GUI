@@ -16,6 +16,7 @@ function setupWatchService(t, { clock } = {}) {
 
   const ytdlp = {
     DOWNLOAD_DIR: '/downloads',
+    assertPublicUrl() {},
     async getInfo(url, { playlistStart = 1, playlistEnd }) {
       state.calls++;
       if (state.delayMs) await new Promise((r) => setTimeout(r, state.delayMs));
@@ -46,7 +47,7 @@ function setupWatchService(t, { clock } = {}) {
   const itemByVideo = (watchId, videoId) => db.prepare('SELECT * FROM watch_items WHERE watch_id = ? AND video_id = ?').get(watchId, videoId);
   const downloadsFor = (watchId) => db.prepare('SELECT * FROM downloads WHERE watch_id = ?').all(watchId);
 
-  return { tmp, db, state, repository, service, addWatch, getWatch, itemByVideo, downloadsFor };
+  return { tmp, db, state, ytdlp, repository, service, addWatch, getWatch, itemByVideo, downloadsFor };
 }
 
 module.exports = { entry, setupWatchService };
