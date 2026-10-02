@@ -183,6 +183,8 @@ function createRepository(db, { now = () => new Date() } = {}) {
           attempt_count = attempt_count + 1, last_error = NULL, next_retry_at = NULL, completed_at = ?, updated_at = ?
         WHERE id = ?
       `).run(downloadId, time, time, itemId);
+    } else if (status === 'removed') {
+      if (item.download_status === 'queued' || item.download_status === 'downloading') stmts.markRemoved.run(time, itemId);
     } else if (status === 'failed') {
       const attempts = item.attempt_count + 1;
       const delay = attempts < MAX_ATTEMPTS ? RETRY_DELAYS_MS[attempts - 1] : null;
