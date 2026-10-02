@@ -36,6 +36,11 @@ import {
 import { api } from '../api.js';
 import { useDownloads } from '../context/DownloadsContext.jsx';
 
+// Key for looking up a song in the Jellyfin library check results.
+function libraryTrackKey(t) {
+  return `${t.artist || ''}|${t.title || ''}`;
+}
+
 function formatDuration(sec) {
   if (!sec && sec !== 0) return '';
   const s = Math.floor(sec);
@@ -160,8 +165,11 @@ export default function MusicPage() {
 
   // Jellyfin library sync & matching state
   const [jellyfinStatus, setJellyfinStatus] = useState(null);
-  const [jellyfinAlbumData, setJellyfinAlbumData] = useState(null);
   const [jellyfinCheckingAlbum, setJellyfinCheckingAlbum] = useState(false);
+  // What the Jellyfin music library already has: release id -> { status, ownedTracks, totalTracks }
+  // and libraryTrackKey(track) -> true/false. Filled in lazily for whatever is on screen.
+  const [libraryAlbums, setLibraryAlbums] = useState({});
+  const [libraryTracks, setLibraryTracks] = useState({});
   const [jellyfinScanning, setJellyfinScanning] = useState(false);
 
   // Toast notification state
@@ -254,10 +262,67 @@ export default function MusicPage() {
       .catch(() => {});
   }, []);
 
+  // Check every release/song currently on screen against the Jellyfin library, so search
+  // results can show what's already owned. Only items not checked yet are sent.
+  useEffect(() => {
+    if (!jellyfinStatus?.configured) return;
+    const releases = [];
+    if (searchType === 'album') releases.push(...searchResults);
+    if (matchedArtist) releases.push(...(matchedArtist.all || []), ...(matchedArtist.albums || []), ...(matchedArtist.singles || []));
+    if (selectedArtist) releases.push(...(selectedArtist.all || []), ...(selectedArtist.albums || []), ...(selectedArtist.singles || []));
+    const albumsToCheck = [];
+    const seen = new Set();
+    for (const r of releases) {
+      if (!r || r.id == null || seen.has(r.id) || libraryAlbums[r.id]) continue;
+      seen.add(r.id);
+      albumsToCheck.push({ id: r.id, artist: r.artist, name: r.name, trackCount: r.trackCount });
+    }
+
+    const songs = [];
+    if (searchType === 'track') songs.push(...searchResults);
+    if (selectedAlbum?.tracks) songs.push(...selectedAlbum.tracks);
+    const tracksToCheck = [];
+    for (const t of songs) {
+      const key = libraryTrackKey(t);
+      if (!t?.title || key in libraryTracks || tracksToCheck.some((x) => x.key === key)) continue;
+      tracksToCheck.push({ key, artist: t.artist, title: t.title });
+    }
+
+    if (albumsToCheck.length === 0 && tracksToCheck.length === 0) return;
+    let cancelled = false;
+    const checkingAlbum = selectedAlbum?.tracks?.length > 0;
+    if (checkingAlbum) setJellyfinCheckingAlbum(true);
+    api.checkJellyfinMusicLibrary({ albums: albumsToCheck, tracks: tracksToCheck })
+      .then((res) => {
+        if (cancelled || !res?.configured) return;
+        if (res.albums && Object.keys(res.albums).length) setLibraryAlbums((prev) => ({ ...prev, ...res.albums }));
+        if (res.tracks && Object.keys(res.tracks).length) {
+          setLibraryTracks((prev) => ({ ...prev, ...res.tracks }));
+          // Songs already in Jellyfin start unticked in the album view.
+          if (selectedAlbum?.tracks) {
+            setSelectedTracks((prev) => {
+              const next = new Set(prev);
+              for (const t of selectedAlbum.tracks) {
+                if (res.tracks[libraryTrackKey(t)]) next.delete(t.trackNumber);
+              }
+              return next;
+            });
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (checkingAlbum && !cancelled) setJellyfinCheckingAlbum(false);
+      });
+    return () => { cancelled = true; };
+  }, [jellyfinStatus, searchType, searchResults, matchedArtist, selectedArtist, selectedAlbum]);
+
   async function handleTriggerJellyfinScan() {
     setJellyfinScanning(true);
     try {
       await api.refreshJellyfinLibrary();
+      setLibraryAlbums({});
+      setLibraryTracks({});
       showToast('Jellyfin library refresh scan triggered!');
     } catch (err) {
       showToast(err.message, 'error');
@@ -445,11 +510,15 @@ export default function MusicPage() {
         audioQuality: downloadQuality,
         musicFolder: downloadFolder,
         saveCover: downloadSaveCover,
+        skipInLibrary: true,
       };
       const res = await api.downloadMusic(payload);
+      const skippedCount = res.skipped?.length || 0;
       setQuickDownloadToast({
         id: albumItem.id,
-        text: `Queued "${details.album.name}" (${res.enqueued} tracks) for download!`,
+        text: res.enqueued === 0 && skippedCount > 0
+          ? `"${details.album.name}" is already in your Jellyfin library. Nothing to download.`
+          : `Queued "${details.album.name}" (${res.enqueued} tracks) for download!${skippedCount ? ` Skipped ${skippedCount} already in Jellyfin.` : ''}`,
       });
       setTimeout(() => setQuickDownloadToast(null), 5000);
     } catch (err) {
@@ -462,6 +531,7 @@ export default function MusicPage() {
   // Shared release card renderer
   function renderReleaseCard(item) {
     const isDownloadingThis = downloadingAlbumId === item.id;
+    const libraryStatus = libraryAlbums[item.id];
     return (
       <div
         key={item.id}
@@ -490,6 +560,16 @@ export default function MusicPage() {
           {item.releaseYear && (
             <span className="badge" style={{ position: 'absolute', bottom: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: '0.75rem', backdropFilter: 'blur(4px)' }}>
               {item.releaseYear}
+            </span>
+          )}
+          {libraryStatus?.status === 'complete' && (
+            <span className="badge badge-in-library" style={{ position: 'absolute', top: 8, right: 8, fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4 }} title="Already in your Jellyfin library">
+              <CheckCircle2 size={12} /> In Library
+            </span>
+          )}
+          {libraryStatus?.status === 'partial' && (
+            <span className="badge badge-partial-library" style={{ position: 'absolute', top: 8, right: 8, fontSize: '0.72rem' }} title="Some of these songs are already in your Jellyfin library">
+              {libraryStatus.totalTracks ? `${Math.min(libraryStatus.ownedTracks, libraryStatus.totalTracks)}/${libraryStatus.totalTracks} in Library` : 'Partly in Library'}
             </span>
           )}
           {item.isSingle ? (
@@ -540,7 +620,9 @@ export default function MusicPage() {
               style={{ padding: '3px 10px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: 4 }}
               disabled={isDownloadingThis}
               onClick={(e) => handleQuickDownloadAlbum(e, item)}
-              title={`Download all ${item.trackCount} tracks directly in ${downloadFormat.toUpperCase()}`}
+              title={libraryStatus?.status === 'partial'
+                ? `Download the songs not already in Jellyfin, in ${downloadFormat.toUpperCase()}`
+                : `Download all ${item.trackCount} tracks directly in ${downloadFormat.toUpperCase()}`}
             >
               {isDownloadingThis ? (
                 <RefreshCw size={12} className="spin" />
@@ -559,22 +641,15 @@ export default function MusicPage() {
   async function handleSelectAlbum(album) {
     setAlbumLoading(true);
     setAlbumDownloadMessage(null);
-    setJellyfinAlbumData(null);
     try {
       const data = await api.getMusicAlbum(album.id);
+      // Default: select every track not already in Jellyfin (the library check effect
+      // unticks any it finds once it hears back)
+      const missingTrackNums = new Set((data.tracks || [])
+        .filter((t) => !libraryTracks[libraryTrackKey(t)])
+        .map((t) => t.trackNumber));
+      setSelectedTracks(missingTrackNums);
       setSelectedAlbum(data);
-      // Default: select all tracks
-      const allTrackNums = new Set((data.tracks || []).map((t) => t.trackNumber));
-      setSelectedTracks(allTrackNums);
-
-      // Check if already in Jellyfin library
-      if (data?.album) {
-        setJellyfinCheckingAlbum(true);
-        api.checkJellyfinAlbum(data.album.artist, data.album.name)
-          .then((jf) => setJellyfinAlbumData(jf))
-          .catch(() => setJellyfinAlbumData(null))
-          .finally(() => setJellyfinCheckingAlbum(false));
-      }
     } catch (err) {
       showToast(`Could not load album details: ${err.message}`, 'error');
     } finally {
@@ -634,10 +709,17 @@ export default function MusicPage() {
         audioQuality: downloadQuality,
         musicFolder: downloadFolder,
         saveCover: downloadSaveCover,
+        // "Download Selected" honours the user's ticks; the whole-album buttons leave out
+        // songs Jellyfin already has.
+        skipInLibrary: !onlySelected,
       };
 
       const res = await api.downloadMusic(payload);
-      const msg = `Successfully queued ${res.enqueued} song${res.enqueued === 1 ? '' : 's'} into "${downloadFolder}/${selectedAlbum.album.artist}/${selectedAlbum.album.name}"!`;
+      const skippedCount = res.skipped?.length || 0;
+      const skippedNote = skippedCount ? ` Skipped ${skippedCount} already in Jellyfin.` : '';
+      const msg = res.enqueued === 0 && skippedCount > 0
+        ? `Every song on "${selectedAlbum.album.name}" is already in your Jellyfin library. Nothing to download.`
+        : `Successfully queued ${res.enqueued} song${res.enqueued === 1 ? '' : 's'} into "${downloadFolder}/${selectedAlbum.album.artist}/${selectedAlbum.album.name}"!${skippedNote}`;
 
       showToast(msg);
       if (returnToSearch) {
@@ -664,6 +746,9 @@ export default function MusicPage() {
 
   // Download a single track
   async function handleDownloadSingleTrack(track) {
+    if (libraryTracks[libraryTrackKey(track)] && !window.confirm(`"${track.title}" is already in your Jellyfin library. Download it again?`)) {
+      return;
+    }
     try {
       const customMatch = trackMatches[track.trackNumber];
       const payload = {
@@ -843,6 +928,11 @@ export default function MusicPage() {
       alert(`Failed to save settings: ${err.message}`);
     }
   }
+
+  const albumOwnedCount = selectedAlbum?.tracks
+    ? selectedAlbum.tracks.filter((t) => libraryTracks[libraryTrackKey(t)]).length
+    : 0;
+  const albumMissingCount = (selectedAlbum?.tracks?.length || 0) - albumOwnedCount;
 
   return (
     <div className="music-hub-container" style={{ maxWidth: 1200, margin: '0 auto', paddingBottom: 60 }}>
@@ -1547,7 +1637,14 @@ export default function MusicPage() {
                                   <Music size={20} color="var(--text-tertiary)" />
                                 )}
                               </td>
-                              <td style={{ fontWeight: 500 }}>{t.title}</td>
+                              <td style={{ fontWeight: 500 }}>
+                                {t.title}
+                                {libraryTracks[libraryTrackKey(t)] && (
+                                  <span className="badge" style={{ marginLeft: 6, fontSize: '0.68rem', padding: '1px 5px', background: 'rgba(16, 185, 129, 0.12)', color: 'var(--success)' }} title="Already in your Jellyfin library">
+                                    In Jellyfin
+                                  </span>
+                                )}
+                              </td>
                               <td style={{ color: 'var(--text-secondary)' }}>
                                 <span
                                   style={{ cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2 }}
@@ -1664,9 +1761,12 @@ export default function MusicPage() {
                           <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                             <RefreshCw size={13} className="spin" /> Checking Jellyfin library…
                           </span>
-                        ) : jellyfinAlbumData?.inLibrary ? (
+                        ) : albumOwnedCount > 0 ? (
                           <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success)', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', fontSize: '0.82rem' }}>
-                            <CheckCircle2 size={14} /> In Jellyfin Library ({jellyfinAlbumData.trackCount} {jellyfinAlbumData.trackCount === 1 ? 'track' : 'tracks'})
+                            <CheckCircle2 size={14} />
+                            {albumOwnedCount >= (selectedAlbum.tracks?.length || 0)
+                              ? 'Whole album is in Jellyfin'
+                              : `${albumOwnedCount} of ${selectedAlbum.tracks.length} songs in Jellyfin`}
                           </span>
                         ) : (
                           <span className="badge" style={{ background: 'rgba(255, 255, 255, 0.05)', color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', fontSize: '0.82rem' }}>
@@ -1793,11 +1893,13 @@ export default function MusicPage() {
                   <button
                     type="button"
                     className="btn btn-primary"
-                    disabled={downloadingAlbum || (selectedAlbum.tracks || []).length === 0}
+                    disabled={downloadingAlbum || (selectedAlbum.tracks || []).length === 0 || albumMissingCount === 0}
                     onClick={() => handleDownloadAlbum(false, false)}
                   >
                     {downloadingAlbum ? <RefreshCw size={16} className="spin" /> : <Download size={16} />}
-                    Download Entire Album ({selectedAlbum.tracks?.length || 0} tracks)
+                    {albumOwnedCount > 0
+                      ? `Download Missing Songs (${albumMissingCount})`
+                      : `Download Entire Album (${selectedAlbum.tracks?.length || 0} tracks)`}
                   </button>
 
                   <button
@@ -1910,10 +2012,7 @@ export default function MusicPage() {
                         const isDownloading = job?.status === 'downloading';
                         const isQueued = job?.status === 'queued';
                         const isCompleted = job?.status === 'completed';
-                        const inJellyfin = jellyfinAlbumData?.tracks?.some((jt) =>
-                          (jt.trackNumber && jt.trackNumber === t.trackNumber) ||
-                          (jt.name && jt.name.toLowerCase().trim() === t.title.toLowerCase().trim())
-                        );
+                        const inJellyfin = !!libraryTracks[libraryTrackKey(t)];
 
                         return (
                           <tr key={t.trackNumber} style={{ backgroundColor: isSelected ? 'rgba(91, 109, 248, 0.04)' : undefined }}>

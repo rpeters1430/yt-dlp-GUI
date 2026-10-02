@@ -3651,6 +3651,20 @@ a.library-icon-link:hover { color: var(--text); background: var(--surface-hover)
   border-radius: var(--radius-pill);
   padding: 3px 8px;
 }
+.badge-in-library {
+  background: rgba(16, 185, 129, 0.9) !important;
+  color: #fff !important;
+  font-weight: 700 !important;
+  border-radius: var(--radius-pill);
+  padding: 3px 8px;
+}
+.badge-partial-library {
+  background: rgba(245, 158, 11, 0.9) !important;
+  color: #fff !important;
+  font-weight: 700 !important;
+  border-radius: var(--radius-pill);
+  padding: 3px 8px;
+}
 .btn-music-active {
   background: linear-gradient(135deg, var(--accent-music) 0%, var(--accent-cyan) 100%) !important;
   color: #fff !important;

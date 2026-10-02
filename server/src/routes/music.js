@@ -1,5 +1,7 @@
 const express = require('express');
 const music = require('../services/music');
+const jellyfinSync = require('../services/jellyfinSync');
+const jellyfinMusic = require('../services/jellyfinMusic');
 const db = require('../db');
 const scheduler = require('../services/scheduler');
 const { createRepository } = require('../services/watch/repository');
@@ -143,11 +145,30 @@ router.post('/download', async (req, res) => {
     audioQuality,
     musicFolder,
     saveCover = true,
+    skipInLibrary = false,
   } = req.body || {};
 
-  const items = Array.isArray(tracks) ? tracks : (track ? [track] : []);
+  let items = Array.isArray(tracks) ? tracks : (track ? [track] : []);
   if (items.length === 0) {
     return res.status(400).json({ error: 'At least one track must be specified' });
+  }
+
+  // Leave out songs Jellyfin's music library already has. Best-effort: if Jellyfin can't be
+  // reached, everything is downloaded rather than failing the request.
+  const skipped = [];
+  if (skipInLibrary) {
+    try {
+      const index = await jellyfinMusic.getIndex(jellyfinSync.getSyncConfig());
+      if (index) {
+        items = items.filter((item) => {
+          const owned = jellyfinMusic.matchTrack(index, { artist: item.artist || item.albumArtist, title: item.title });
+          if (owned) skipped.push(item.title);
+          return !owned;
+        });
+      }
+    } catch (err) {
+      console.error('[music:download] Jellyfin library check failed, downloading everything:', err.message);
+    }
   }
 
   const settings = music.getMusicSettings();
@@ -172,7 +193,7 @@ router.post('/download', async (req, res) => {
     }
   }
 
-  res.json({ enqueued: jobs.filter((j) => !j.error).length, total: items.length, jobs });
+  res.json({ enqueued: jobs.filter((j) => !j.error).length, total: items.length + skipped.length, skipped, jobs });
 });
 
 // List music watches

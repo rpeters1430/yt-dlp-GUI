@@ -2,6 +2,7 @@ const path = require('path');
 const cron = require('node-cron');
 const db = require('../db');
 const jellyfin = require('./jellyfin');
+const jellyfinMusic = require('./jellyfinMusic');
 
 function getSetting(key, fallback = '') {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
@@ -54,7 +55,8 @@ async function syncWatch(watchId, { config } = {}) {
   }
 
   const userId = await jellyfin.resolveUserId(cfg.url, cfg.apiKey, cfg.userId);
-  const basenameMap = await jellyfin.getLibraryItemsByBasename(cfg.url, cfg.apiKey, userId);
+  const isMusic = !!watch.is_music;
+  const basenameMap = await jellyfin.getLibraryItemsByBasename(cfg.url, cfg.apiKey, userId, { includeAudio: isMusic });
 
   const itemIds = [];
   let missingFromLibrary = 0;
@@ -88,7 +90,7 @@ async function syncWatch(watchId, { config } = {}) {
   let alreadyPresent = 0;
 
   if (!playlistId) {
-    playlistId = await jellyfin.createPlaylist(cfg.url, cfg.apiKey, userId, playlistName, itemIds);
+    playlistId = await jellyfin.createPlaylist(cfg.url, cfg.apiKey, userId, playlistName, itemIds, isMusic ? 'Audio' : 'Video');
     added = itemIds.length;
   } else {
     const existing = existingIds || new Set();
@@ -141,6 +143,7 @@ function scheduleLibraryScan(delayMs = 6000) {
     try {
       console.log('[jellyfin] Triggering debounced Jellyfin library refresh scan...');
       await jellyfin.refreshLibrary(cfg.url, cfg.apiKey);
+      jellyfinMusic.invalidate();
       console.log('[jellyfin] Jellyfin library refresh scan triggered successfully');
     } catch (err) {
       console.error(`[jellyfin] Automated library refresh failed: ${err.message}`);

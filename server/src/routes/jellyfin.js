@@ -3,6 +3,7 @@ const db = require('../db');
 const { requireAuth } = require('../auth');
 const jellyfin = require('../services/jellyfin');
 const jellyfinSync = require('../services/jellyfinSync');
+const jellyfinMusic = require('../services/jellyfinMusic');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -74,13 +75,15 @@ router.post('/refresh', async (req, res) => {
   }
   try {
     await jellyfin.refreshLibrary(cfg.url, cfg.apiKey);
+    jellyfinMusic.invalidate();
     res.json({ success: true, message: 'Jellyfin library refresh scan initiated' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Checks if a given music artist/album already exists in Jellyfin
+// Checks if a given music artist/album already exists in Jellyfin, and which of its songs.
+// Pass `tracks` (JSON array of titles) to get a per-title answer for an album's tracklist.
 router.get('/music-check', async (req, res) => {
   const { artist, album } = req.query || {};
   const cfg = jellyfinSync.getSyncConfig();
@@ -88,10 +91,48 @@ router.get('/music-check', async (req, res) => {
     return res.json({ configured: false, inLibrary: false, tracks: [] });
   }
   try {
-    const result = await jellyfin.checkMusicAlbum(cfg.url, cfg.apiKey, cfg.userId, { artist, album });
-    res.json({ configured: true, ...result });
+    const index = await jellyfinMusic.getIndex(cfg);
+    const match = jellyfinMusic.matchAlbum(index, { artist, album });
+    res.json({
+      configured: true,
+      inLibrary: !!match.album || match.tracks.length > 0,
+      albumId: match.album ? match.album.id : null,
+      albumName: match.album ? match.album.name : (match.tracks[0] ? match.tracks[0].album : null),
+      trackCount: match.tracks.length,
+      tracks: match.tracks.map((t) => ({ id: t.id, name: t.name, trackNumber: t.trackNumber, discNumber: t.discNumber })),
+    });
   } catch (err) {
     res.json({ configured: true, inLibrary: false, error: err.message, tracks: [] });
+  }
+});
+
+// Batch lookup for search results: which releases and songs are already in Jellyfin.
+//   body: { albums: [{ id, artist, name, trackCount }], tracks: [{ key, artist, title }] }
+//   returns: { configured, albums: { [id]: { status, ownedTracks, totalTracks } }, tracks: { [key]: bool } }
+router.post('/music-library', async (req, res) => {
+  const { albums = [], tracks = [] } = req.body || {};
+  if (!Array.isArray(albums) || !Array.isArray(tracks)) {
+    return res.status(400).json({ error: 'albums and tracks must be arrays' });
+  }
+  const cfg = jellyfinSync.getSyncConfig();
+  if (!cfg.url || !cfg.apiKey) {
+    return res.json({ configured: false, albums: {}, tracks: {} });
+  }
+  try {
+    const index = await jellyfinMusic.getIndex(cfg);
+    const albumResults = {};
+    for (const a of albums.slice(0, 500)) {
+      if (!a || a.id === undefined || a.id === null) continue;
+      albumResults[a.id] = jellyfinMusic.albumStatus(index, a);
+    }
+    const trackResults = {};
+    for (const t of tracks.slice(0, 500)) {
+      if (!t || t.key === undefined || t.key === null) continue;
+      trackResults[t.key] = !!jellyfinMusic.matchTrack(index, t);
+    }
+    res.json({ configured: true, albums: albumResults, tracks: trackResults });
+  } catch (err) {
+    res.json({ configured: true, error: err.message, albums: {}, tracks: {} });
   }
 });
 

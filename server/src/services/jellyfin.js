@@ -127,13 +127,13 @@ async function getPlayedBasenames(baseUrl, apiKey, userId) {
   return combined;
 }
 
-// Maps every video library item's on-disk basename to its Jellyfin item ID, for the given
+// Maps every video (or, for music watches, audio) library item's on-disk basename to its Jellyfin item ID, for the given
 // user's visible library. Used to translate a locally-downloaded file into the Jellyfin item
 // that (once the library has scanned it) represents it, so it can be added to a playlist.
-async function getLibraryItemsByBasename(baseUrl, apiKey, userId) {
+async function getLibraryItemsByBasename(baseUrl, apiKey, userId, { includeAudio = false } = {}) {
   const qs = new URLSearchParams({
     Recursive: 'true',
-    IncludeItemTypes: 'Movie,Episode,Video',
+    IncludeItemTypes: includeAudio ? 'Audio' : 'Movie,Episode,Video',
     Fields: 'Path',
   });
   const data = await jellyfinFetch(baseUrl, apiKey, `/Users/${encodeURIComponent(userId)}/Items?${qs}`);
@@ -175,10 +175,10 @@ async function getPlaylistItemIds(baseUrl, apiKey, userId, playlistId) {
   }
 }
 
-async function createPlaylist(baseUrl, apiKey, userId, name, itemIds) {
+async function createPlaylist(baseUrl, apiKey, userId, name, itemIds, mediaType = 'Video') {
   const data = await jellyfinRequest(baseUrl, apiKey, '/Playlists', {
     method: 'POST',
-    body: { Name: name, Ids: itemIds, UserId: userId, MediaType: 'Video' },
+    body: { Name: name, Ids: itemIds, UserId: userId, MediaType: mediaType },
   });
   return data && data.Id;
 }
@@ -200,56 +200,29 @@ async function refreshLibrary(baseUrl, apiKey) {
   return jellyfinRequest(baseUrl, apiKey, '/Library/Refresh', { method: 'POST' });
 }
 
-// Searches the user's Jellyfin library to check if an album or its tracks are already present
-async function checkMusicAlbum(baseUrl, apiKey, userId, { artist, album }) {
-  if (!baseUrl || !apiKey || !album) return { inLibrary: false, tracks: [] };
-  const uid = userId ? await resolveUserId(baseUrl, apiKey, userId) : null;
-  const uidPart = uid ? `/Users/${encodeURIComponent(uid)}` : '';
-  const qs = new URLSearchParams({
-    Recursive: 'true',
-    IncludeItemTypes: 'MusicAlbum,Audio',
-    SearchTerm: album,
-    Fields: 'Path,Artists,Album,IndexNumber,ParentIndexNumber',
-  });
-  let data;
-  try {
-    data = await jellyfinFetch(baseUrl, apiKey, `${uidPart}/Items?${qs}`);
-  } catch (err) {
-    console.error(`[jellyfin] checkMusicAlbum failed: ${err.message}`);
-    return { inLibrary: false, tracks: [] };
+// Pages through every MusicAlbum or Audio item visible to the user (or the whole server when no
+// user is given). Only the default BaseItemDto fields are needed (Name, Album, AlbumArtist,
+// Artists, IndexNumber, ParentIndexNumber), so images and user data are skipped to keep large
+// libraries cheap to pull.
+async function fetchMusicItems(baseUrl, apiKey, userId, itemType, { pageSize = 5000 } = {}) {
+  const uidPart = userId ? `/Users/${encodeURIComponent(userId)}` : '';
+  const items = [];
+  for (let start = 0; ; start += pageSize) {
+    const qs = new URLSearchParams({
+      Recursive: 'true',
+      IncludeItemTypes: itemType,
+      EnableImages: 'false',
+      EnableUserData: 'false',
+      StartIndex: String(start),
+      Limit: String(pageSize),
+    });
+    const data = await jellyfinFetch(baseUrl, apiKey, `${uidPart}/Items?${qs}`);
+    const page = (data && data.Items) || [];
+    items.push(...page);
+    const total = data && typeof data.TotalRecordCount === 'number' ? data.TotalRecordCount : null;
+    if (page.length < pageSize || (total !== null && items.length >= total)) break;
   }
-  const items = (data && data.Items) || [];
-
-  const normAlbum = album.toLowerCase().trim();
-  const normArtist = (artist || '').toLowerCase().trim();
-
-  // Find matching album item
-  const matchedAlbum = items.find((i) =>
-    i.Type === 'MusicAlbum' &&
-    i.Name && i.Name.toLowerCase().trim() === normAlbum &&
-    (!normArtist || (i.AlbumArtist && i.AlbumArtist.toLowerCase().includes(normArtist)) || (i.Artists && i.Artists.some((a) => a.toLowerCase().includes(normArtist))))
-  );
-
-  // Find matching audio tracks
-  const matchedTracks = items.filter((i) =>
-    i.Type === 'Audio' &&
-    i.Album && i.Album.toLowerCase().trim() === normAlbum &&
-    (!normArtist || (i.AlbumArtist && i.AlbumArtist.toLowerCase().includes(normArtist)) || (i.Artists && i.Artists.some((a) => a.toLowerCase().includes(normArtist))))
-  );
-
-  return {
-    inLibrary: !!matchedAlbum || matchedTracks.length > 0,
-    albumId: matchedAlbum ? matchedAlbum.Id : null,
-    albumName: matchedAlbum ? matchedAlbum.Name : (matchedTracks[0]?.Album || null),
-    trackCount: matchedTracks.length,
-    tracks: matchedTracks.map((t) => ({
-      id: t.Id,
-      name: t.Name,
-      trackNumber: t.IndexNumber || null,
-      discNumber: t.ParentIndexNumber || null,
-      path: t.Path || null,
-    })),
-  };
+  return items;
 }
 
 module.exports = {
@@ -263,6 +236,6 @@ module.exports = {
   createPlaylist,
   addPlaylistItems,
   refreshLibrary,
-  checkMusicAlbum,
+  fetchMusicItems,
   normalizeBaseUrl,
 };

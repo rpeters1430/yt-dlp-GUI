@@ -80,6 +80,7 @@ export const api = {
   refreshJellyfinLibrary: () => request('/jellyfin/refresh', { method: 'POST' }),
   getJellyfinStatus: () => request('/jellyfin/status'),
   checkJellyfinAlbum: (artist, album) => request(`/jellyfin/music-check?artist=${encodeURIComponent(artist || '')}&album=${encodeURIComponent(album || '')}`),
+  checkJellyfinMusicLibrary: (payload) => request('/jellyfin/music-library', { method: 'POST', body: JSON.stringify(payload) }),
 
   // Twitch
   getTwitchChannel: (channel) => request(`/twitch/channel/${encodeURIComponent(channel)}`),
