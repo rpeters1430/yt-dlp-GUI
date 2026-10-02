@@ -117,6 +117,12 @@ ensureColumn('watch_seen_ids', 'created_at', "TEXT DEFAULT (datetime('now'))");
 
 ensureColumn('downloads', 'watch_item_id', 'INTEGER');
 
+// Which YouTube channel tabs a watch follows (see services/watch/tabs.js), and which of them
+// already have their existing videos recorded as baseline. NULL baselined_tabs on a watch
+// that has been checked means it predates tabs, when the bare channel URL covered them all.
+ensureColumn('watches', 'content_types', 'TEXT');
+ensureColumn('watches', 'baselined_tabs', 'TEXT');
+
 // The watch ledger: one row per video a watch has discovered (watch_items) and one row per
 // check (watch_runs). An item being discovered is separate from it being eligible, and being
 // eligible is separate from its download succeeding — so a failed or over-the-limit video is

@@ -19,6 +19,21 @@ import {
 } from 'lucide-react';
 import { api } from '../api.js';
 
+// Mirrors server/src/services/watch/tabs.js: a bare YouTube channel page, which has tabs.
+const CHANNEL_ROOT_RE = /^https?:\/\/(?:www\.|m\.)?youtube\.com\/(?:@[^/?#]+|channel\/[\w-]+|c\/[^/?#]+|user\/[^/?#]+)(?:\/(?:featured|home))?\/?(?:[?#].*)?$/i;
+const CONTENT_TYPE_OPTIONS = [
+  { value: 'videos', label: 'Videos' },
+  { value: 'shorts', label: 'Shorts' },
+  { value: 'streams', label: 'Live streams' },
+];
+const ALL_CONTENT_TYPES = CONTENT_TYPE_OPTIONS.map((o) => o.value);
+
+function parseContentTypes(value) {
+  if (!value) return null;
+  const wanted = String(value).split(',').map((v) => v.trim());
+  return ALL_CONTENT_TYPES.filter((t) => wanted.includes(t));
+}
+
 const IGN_TRAILER_EXAMPLE = '\\b(movie|video game|gameplay|official)\\s+trailer\\b';
 
 // Syntax check only; the server also screens for unsafe (catastrophic-backtracking) patterns.
@@ -111,6 +126,7 @@ export default function WatchModal({
   const [rejectTitle, setRejectTitle] = useState('');
   const [minDuration, setMinDuration] = useState('');
   const [maxDuration, setMaxDuration] = useState('');
+  const [contentTypes, setContentTypes] = useState(['videos']);
 
   // Limits
   const [downloadLimit, setDownloadLimit] = useState(5);
@@ -169,6 +185,8 @@ export default function WatchModal({
       setRejectTitle(watch.reject_title || '');
       setMinDuration(watch.min_duration ? String(watch.min_duration) : '');
       setMaxDuration(watch.max_duration ? String(watch.max_duration) : '');
+      // Watches saved before tabs existed follow every tab.
+      setContentTypes(parseContentTypes(watch.content_types) || ALL_CONTENT_TYPES);
       setDownloadLimit(watch.download_limit || 5);
       setMaxScanEntries(watch.max_scan_entries || 30);
       setCleanupExempt(!!watch.cleanup_exempt);
@@ -194,6 +212,7 @@ export default function WatchModal({
       setRejectTitle('');
       setMinDuration('');
       setMaxDuration('');
+      setContentTypes(['videos']);
       setDownloadLimit(5);
       setMaxScanEntries(30);
       setCleanupExempt(false);
@@ -272,6 +291,13 @@ export default function WatchModal({
       return;
     }
 
+    const isChannel = CHANNEL_ROOT_RE.test(url.trim());
+    if (isChannel && contentTypes.length === 0) {
+      setActiveTab('general');
+      setFormError('Pick at least one of Videos, Shorts, or Live streams to follow.');
+      return;
+    }
+
     setSaving(true);
     setFormError('');
 
@@ -298,6 +324,7 @@ export default function WatchModal({
       maxScanEntries: Number(maxScanEntries) || 30,
       cleanupExempt: !!cleanupExempt,
       outputTemplate: outputTemplate.trim(),
+      contentTypes: isChannel ? contentTypes : undefined,
       thumbnail: inspectData?.thumbnail || watch?.thumbnail || null,
       channelName: inspectData?.channelName || watch?.channel_name || null,
       backfillCount: !isEdit ? Number(backfillCount) || 0 : undefined,
@@ -471,6 +498,35 @@ export default function WatchModal({
                       </div>
                     )}
                   </div>
+                )}
+
+                {CHANNEL_ROOT_RE.test(url.trim()) && (
+                  <fieldset className="watch-content-types">
+                    <legend className="field-label">Follow these channel tabs</legend>
+                    <div className="watch-content-type-options">
+                      {CONTENT_TYPE_OPTIONS.map((opt) => {
+                        const missing = inspectData?.isChannel && Array.isArray(inspectData.availableTabs)
+                          && !inspectData.availableTabs.includes(opt.value);
+                        return (
+                          <label key={opt.value} className="checkbox-label">
+                            <input
+                              type="checkbox"
+                              checked={contentTypes.includes(opt.value)}
+                              onChange={(e) => setContentTypes(e.target.checked
+                                ? ALL_CONTENT_TYPES.filter((t) => t === opt.value || contentTypes.includes(t))
+                                : contentTypes.filter((t) => t !== opt.value))}
+                            />
+                            <span>{opt.label}</span>
+                            {missing && <span className="muted small">(none yet)</span>}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <span className="muted small" style={{ display: 'block', marginTop: 4 }}>
+                      Each tab is checked separately. Turning a tab on later only records what's already
+                      there; its uploads from then on are downloaded.
+                    </span>
+                  </fieldset>
                 )}
 
                 <div className="watch-fields-row">
@@ -781,13 +837,13 @@ export default function WatchModal({
                     </label>
                     <input
                       type="number"
-                      placeholder="e.g. 60 (Skips YouTube Shorts)"
+                      placeholder="e.g. 60"
                       value={minDuration}
                       onChange={(e) => { setMinDuration(e.target.value); setPreviewRows(null); }}
                       min={0}
                     />
                     <span className="muted small" style={{ marginTop: 2, display: 'block' }}>
-                      Set to 60 to automatically skip YouTube Shorts under 1 min.
+                      Skips videos shorter than this. To skip Shorts on a channel, untick Shorts under General instead; channel listings don't include a Short's length.
                     </span>
                   </div>
 

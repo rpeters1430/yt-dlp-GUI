@@ -10,7 +10,7 @@ function setupWatchService(t, { clock } = {}) {
   const tmp = openTempDb();
   t.after(() => tmp.cleanup());
   const db = tmp.db;
-  const state = { entries: [], failInfo: null, started: [], calls: 0, delayMs: 0 };
+  const state = { entries: [], byUrl: null, urls: [], failInfo: null, started: [], calls: 0, delayMs: 0 };
   const now = () => (clock ? clock.now : new Date());
   const repository = createRepository(db, { now });
 
@@ -21,7 +21,12 @@ function setupWatchService(t, { clock } = {}) {
       state.calls++;
       if (state.delayMs) await new Promise((r) => setTimeout(r, state.delayMs));
       if (state.failInfo) throw new Error(state.failInfo);
-      return { _type: 'playlist', uploader: 'Example', entries: state.entries.slice(playlistStart - 1, playlistEnd) };
+      state.urls.push(url);
+      // `byUrl` maps a listing URL to its entries, or to an error message string.
+      const listing = state.byUrl ? state.byUrl[url] : state.entries;
+      if (listing === undefined) throw new Error(`No listing for ${url}`);
+      if (typeof listing === 'string') throw new Error(listing);
+      return { _type: 'playlist', uploader: 'Example', entries: listing.slice(playlistStart - 1, playlistEnd) };
     },
   };
   let seq = 0;

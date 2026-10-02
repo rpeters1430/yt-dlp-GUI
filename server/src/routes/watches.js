@@ -7,6 +7,7 @@ const { requireAuth } = require('../auth');
 const { validateWatchFilters, evaluateEntry } = require('../services/watch/filters');
 const { normalizeEntries } = require('../services/watch/discovery');
 const { ITEM_STATUS_FILTERS } = require('../services/watch/repository');
+const tabs = require('../services/watch/tabs');
 
 const FORMAT_SELECTOR_RE = /^[\w+\-/*.,:()!<>=\s]{0,200}$/;
 
@@ -81,11 +82,22 @@ function createWatchesRouter({
       }
       walk(info);
 
+      // For a bare channel URL yt-dlp lists one nested playlist per tab the channel has.
+      const isChannel = !!tabs.channelRoot(url);
+      const availableTabs = isChannel
+        ? tabs.CONTENT_TYPES.filter((tab) => (info.entries || []).some((e) => {
+          const tabUrl = String(e.webpage_url || e.url || '').replace(/[?#].*$/, '').replace(/\/$/, '');
+          return tabUrl.endsWith(`/${tab}`) || (tab === 'streams' && tabUrl.endsWith('/live'));
+        }))
+        : [];
+
       res.json({
         title,
         channelName,
         thumbnail,
         description,
+        isChannel,
+        availableTabs,
         isPlaylist: !!info.entries || info._type === 'playlist',
         entryCount: info.playlist_count || entries.length,
         recentVideos: entries.slice(0, 6),
@@ -159,6 +171,7 @@ function createWatchesRouter({
       backfillCount,
       cleanupExempt,
       outputTemplate,
+      contentTypes,
     } = req.body || {};
 
     if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
@@ -175,6 +188,12 @@ function createWatchesRouter({
 
     const templateError = outputTemplateError(outputTemplate);
     if (templateError) return res.status(400).json({ error: templateError });
+    const contentTypesError = tabs.validateContentTypes(contentTypes);
+    if (contentTypesError) return res.status(400).json({ error: contentTypesError });
+    // Only channel URLs have tabs; a new channel watch follows regular videos unless told otherwise.
+    const storedContentTypes = tabs.channelRoot(url)
+      ? (tabs.parseContentTypes(contentTypes) || tabs.DEFAULT_CONTENT_TYPES).join(',')
+      : null;
     const filterErrors = validateWatchFilters({ matchTitle: normalizePattern(matchTitle), rejectTitle: normalizePattern(rejectTitle) });
     if (filterErrors.length) return res.status(400).json({ error: filterErrors[0], errors: filterErrors });
 
@@ -193,13 +212,13 @@ function createWatchesRouter({
         quality, container, subtitles, sub_langs, embed_thumbnail,
         embed_metadata, embed_chapters, sponsorblock, sponsorblock_categories,
         match_title, reject_title, min_duration, max_duration,
-        download_limit, max_scan_entries, thumbnail, channel_name, cleanup_exempt, output_template, enabled
+        download_limit, max_scan_entries, thumbnail, channel_name, cleanup_exempt, output_template, content_types, enabled
       ) VALUES (
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, 1
+        ?, ?, ?, ?, ?, ?, ?, 1
       )
     `).run(
       url,
@@ -225,7 +244,8 @@ function createWatchesRouter({
       thumbnail || null,
       channelName || null,
       cleanupExempt ? 1 : 0,
-      normalizeTemplate(outputTemplate)
+      normalizeTemplate(outputTemplate),
+      storedContentTypes
     );
 
     const watch = repository.getWatch(Number(result.lastInsertRowid));
@@ -264,10 +284,16 @@ function createWatchesRouter({
       enabled,
       cleanupExempt,
       outputTemplate,
+      contentTypes,
     } = req.body || {};
 
     const templateError = outputTemplateError(outputTemplate);
     if (templateError) return res.status(400).json({ error: templateError });
+    const contentTypesError = tabs.validateContentTypes(contentTypes);
+    if (contentTypesError) return res.status(400).json({ error: contentTypesError });
+    const nextContentTypes = contentTypes !== undefined && contentTypes !== null && tabs.channelRoot(watch.url)
+      ? tabs.parseContentTypes(contentTypes).join(',')
+      : watch.content_types;
     const filterErrors = validateWatchFilters({
       matchTitle: matchTitle !== undefined ? normalizePattern(matchTitle) : null,
       rejectTitle: rejectTitle !== undefined ? normalizePattern(rejectTitle) : null,
@@ -318,7 +344,8 @@ function createWatchesRouter({
         max_scan_entries = ?,
         enabled = ?,
         cleanup_exempt = ?,
-        output_template = ?
+        output_template = ?,
+        content_types = ?
       WHERE id = ?
     `).run(
       name !== undefined ? (name || null) : watch.name,
@@ -343,6 +370,7 @@ function createWatchesRouter({
       isEnabled,
       isCleanupExempt,
       outputTemplate !== undefined ? normalizeTemplate(outputTemplate) : watch.output_template,
+      nextContentTypes,
       watch.id
     );
 

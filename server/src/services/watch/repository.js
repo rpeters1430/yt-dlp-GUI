@@ -282,7 +282,7 @@ function createRepository(db, { now = () => new Date() } = {}) {
       db.prepare("DELETE FROM watch_items WHERE watch_id = ? AND download_status != 'completed'").run(watchId);
       db.prepare('DELETE FROM watch_runs WHERE watch_id = ?').run(watchId);
       db.prepare('DELETE FROM watch_seen_ids WHERE watch_id = ?').run(watchId);
-      db.prepare("UPDATE watches SET last_checked_at = NULL, last_new_count = 0, last_status = 'ok', last_error = NULL WHERE id = ?").run(watchId);
+      db.prepare("UPDATE watches SET last_checked_at = NULL, baselined_tabs = NULL, last_new_count = 0, last_status = 'ok', last_error = NULL WHERE id = ?").run(watchId);
     })();
   }
 

@@ -1641,6 +1641,21 @@ button.btn-primary-gradient:hover:not(:disabled) {
   gap: 12px;
 }
 
+.watch-content-types {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px 12px;
+  margin: 0;
+  min-width: 0;
+}
+.watch-content-types legend {
+  padding: 0 4px;
+}
+.watch-content-type-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
 .watch-fields-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
