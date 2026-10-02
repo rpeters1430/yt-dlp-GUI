@@ -151,3 +151,16 @@ test('deleting a watch removes its items and runs', async (t) => {
   assert.equal(s.db.prepare('SELECT COUNT(*) AS n FROM watch_runs').get().n, 0);
   assert.equal((await call('DELETE', `/${id}`)).status, 404);
 });
+
+test('a watch cannot be deleted or reset while it is being checked', async (t) => {
+  const { s, call } = await startApp(t);
+  const id = s.addWatch();
+  s.state.entries = [entry('a')];
+  s.state.delayMs = 50;
+  const check = s.service.checkWatch(s.getWatch(id), { manual: true });
+  assert.equal((await call('DELETE', `/${id}`)).status, 409);
+  assert.equal((await call('POST', `/${id}/reset-seen`)).status, 409);
+  await check;
+  assert.equal((await call('DELETE', `/${id}`)).status, 200);
+  assert.equal(s.db.prepare('SELECT COUNT(*) AS n FROM watch_items').get().n, 0);
+});
