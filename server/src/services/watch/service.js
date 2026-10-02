@@ -1,7 +1,7 @@
 const path = require('path');
 const { evaluateEntry, watchConfigError } = require('./filters');
 const { scanToBoundary, HARD_SCAN_LIMIT } = require('./discovery');
-const { CONTENT_TYPES, scanSources, isMissingTabError, parseContentTypes } = require('./tabs');
+const { CONTENT_TYPES, scanSources, mergeNewestFirst, isMissingTabError, parseContentTypes, watchContentTypes } = require('./tabs');
 
 function extractThumbnail(info) {
   if (info.thumbnails && Array.isArray(info.thumbnails)) {
@@ -70,6 +70,7 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
     const baselined = new Set(watch.baselined_tabs == null ? CONTENT_TYPES : (parseContentTypes(watch.baselined_tabs) || []));
     const merged = { entries: [], info: null, boundaryReached: false, saturated: false, baselineOnly: new Set(), tabs, baselinedTabs: [] };
     const seen = new Set();
+    const perTab = [];
     let lastError = null;
 
     for (const source of sources) {
@@ -90,12 +91,14 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
         continue;
       }
       if (!merged.info) merged.info = scan.info;
+      const list = [];
       for (const entry of scan.entries) {
         if (seen.has(entry.id)) continue;
         seen.add(entry.id);
-        merged.entries.push(entry);
+        list.push(source.tab ? { ...entry, tab: source.tab } : entry);
         if (freshTab) merged.baselineOnly.add(entry.id);
       }
+      perTab.push(list);
       if (!freshTab) {
         merged.boundaryReached = merged.boundaryReached || scan.boundaryReached;
         merged.saturated = merged.saturated || scan.saturated;
@@ -108,6 +111,8 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
     // A tab switched off is dropped from the baselined list, so switching it back on later
     // re-baselines it instead of downloading everything posted there in between.
     if (lastError) throw lastError;
+    // Backfill and queue order rely on one newest-first list across tabs.
+    merged.entries = mergeNewestFirst(perTab);
     merged.info = merged.info || {};
     return merged;
   }
@@ -165,11 +170,14 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
       repository.transaction(() => {
         repository.reconcileOrphans(watch.id);
         repository.upsertItems(watch.id, items);
+        repository.setItemTabs(watch.id, scan.entries);
         repository.reevaluateItems(watch.id, (item) => evaluateEntry(itemEntry(item), watch));
       })();
 
       const budget = initial ? backfillCount : (watch.download_limit || 5);
-      const candidates = repository.queueCandidates(watch.id, repository.now(), budget);
+      // A tab switched off stops queueing, including its pending backlog and retries.
+      const selectedTabs = scanSources(watch).some((src) => src.tab) ? watchContentTypes(watch) : null;
+      const candidates = repository.queueCandidates(watch.id, repository.now(), budget, { tabs: selectedTabs });
       const queued = queueItems(watch, candidates, runId);
 
       const agg = repository.aggregateWatch(watch.id);
@@ -196,7 +204,8 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
         last_new_count: counts.new,
         thumbnail: latest.thumbnail || extractThumbnail(scan.info),
         channel_name: latest.channel_name || scan.info.uploader || scan.info.channel || null,
-        ...(scan.tabs.length ? { baselined_tabs: scan.baselinedTabs.join(',') } : {}),
+        // Only tabs still selected: a tab switched off while this check ran stays unbaselined.
+        ...(scan.tabs.length ? { baselined_tabs: scan.baselinedTabs.filter((t) => watchContentTypes(latest).includes(t)).join(',') } : {}),
       });
 
       log(watch, runId, `${run.status}: ${scan.entries.length} scanned, ${counts.baseline} baseline, ${counts.new} new, `

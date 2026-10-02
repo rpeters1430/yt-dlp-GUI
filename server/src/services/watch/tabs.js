@@ -30,7 +30,7 @@ function validateContentTypes(value) {
   const raw = Array.isArray(value) ? value : String(value).split(',');
   const bad = raw.map((v) => String(v).trim().toLowerCase()).filter((v) => v && !CONTENT_TYPES.includes(v));
   if (bad.length) return `Unknown content type: ${bad.join(', ')}`;
-  if (!parseContentTypes(value).length) return 'Pick at least one of Videos, Shorts, or Streams';
+  if (!(parseContentTypes(value) || []).length) return 'Pick at least one of Videos, Shorts, or Streams';
   return null;
 }
 
@@ -47,6 +47,24 @@ function scanSources(watch) {
   return watchContentTypes(watch).map((tab) => ({ tab, url: `${root}/${tab}` }));
 }
 
+// Merges per-tab listings (each newest first) into one newest-first list. Flat channel
+// listings usually carry no dates, so tabs are interleaved by position — the nth newest of
+// each tab together — and only when every entry has a date are they sorted by it instead.
+function mergeNewestFirst(lists) {
+  const merged = [];
+  const longest = Math.max(0, ...lists.map((l) => l.length));
+  for (let i = 0; i < longest; i++) {
+    for (const list of lists) if (i < list.length) merged.push(list[i]);
+  }
+  if (merged.length && merged.every((e) => e.publishedAt)) {
+    return merged
+      .map((e, i) => ({ e, i }))
+      .sort((a, b) => (a.e.publishedAt < b.e.publishedAt ? 1 : a.e.publishedAt > b.e.publishedAt ? -1 : a.i - b.i))
+      .map(({ e }) => e);
+  }
+  return merged;
+}
+
 // yt-dlp's error when a channel simply has no such tab (e.g. no live streams ever).
 function isMissingTabError(message) {
   return /does not have an? \w+ tab/i.test(String(message || ''));
@@ -60,5 +78,6 @@ module.exports = {
   validateContentTypes,
   watchContentTypes,
   scanSources,
+  mergeNewestFirst,
   isMissingTabError,
 };

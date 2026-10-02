@@ -294,6 +294,14 @@ function createWatchesRouter({
     const nextContentTypes = contentTypes !== undefined && contentTypes !== null && tabs.channelRoot(watch.url)
       ? tabs.parseContentTypes(contentTypes).join(',')
       : watch.content_types;
+    // A tab switched off loses its baseline right away, so switching it back on (even while
+    // the watch is paused or failing) re-baselines it rather than downloading the gap.
+    const nextBaselinedTabs = nextContentTypes !== watch.content_types && watch.last_checked_at
+      ? tabs.CONTENT_TYPES
+        .filter((t) => (watch.baselined_tabs == null || (tabs.parseContentTypes(watch.baselined_tabs) || []).includes(t)))
+        .filter((t) => tabs.parseContentTypes(nextContentTypes).includes(t))
+        .join(',')
+      : watch.baselined_tabs;
     const filterErrors = validateWatchFilters({
       matchTitle: matchTitle !== undefined ? normalizePattern(matchTitle) : null,
       rejectTitle: rejectTitle !== undefined ? normalizePattern(rejectTitle) : null,
@@ -345,7 +353,8 @@ function createWatchesRouter({
         enabled = ?,
         cleanup_exempt = ?,
         output_template = ?,
-        content_types = ?
+        content_types = ?,
+        baselined_tabs = ?
       WHERE id = ?
     `).run(
       name !== undefined ? (name || null) : watch.name,
@@ -371,6 +380,7 @@ function createWatchesRouter({
       isCleanupExempt,
       outputTemplate !== undefined ? normalizeTemplate(outputTemplate) : watch.output_template,
       nextContentTypes,
+      nextBaselinedTabs,
       watch.id
     );
 

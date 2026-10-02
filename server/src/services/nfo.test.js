@@ -130,3 +130,36 @@ test('a failed channel lookup still writes tvshow.nfo from the video metadata', 
   assert.match(fs.readFileSync(path.join(dir, 'Example Channel', 'tvshow.nfo'), 'utf8'), /<title>Example Channel<\/title>/);
   assert.equal(fs.existsSync(path.join(dir, 'Example Channel', 'poster.jpg')), false);
 });
+
+test('a channel with no banner is looked up once, not for every episode', async (t) => {
+  nfo._resetShowLookups();
+  const dir = tempDir(t);
+  stubFetch(t);
+  const noBanner = { ...channelInfo, thumbnails: channelInfo.thumbnails.filter((th) => !th.url.includes('banner')) };
+  let calls = 0;
+  const fetchChannelInfo = async () => { calls++; return noBanner; };
+  for (const id of ['a1', 'a2', 'a3']) {
+    const file = path.join(dir, 'Chan', 'Season 2026', `${id}.mp4`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '');
+    await nfo.writeSidecarFiles(file, info, { fetchChannelInfo });
+  }
+  assert.equal(calls, 1);
+  assert.equal(fs.existsSync(path.join(dir, 'Chan', 'fanart.jpg')), false);
+});
+
+test('a failed channel lookup is retried on the next episode', async (t) => {
+  nfo._resetShowLookups();
+  const dir = tempDir(t);
+  stubFetch(t);
+  let calls = 0;
+  const fetchChannelInfo = async () => { calls++; if (calls === 1) throw new Error('429'); return channelInfo; };
+  for (const id of ['b1', 'b2']) {
+    const file = path.join(dir, 'Chan', 'Season 2026', `${id}.mp4`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '');
+    await nfo.writeSidecarFiles(file, info, { fetchChannelInfo });
+  }
+  assert.equal(calls, 2);
+  assert.ok(fs.existsSync(path.join(dir, 'Chan', 'poster.jpg')));
+});

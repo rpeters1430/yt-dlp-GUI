@@ -155,9 +155,18 @@ function createRepository(db, { now = () => new Date() } = {}) {
 
   // Failures whose retry time has arrived come first (so a steady stream of new uploads
   // can't starve them), then pending items newest first.
-  function queueCandidates(watchId, at = now(), limit = Infinity) {
-    const rows = [...stmts.dueRetries.all(watchId, toSqlTime(at)), ...stmts.pendingCandidates.all(watchId)];
+  // `tabs`, when given, limits candidates to items found on those channel tabs (items with no
+  // tab, e.g. from a playlist or recorded before tabs existed, always qualify).
+  function queueCandidates(watchId, at = now(), limit = Infinity, { tabs = null } = {}) {
+    let rows = [...stmts.dueRetries.all(watchId, toSqlTime(at)), ...stmts.pendingCandidates.all(watchId)];
+    if (tabs) rows = rows.filter((r) => !r.source_tab || tabs.includes(r.source_tab));
     return Number.isFinite(limit) ? rows.slice(0, Math.max(0, limit)) : rows;
+  }
+
+  // Records which channel tab each item came from; an item's first tab wins.
+  function setItemTabs(watchId, entries) {
+    const stmt = db.prepare('UPDATE watch_items SET source_tab = ? WHERE watch_id = ? AND video_id = ? AND source_tab IS NULL');
+    for (const e of entries) if (e.tab) stmt.run(e.tab, watchId, e.id);
   }
 
   function linkQueuedJob(itemId, downloadId) {
@@ -318,6 +327,7 @@ function createRepository(db, { now = () => new Date() } = {}) {
     getRun: (id) => stmts.getRun.get(id),
     knownIds,
     upsertItems,
+    setItemTabs,
     reevaluateItems,
     queueCandidates,
     linkQueuedJob,

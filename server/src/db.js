@@ -177,6 +177,10 @@ CREATE INDEX IF NOT EXISTS idx_watch_runs_watch ON watch_runs (watch_id, started
 CREATE INDEX IF NOT EXISTS idx_downloads_watch_item ON downloads (watch_item_id);
 `);
 
+// The channel tab a watch item was found on (NULL for playlists and older items), so a tab
+// switched off stops downloading its backlog too.
+ensureColumn('watch_items', 'source_tab', 'TEXT');
+
 // One-time move of the old seen-ID list into the ledger. Every seen ID becomes a baseline
 // item (so upgrading never triggers a mass download); where a download for that video can be
 // found, its state carries over and the two are linked. Unmatched IDs stay plain baseline

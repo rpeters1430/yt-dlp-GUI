@@ -119,6 +119,27 @@ function channelArtwork(channelInfo) {
 
 const showsInProgress = new Set();
 
+// Show folders whose channel was looked up successfully, so a channel with no banner (fanart
+// stays missing) isn't looked up again for every episode. Failed lookups aren't recorded and
+// are retried on the next episode; entries expire so new artwork is eventually picked up.
+const SHOW_LOOKUP_TTL_MS = 24 * 60 * 60 * 1000;
+const SHOW_LOOKUP_MAX = 500;
+const showLookups = new Map(); // showDir -> time of last successful lookup
+
+function recentlyLookedUp(showDir) {
+  const at = showLookups.get(showDir);
+  if (at === undefined) return false;
+  if (Date.now() - at < SHOW_LOOKUP_TTL_MS) return true;
+  showLookups.delete(showDir);
+  return false;
+}
+
+function rememberLookup(showDir) {
+  showLookups.delete(showDir);
+  if (showLookups.size >= SHOW_LOOKUP_MAX) showLookups.delete(showLookups.keys().next().value);
+  showLookups.set(showDir, Date.now());
+}
+
 // Writes tvshow.nfo, poster.jpg and fanart.jpg into the show folder, each only if missing,
 // so files a user replaced by hand are left alone. `fetchChannelInfo(url)` returns the
 // channel's yt-dlp listing; it's only called when something is actually missing.
@@ -128,6 +149,7 @@ async function writeShowFiles(showDir, info, fetchChannelInfo) {
   const posterPath = path.join(showDir, 'poster.jpg');
   const fanartPath = path.join(showDir, 'fanart.jpg');
   if ([nfoPath, posterPath, fanartPath].every((p) => fs.existsSync(p))) return;
+  if (fs.existsSync(nfoPath) && recentlyLookedUp(showDir)) return;
 
   showsInProgress.add(showDir);
   try {
@@ -150,6 +172,9 @@ async function writeShowFiles(showDir, info, fetchChannelInfo) {
     const { posterUrl, fanartUrl } = channelArtwork(channelInfo);
     if (posterUrl && !fs.existsSync(posterPath)) await downloadThumbnail(posterUrl, posterPath);
     if (fanartUrl && !fs.existsSync(fanartPath)) await downloadThumbnail(fanartUrl, fanartPath);
+    // Remember only a complete success: the lookup worked and every image it offered was saved.
+    const saved = (url, p) => !url || fs.existsSync(p);
+    if (channelInfo && saved(posterUrl, posterPath) && saved(fanartUrl, fanartPath)) rememberLookup(showDir);
   } catch (err) {
     console.error(`[nfo] Failed to write show files for ${showDir}: ${err.message}`);
   } finally {
@@ -207,4 +232,5 @@ module.exports = {
   buildShowNfoXml,
   channelArtwork,
   tvLayout,
+  _resetShowLookups: () => showLookups.clear(),
 };

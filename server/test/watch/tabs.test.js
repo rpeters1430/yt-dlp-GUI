@@ -114,3 +114,45 @@ test('playlist watches are scanned as-is', async (t) => {
   assert.deepEqual(s.state.urls, [url]);
   assert.equal(s.getWatch(id).baselined_tabs, null);
 });
+
+test('an empty content type list is a validation error, not a crash', () => {
+  assert.match(tabs.validateContentTypes(''), /at least one/);
+});
+
+test('tabs are merged newest-first by position, or by date when every entry has one', () => {
+  const v = [{ id: 'v1' }, { id: 'v2' }, { id: 'v3' }];
+  const sh = [{ id: 's1' }];
+  assert.deepEqual(tabs.mergeNewestFirst([v, sh]).map((e) => e.id), ['v1', 's1', 'v2', 'v3']);
+  const dated = tabs.mergeNewestFirst([
+    [{ id: 'v1', publishedAt: '2026-09-01' }, { id: 'v2', publishedAt: '2026-08-01' }],
+    [{ id: 's1', publishedAt: '2026-10-01' }],
+  ]);
+  assert.deepEqual(dated.map((e) => e.id), ['s1', 'v1', 'v2']);
+});
+
+test('initial backfill picks the newest across tabs, not the whole Videos tab first', async (t) => {
+  const s = setupWatchService(t);
+  const id = s.addWatch({ url: ROOT, content_types: 'videos,shorts' });
+  s.state.byUrl = {
+    [`${ROOT}/videos`]: [entry('v1'), entry('v2')],
+    [`${ROOT}/shorts`]: [entry('s1', 'Short', null), entry('s2', 'Short', null)],
+  };
+  await s.service.checkWatch(s.getWatch(id), { manual: true, backfillCount: 2 });
+  assert.deepEqual(s.downloadsFor(id).map((d) => d.url.split('=')[1]).sort(), ['s1', 'v1']);
+});
+
+test('switching a tab off stops its pending backlog from being queued', async (t) => {
+  const s = setupWatchService(t);
+  const id = s.addWatch({ url: ROOT, content_types: 'videos,shorts', download_limit: 2 });
+  s.state.byUrl = { [`${ROOT}/videos`]: [entry('v0')], [`${ROOT}/shorts`]: [entry('s0', 'Short', null)] };
+  await s.service.checkWatch(s.getWatch(id), { manual: true });
+  s.state.byUrl[`${ROOT}/shorts`] = [...many(5, 'short'), entry('s0', 'Short', null)];
+  const first = await s.service.checkWatch(s.getWatch(id), { manual: true });
+  assert.equal(first.queuedCount, 2);
+  assert.equal(s.itemByVideo(id, 'short-3').source_tab, 'shorts');
+
+  s.db.prepare("UPDATE watches SET content_types = 'videos' WHERE id = ?").run(id);
+  const second = await s.service.checkWatch(s.getWatch(id), { manual: true });
+  assert.equal(second.queuedCount, 0, 'pending Shorts are not queued once Shorts is off');
+  assert.equal(s.getWatch(id).baselined_tabs, 'videos');
+});
