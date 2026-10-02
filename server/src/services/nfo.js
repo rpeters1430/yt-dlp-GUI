@@ -49,11 +49,12 @@ function buildNfoXml(info) {
 
 // Best-effort — a thumbnail fetch failure shouldn't fail the whole download or block the NFO
 // from being written.
-async function downloadThumbnail(url, destPath) {
+async function downloadThumbnail(url, destPath, shouldWrite) {
   try {
     const res = await fetch(url);
     if (!res.ok) return false;
     const buf = Buffer.from(await res.arrayBuffer());
+    if (shouldWrite && !shouldWrite()) return false;
     fs.writeFileSync(destPath, buf);
     return true;
   } catch (err) {
@@ -78,7 +79,9 @@ async function writeSidecarFiles(filepath, info) {
   }
 
   if (info.thumbnailUrl) {
-    await downloadThumbnail(info.thumbnailUrl, `${base}.jpg`);
+    // The media file can be deleted (Library or auto-delete) while the fetch is in flight;
+    // writing the poster afterwards would leave it orphaned.
+    await downloadThumbnail(info.thumbnailUrl, `${base}.jpg`, () => fs.existsSync(filepath));
   }
 }
 

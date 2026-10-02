@@ -297,6 +297,12 @@ async function runJob(job) {
       }
     }
 
+    // Removed while the thumbnail embed or tagging above ran.
+    if (!getJob(job.id)) {
+      console.log(`[queue] [job:${job.id}] Removed during post-processing; skipping completion`);
+      return;
+    }
+
     const completionMsg = result.stoppedByUser
       ? `Live stream recording stopped by user -> ${result.filepath || 'saved stream'}`
       : result.completedWithErrors

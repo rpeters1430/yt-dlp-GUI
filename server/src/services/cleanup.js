@@ -143,7 +143,11 @@ function listSidecars(filepath) {
   const names = [`${base}.nfo`, `${base}.jpg`];
   try {
     for (const name of fs.readdirSync(dir)) {
-      if (name.startsWith(`${base}.`) && SUBTITLE_EXTS.has(path.extname(name).toLowerCase())) names.push(name);
+      if (!name.startsWith(`${base}.`) || !SUBTITLE_EXTS.has(path.extname(name).toLowerCase())) continue;
+      // yt-dlp names subtitles "<base>.<ext>" or "<base>.<lang>.<ext>"; anything with more
+      // dots in between belongs to a sibling file with a longer name ("<base>.part2.mp4").
+      const middle = name.slice(base.length + 1, name.length - path.extname(name).length);
+      if (middle === '' || !middle.includes('.')) names.push(name);
     }
   } catch (_) {}
   return names.map((name) => path.join(dir, name));
@@ -161,11 +165,19 @@ function deleteDownloadFile(id, filepath, title, reason) {
     console.error(`[cleanup] Failed to delete file for download ${id} (${filepath}): ${err.message}`);
     return false;
   }
+  // A sidecar that couldn't be removed keeps the row as-is, so a later run (or retrying the
+  // Library delete) picks the leftovers up instead of orphaning them for good.
+  let sidecarFailed = false;
   for (const sidecar of sidecars) {
     try {
       fs.unlinkSync(sidecar);
-    } catch (_) {}
+    } catch (err) {
+      if (err.code === 'ENOENT') continue;
+      sidecarFailed = true;
+      console.error(`[cleanup] Failed to delete sidecar for download ${id} (${sidecar}): ${err.message}`);
+    }
   }
+  if (sidecarFailed) return false;
   console.log(`[cleanup] Deleted "${title || filepath}" (${reason})`);
   db.prepare("UPDATE downloads SET status = 'deleted', filepath = NULL WHERE id = ?").run(id);
   emitJobUpdate(id);
