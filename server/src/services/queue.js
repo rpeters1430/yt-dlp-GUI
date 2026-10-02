@@ -7,6 +7,12 @@ const jellyfinSync = require('./jellyfinSync');
 const outputTemplate = require('./outputTemplate');
 const notify = require('./notify');
 
+// The channel's own page, for its name, description, avatar and banner (TV-layout show
+// artwork). One entry per tab is enough; only the channel-level fields are used.
+function fetchChannelListing(channelUrl) {
+  return ytdlp.getInfo(channelUrl, { flatPlaylist: true, playlistStart: 1, playlistEnd: 1 });
+}
+
 function isNfoEnabled() {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'nfo_enabled'").get();
   return !row || row.value !== '0'; // opt-out, defaults to enabled
@@ -227,6 +233,8 @@ async function runJob(job) {
         thumbnailUrl: thumbnail,
         videoId,
         sourceUrl: info.webpage_url || job.url,
+        channelUrl: info.channel_url || null,
+        channelId: info.channel_id || null,
       };
       caps = siteProfiles.getCapabilities(info, job.url);
       appendLog(`Metadata: "${title || 'Unknown'}" (${extractor || 'extractor'}) [ID: ${videoId || 'unknown'}]`);
@@ -338,7 +346,7 @@ async function runJob(job) {
     // sidecar uses a Kodi <movie> schema and the raw YouTube thumbnail, which is meaningless
     // (and visually wrong) clutter next to a song file.
     if (nfoInfo && result.filepath && isNfoEnabled() && !extraOptions.isMusicDownload) {
-      nfo.writeSidecarFiles(result.filepath, nfoInfo)
+      nfo.writeSidecarFiles(result.filepath, nfoInfo, { fetchChannelInfo: fetchChannelListing })
         .catch((e) => console.error(`[queue] [job:${job.id}] Failed to write .nfo/poster: ${e.message}`));
     }
 

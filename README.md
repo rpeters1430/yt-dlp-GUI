@@ -44,6 +44,7 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 
 ### Watches (auto-download new uploads)
 - Point a Watch at a playlist or channel URL and it's checked on a schedule (every 30 minutes by default, adjustable per Watch) — new videos are downloaded automatically
+- **Channel tabs** — a Watch on a YouTube channel (`youtube.com/@name`) follows any mix of its **Videos**, **Shorts**, and **Live streams** tabs, each scanned separately (new channel Watches follow Videos only). Switching a tab on later records what's already on it as baseline, so old Shorts aren't suddenly downloaded
 - The first check records what's already there as a **baseline** and downloads nothing, unless you ask for a backfill of the newest N matching videos when creating the Watch; later checks queue anything new
 - **Include / exclude title regex** — optional, case-insensitive regular expressions, entered without `/…/` delimiters. A title must match the include pattern (if set) and must not match the exclude pattern; exclude wins when both match. Duration limits are applied after the title rules, and a video with unknown duration isn't excluded by them. For example, to follow only IGN's trailers: `\b(movie|video game|gameplay|official)\s+trailer\b`. Invalid or unsafe patterns are rejected when saving, and **Preview against recent videos** shows which of the 20 latest uploads would match before you save
 - Every discovered video is kept with what happened to it (baseline, filtered and why, pending, queued, completed, failed), viewable in the Watch's **Activity** view alongside a history of checks
@@ -251,9 +252,12 @@ Everything below is optional — set it in `.env` (or `environment:` in `docker-
 | Flat | `Video title [id].mp4` |
 | Channel / Year | `Example Channel/2026/Video title [id].mp4` |
 | Channel / date-prefixed title | `Example Channel/2026-09-14 Video title [id].mp4` |
+| TV show | `Example Channel/Season 2026/S2026E0914 - Video title [id].mp4` |
 | Site / Channel | `Youtube/Example Channel/Video title [id].mp4` |
 
 Or write your own — the page shows a live example of the result. Each Watch can override the global template in its **Quality & Format** tab, which is handy for sending a channel to its own media-server library (e.g. `Kids/%(uploader)s/%(title)s [%(id)s].%(ext)s`). Music downloads always use their Artist/Album layout.
+
+**TV show layout.** With the TV show preset (or any template that puts files in a `Season N` folder), each channel shows up as a series in a Jellyfin, Plex, Emby, or Kodi *Shows* library: the upload year is the season and the month and day are the episode number. The `.nfo` next to each video is written as an episode, and the channel folder gets a `tvshow.nfo` plus the channel's avatar as `poster.jpg` and banner as `fanart.jpg`. Those three are only written when missing, so you can replace them with your own. Two uploads on the same day share an episode number; both still show up.
 
 Templates must be relative to the downloads folder, can't contain `..`, must end in `.%(ext)s`, and must include `%(title)s` or `%(id)s`. Changing the template only affects new downloads; existing files aren't moved.
 

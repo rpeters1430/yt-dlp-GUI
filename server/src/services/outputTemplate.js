@@ -14,6 +14,10 @@ const PRESETS = [
   { id: 'flat', label: 'Flat — everything in one folder', template: '%(title).150B [%(id)s].%(ext)s' },
   { id: 'channel-year', label: 'Channel / Year', template: '%(uploader,extractor).80B/%(upload_date>%Y|Unknown)s/%(title).150B [%(id)s].%(ext)s' },
   { id: 'channel-dated', label: 'Channel / date-prefixed title (sorts by date)', template: '%(uploader,extractor).80B/%(upload_date>%Y-%m-%d|)s %(title).140B [%(id)s].%(ext)s' },
+  // Matches the "Show/Season N/SxxEyy" layout TV libraries in Jellyfin, Plex, Emby and Kodi
+  // expect: the channel is the show, the upload year the season, and month+day the episode.
+  // nfo.js recognizes the "Season N" folder and writes episode and show metadata to match.
+  { id: 'tv-show', label: 'TV show — Channel / Season (year) / S2026E1002 - title', template: '%(uploader,channel,extractor).80B/Season %(upload_date>%Y|0000)s/%(upload_date>S%YE%m%d - |)s%(title).120B [%(id)s].%(ext)s' },
   { id: 'site-channel', label: 'Site / Channel', template: '%(extractor_key)s/%(uploader,extractor).80B/%(title).150B [%(id)s].%(ext)s' },
 ];
 
