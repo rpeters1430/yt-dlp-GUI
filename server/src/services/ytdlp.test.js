@@ -348,3 +348,15 @@ test('buildDownloadArgs un-silences the ffmpeg downloader so its failures say wh
     assert.equal(args[i + 1], 'ffmpeg_i:-loglevel error', url);
   }
 });
+
+test('audio downloads prefer a source stream that avoids a lossy re-encode', () => {
+  const { buildFormatSelector, buildDownloadArgs } = require('./ytdlp');
+  assert.match(buildFormatSelector({ audioOnly: true, container: 'opus' }), /^bestaudio\[acodec\^=opus\]\//);
+  assert.match(buildFormatSelector({ audioOnly: true, container: 'm4a', audioQuality: '0' }), /^bestaudio\[ext=m4a\]\//);
+  // An explicit M4A bitrate means "re-encode the best stream", so no AAC preference.
+  assert.match(buildFormatSelector({ audioOnly: true, container: 'm4a', audioQuality: '256k' }), /^bestaudio\/best/);
+  assert.match(buildFormatSelector({ audioOnly: true, container: 'mp3', audioQuality: '320k' }), /^bestaudio\/best/);
+
+  const args = buildDownloadArgs('https://www.youtube.com/watch?v=abc123', { audioOnly: true, container: 'opus', audioQuality: '0' });
+  assert.equal(args[args.indexOf('-f') + 1].startsWith('bestaudio[acodec^=opus]'), true);
+});

@@ -22,12 +22,6 @@ function sanitizeFilename(name) {
   return cleaned;
 }
 
-function escapeFfmpegMeta(val) {
-  if (val == null) return '""';
-  const str = String(val).replace(/"/g, '\\"');
-  return `"${str}"`;
-}
-
 function upgradeArtworkUrl(url, size = 600) {
   if (!url || typeof url !== 'string') return null;
   return url.replace(/\/\d+x\d+bb\./i, `/${size}x${size}bb.`);
@@ -468,15 +462,13 @@ async function saveCoverArt(targetDir, artworkUrl) {
   }
 }
 
-async function fetchToTempFile(url) {
+async function fetchArtwork(url) {
   if (!url) return null;
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
     if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    const tmpPath = path.join(os.tmpdir(), `music-art-${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`);
-    fs.writeFileSync(tmpPath, buf);
-    return tmpPath;
+    const mime = /png/i.test(res.headers.get('content-type') || '') ? 'image/png' : 'image/jpeg';
+    return { data: Buffer.from(await res.arrayBuffer()), mime };
   } catch (err) {
     console.error(`[music] Failed to fetch artwork for embedding: ${err.message}`);
     return null;
@@ -488,45 +480,106 @@ function runFfmpeg(args) {
     const proc = spawn(ytdlp.getFfmpegBin(), args);
     let stderr = '';
     proc.stderr.on('data', (d) => (stderr += d));
-    proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`))));
+    proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(stderr.trim().split('\n').slice(-3).join(' ') || `ffmpeg exited with code ${code}`))));
     proc.on('error', reject);
   });
 }
 
-// mp3/m4a/flac all reliably support an embedded "attached picture" via ffmpeg's generic
-// -disposition:v attached_pic path; opus (ogg) and wav don't, so those just keep relying on
-// the folder-level cover.jpg from saveCoverArt for media-server artwork.
-const EMBEDDABLE_ARTWORK_FORMATS = new Set(['mp3', 'm4a', 'flac']);
+// Formats that take cover art as an ffmpeg "attached picture" video stream.
+const ATTACHED_PIC_FORMATS = new Set(['mp3', 'm4a', 'flac']);
+// Ogg (Opus/Vorbis) has no picture stream; cover art goes in a METADATA_BLOCK_PICTURE comment.
+const VORBIS_COMMENT_FORMATS = new Set(['opus', 'ogg']);
+const TAGGABLE_FORMATS = new Set([...ATTACHED_PIC_FORMATS, ...VORBIS_COMMENT_FORMATS, 'wav']);
 
-// yt-dlp's own --embed-thumbnail only has access to the matched YouTube video's own
-// thumbnail (a video frame/channel avatar), not the real album art this feature already
-// resolved via iTunes — so cover art is embedded here as its own post-download ffmpeg step
-// using the exact artwork URL the track was matched against, instead of relying on that flag.
-async function embedCoverArt(filepath, artworkUrl) {
-  if (!filepath || !artworkUrl || !fs.existsSync(filepath)) return;
+// FLAC picture block (big-endian), base64'd — the Vorbis-comment cover art convention.
+function buildMetadataBlockPicture({ data, mime }) {
+  const mimeBuf = Buffer.from(mime, 'ascii');
+  const desc = Buffer.from('Cover (front)', 'utf8');
+  const u32 = (n) => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32BE(n);
+    return b;
+  };
+  return Buffer.concat([
+    u32(3), // front cover
+    u32(mimeBuf.length), mimeBuf,
+    u32(desc.length), desc,
+    u32(0), u32(0), u32(0), u32(0), // width/height/depth/colors unknown
+    u32(data.length), data,
+  ]).toString('base64');
+}
+
+function escapeFfmetadata(val) {
+  return String(val).replace(/[=;#\\\n]/g, (c) => `\\${c}`);
+}
+
+function buildMusicTags(meta = {}) {
+  const tags = {};
+  const set = (key, value) => {
+    if (value != null && String(value).trim() !== '') tags[key] = String(value).trim();
+  };
+  set('title', meta.title);
+  set('artist', meta.artist);
+  set('album_artist', meta.albumArtist || meta.artist);
+  set('album', meta.album);
+  if (meta.trackNumber) set('track', meta.totalTracks ? `${meta.trackNumber}/${meta.totalTracks}` : meta.trackNumber);
+  if (meta.discNumber) set('disc', meta.totalDiscs ? `${meta.discNumber}/${meta.totalDiscs}` : meta.discNumber);
+  set('date', meta.year);
+  set('genre', meta.genre);
+  return tags;
+}
+
+// Writes the iTunes-sourced tags and album art into the finished file as one ffmpeg remux.
+// Doing this ourselves after yt-dlp (rather than via ExtractAudio --postprocessor-args or
+// --embed-thumbnail/--embed-metadata) is what makes it reliable: ExtractAudio skips ffmpeg
+// entirely when the download is already in the target format (e.g. native M4A), so its args
+// would never apply, and yt-dlp's own embed steps use the YouTube title/uploader/thumbnail.
+// The original tags are replaced wholesale so YouTube's description/comment/URL don't leak in.
+async function tagMusicFile(filepath, meta = {}) {
+  if (!filepath || !fs.existsSync(filepath)) return { tagged: false, artwork: false };
   const ext = path.extname(filepath).slice(1).toLowerCase();
-  if (!EMBEDDABLE_ARTWORK_FORMATS.has(ext)) return;
+  if (!TAGGABLE_FORMATS.has(ext)) return { tagged: false, artwork: false };
 
-  const coverPath = await fetchToTempFile(artworkUrl);
-  if (!coverPath) return;
+  const tags = buildMusicTags(meta);
+  const artwork = (ATTACHED_PIC_FORMATS.has(ext) || VORBIS_COMMENT_FORMATS.has(ext))
+    ? await fetchArtwork(meta.artworkUrl)
+    : null;
+  if (artwork && VORBIS_COMMENT_FORMATS.has(ext)) {
+    tags.METADATA_BLOCK_PICTURE = buildMetadataBlockPicture(artwork);
+  }
 
-  const tempOut = `${filepath}.artwork-tmp${path.extname(filepath)}`;
+  const tmpBase = path.join(os.tmpdir(), `music-tag-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const metaPath = `${tmpBase}.ffmeta`;
+  const coverPath = artwork && ATTACHED_PIC_FORMATS.has(ext) ? `${tmpBase}.${artwork.mime === 'image/png' ? 'png' : 'jpg'}` : null;
+  const tempOut = `${filepath}.tag-tmp.${ext}`;
+
+  const lines = [';FFMETADATA1', ...Object.entries(tags).map(([k, v]) => `${k}=${escapeFfmetadata(v)}`)];
+  fs.writeFileSync(metaPath, `${lines.join('\n')}\n`);
+  if (coverPath) fs.writeFileSync(coverPath, artwork.data);
+
+  const args = ['-y', '-i', filepath, '-f', 'ffmetadata', '-i', metaPath];
+  if (coverPath) args.push('-i', coverPath);
+  args.push('-map', '0:a', '-map_metadata', '1', '-map_chapters', '-1');
+  // Ogg stores its comments per stream, so the stream's own (YouTube) tags must be replaced too.
+  if (VORBIS_COMMENT_FORMATS.has(ext)) args.push('-map_metadata:s:a', '1:g');
+  if (coverPath) {
+    args.push('-map', '2:v', '-disposition:v', 'attached_pic', '-metadata:s:v', 'title=Album cover', '-metadata:s:v', 'comment=Cover (front)');
+  }
+  args.push('-c', 'copy');
+  if (ext === 'mp3') args.push('-id3v2_version', '3');
+  args.push(tempOut);
+
   try {
-    await runFfmpeg([
-      '-y', '-i', filepath, '-i', coverPath,
-      '-map', '0:a', '-map', '1:v',
-      '-c', 'copy', '-id3v2_version', '3',
-      '-metadata:s:v', 'title=Album cover',
-      '-metadata:s:v', 'comment=Cover (front)',
-      '-disposition:v', 'attached_pic',
-      tempOut,
-    ]);
+    await runFfmpeg(args);
     fs.renameSync(tempOut, filepath);
+    return { tagged: true, artwork: !!artwork };
   } catch (err) {
-    console.error(`[music] Failed to embed cover art into ${filepath}: ${err.message}`);
     try { fs.unlinkSync(tempOut); } catch (_) {}
+    throw err;
   } finally {
-    try { fs.unlinkSync(coverPath); } catch (_) {}
+    for (const p of [metaPath, coverPath]) {
+      if (p) try { fs.unlinkSync(p); } catch (_) {}
+    }
   }
 }
 
@@ -600,23 +653,7 @@ async function enqueueMusicDownload({
   const titleStr = sanitizeFilename(track.title || 'Track');
   const outputTemplate = path.join(targetDir, `${discPrefix}${trackNumStr} - ${titleStr}.%(ext)s`);
 
-  // Build ID3 / Vorbis metadata arguments for FFmpeg via --postprocessor-args
   const albumArtist = track.albumArtist || track.artist;
-  const ppaParts = [
-    `-metadata title=${escapeFfmpegMeta(track.title)}`,
-    `-metadata artist=${escapeFfmpegMeta(track.artist)}`,
-    `-metadata album_artist=${escapeFfmpegMeta(albumArtist)}`,
-    `-metadata album=${escapeFfmpegMeta(track.album || 'Single')}`,
-    `-metadata track=${track.trackNumber || 1}/${track.totalTracks || track.trackNumber || 1}`,
-  ];
-  if (track.discNumber) ppaParts.push(`-metadata disc=${track.discNumber}/${track.totalDiscs || track.discNumber || 1}`);
-  if (track.year) {
-    ppaParts.push(`-metadata date=${escapeFfmpegMeta(track.year)}`);
-    ppaParts.push(`-metadata year=${escapeFfmpegMeta(track.year)}`);
-  }
-  if (track.genre) ppaParts.push(`-metadata genre=${escapeFfmpegMeta(track.genre)}`);
-
-  const ppa = `ExtractAudio+ffmpeg:${ppaParts.join(' ')}`;
 
   const jobId = queue.enqueue(youtubeUrl, {
     audioOnly: true,
@@ -626,14 +663,10 @@ async function enqueueMusicDownload({
       audioQuality: audioQuality || '320k',
       outputTemplate,
       sponsorblockRemove: 'music_offtopic',
-      // Deliberately NOT embedThumbnail/embedMetadata: yt-dlp's FFmpegMetadata/EmbedThumbnail
-      // postprocessors run *after* the ExtractAudio postprocessor-args below (see yt-dlp's
-      // get_postprocessors() ordering) and would stomp the clean iTunes-sourced tags with the
-      // raw YouTube title/uploader, and embed the video's own thumbnail instead of real album
-      // art. The metadata is fully handled by postprocessorArgs; artwork is embedded separately
-      // in queue.js via embedCoverArt() using the actual matched artwork URL.
+      // Deliberately NOT embedThumbnail/embedMetadata: those would tag the file with the raw
+      // YouTube title/uploader and the video's thumbnail. queue.js runs tagMusicFile() after
+      // the download instead, using the iTunes metadata and album art below.
       isMusicDownload: true,
-      postprocessorArgs: [ppa],
       musicMetadata: {
         title: track.title,
         artist: track.artist,
@@ -643,7 +676,7 @@ async function enqueueMusicDownload({
         totalTracks: track.totalTracks,
         discNumber: track.discNumber,
         totalDiscs: track.totalDiscs,
-        year: track.year,
+        year: track.year || track.releaseYear,
         genre: track.genre,
         artworkUrl: track.artwork,
       },
@@ -671,7 +704,9 @@ module.exports = {
   getMatchCandidates,
   inspectUrl,
   saveCoverArt,
-  embedCoverArt,
+  tagMusicFile,
+  buildMusicTags,
+  buildMetadataBlockPicture,
   getMusicSettings,
   updateMusicSettings,
   enqueueMusicDownload,
