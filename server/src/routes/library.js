@@ -13,7 +13,6 @@ const AUDIO_EXTS = new Set(['mp3', 'm4a', 'aac', 'flac', 'opus', 'ogg', 'oga', '
 // Chromium-based browsers for common codecs, so it's attempted; anything else (e.g. .ts)
 // is offered as a download instead.
 const PLAYABLE_EXTS = new Set(['mp4', 'm4v', 'webm', 'mov', 'mkv', 'mp3', 'm4a', 'aac', 'flac', 'opus', 'ogg', 'oga', 'wav']);
-const SUBTITLE_EXTS = new Set(['.vtt', '.srt', '.ass', '.ssa', '.lrc']);
 
 const SORTS = {
   newest: (a, b) => (b.created_at || '').localeCompare(a.created_at || ''),
@@ -179,24 +178,8 @@ router.delete('/:id/file', (req, res) => {
   const row = getCompletedRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'Not found in library' });
 
-  const abs = path.resolve(row.filepath);
-  const dir = path.dirname(abs);
-  const ext = path.extname(abs);
-  const base = path.basename(abs, ext);
-  const sidecars = [`${base}.nfo`, `${base}.jpg`];
-  try {
-    for (const name of fs.readdirSync(dir)) {
-      if (name.startsWith(`${base}.`) && SUBTITLE_EXTS.has(path.extname(name).toLowerCase())) sidecars.push(name);
-    }
-  } catch (_) {}
-
-  if (!cleanup.deleteDownloadFile(row.id, abs, row.title, 'deleted from Library')) {
+  if (!cleanup.deleteDownloadFile(row.id, path.resolve(row.filepath), row.title, 'deleted from Library')) {
     return res.status(500).json({ error: 'Failed to delete the file (see server logs)' });
-  }
-  for (const name of sidecars) {
-    try {
-      fs.unlinkSync(path.join(dir, name));
-    } catch (_) {}
   }
   res.json({ ok: true });
 });
