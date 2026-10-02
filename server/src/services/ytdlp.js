@@ -438,7 +438,7 @@ const GETINFO_TIMEOUT_MS = parseInt(process.env.GETINFO_TIMEOUT_MS || String(2 *
 // minutes (see rememberInfo) instead of running yt-dlp again.
 async function getInfo(url, { resolveShare = true, reuseRecent = false, ...options } = {}) {
   const resolved = resolveShare ? await resolveShareUrl(url) : url;
-  const cacheable = !options.playlistEnd;
+  const cacheable = !options.playlistEnd && !options.playlistStart;
   if (reuseRecent && cacheable) {
     const recent = recallInfo(resolved);
     if (recent) {
@@ -485,7 +485,7 @@ function clearRecentCaches() {
   shareResolveCache.clear();
 }
 
-function getInfoResolved(url, { flatPlaylist = false, playlistEnd = null } = {}) {
+function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, playlistEnd = null } = {}) {
   return new Promise((resolve, reject) => {
     try {
       assertPublicUrl(url);
@@ -497,6 +497,7 @@ function getInfoResolved(url, { flatPlaylist = false, playlistEnd = null } = {})
     // offered as "wait for it to start". Callers check for empty formats themselves.
     const args = ['-J', '--ignore-no-formats-error', ...commonArgs()];
     if (flatPlaylist) args.push('--flat-playlist');
+    if (playlistStart && playlistStart > 0) args.push('--playlist-start', String(playlistStart));
     if (playlistEnd) args.push('--playlist-end', String(playlistEnd));
     args.push(url);
 
