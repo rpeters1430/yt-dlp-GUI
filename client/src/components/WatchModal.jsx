@@ -94,6 +94,8 @@ function formatDuration(sec) {
 export default function WatchModal({
   open,
   watch = null, // if set, edit mode; if null, create mode
+  initialUrl = '', // create mode: prefill the URL (e.g. a playlist pasted on the dashboard)
+  initialBackfill = 0, // create mode: preselected first-check behavior (a count, or 'all')
   onClose,
   onSave,
 }) {
@@ -193,11 +195,11 @@ export default function WatchModal({
       setOutputTemplate(watch.output_template || '');
       setInspectData(null);
     } else {
-      setUrl('');
+      setUrl(initialUrl || '');
       setName('');
       setCheckIntervalMins(30);
       setEnabled(true);
-      setBackfillCount(0);
+      setBackfillCount(initialBackfill);
       setAudioOnly(false);
       setQuality('');
       setContainer('mp4');
@@ -219,6 +221,8 @@ export default function WatchModal({
       setOutputTemplate('');
       setInspectData(null);
     }
+    if (!watch && initialUrl) handleInspect(initialUrl, { fillName: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, watch]);
 
   useEffect(() => {
@@ -226,7 +230,7 @@ export default function WatchModal({
     api.getOutputTemplate().then((data) => setGlobalTemplate(data.template)).catch(() => {});
   }, [open]);
 
-  async function handleInspect(urlToInspect) {
+  async function handleInspect(urlToInspect, { fillName = false } = {}) {
     const target = (urlToInspect || url).trim();
     if (!target) return;
     setInspecting(true);
@@ -234,7 +238,7 @@ export default function WatchModal({
     try {
       const data = await api.inspectWatch(target);
       setInspectData(data);
-      if (!name.trim() && data.title) {
+      if ((fillName || !name.trim()) && data.title) {
         setName(data.title);
       }
     } catch (err) {
@@ -327,7 +331,7 @@ export default function WatchModal({
       contentTypes: isChannel ? contentTypes : undefined,
       thumbnail: inspectData?.thumbnail || watch?.thumbnail || null,
       channelName: inspectData?.channelName || watch?.channel_name || null,
-      backfillCount: !isEdit ? Number(backfillCount) || 0 : undefined,
+      backfillCount: !isEdit ? (backfillCount === 'all' ? 'all' : Number(backfillCount) || 0) : undefined,
     };
 
     try {
@@ -564,7 +568,8 @@ export default function WatchModal({
                       First Check Behavior (Backfill Option)
                     </label>
                     <span className="muted small" style={{ display: 'block', marginBottom: 10 }}>
-                      Control whether you only want new uploads going forward, or want to download recent uploads right now.
+                      Control whether you only want new uploads going forward, or want to download what's already there right now.
+                      New uploads are downloaded automatically either way.
                     </span>
                     <div className="segmented backfill-segmented">
                       {[
@@ -572,6 +577,7 @@ export default function WatchModal({
                         { count: 1, label: '1 latest video' },
                         { count: 3, label: '3 latest' },
                         { count: 5, label: '5 latest' },
+                        { count: 'all', label: 'All existing videos' },
                       ].map((b) => (
                         <button
                           key={b.count}
@@ -583,6 +589,14 @@ export default function WatchModal({
                         </button>
                       ))}
                     </div>
+                    {backfillCount === 'all' && (
+                      <span className="muted small" style={{ display: 'block', marginTop: 8 }}>
+                        {inspectData?.entryCount > 6
+                          ? `Downloads all ${inspectData.entryCount} videos that match your filters, then keeps watching for new ones.`
+                          : 'Downloads every video that matches your filters, then keeps watching for new ones.'}
+                        {' '}Large channels can take a long time.
+                      </span>
+                    )}
                   </div>
                 )}
 

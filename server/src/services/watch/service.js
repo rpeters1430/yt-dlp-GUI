@@ -1,6 +1,6 @@
 const path = require('path');
 const { evaluateEntry, watchConfigError } = require('./filters');
-const { scanToBoundary, HARD_SCAN_LIMIT } = require('./discovery');
+const { scanToBoundary, HARD_SCAN_LIMIT, FULL_BACKFILL_LIMIT } = require('./discovery');
 const { CONTENT_TYPES, scanSources, mergeNewestFirst, isMissingTabError, parseContentTypes, watchContentTypes } = require('./tabs');
 
 function extractThumbnail(info) {
@@ -49,6 +49,13 @@ function buildDownloadOptions(watch, downloadDir) {
       isMusicDownload: !!watch.is_music,
     },
   };
+}
+
+// A backfill request is a count of newest videos, or 'all' (Infinity) for everything
+// already posted.
+function normalizeBackfill(value) {
+  if (value === 'all' || value === Infinity) return Infinity;
+  return Math.max(0, parseInt(value, 10) || 0);
 }
 
 function itemEntry(item) {
@@ -149,7 +156,12 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
       const initial = !watch.last_checked_at;
       const pageSize = Math.max(10, Math.min(100, watch.max_scan_entries || 30));
       const known = repository.knownIds(watch.id);
-      const hardLimit = initial ? Math.min(HARD_SCAN_LIMIT, Math.max(pageSize, backfillCount)) : HARD_SCAN_LIMIT;
+      // "All" backfills everything already posted: page back to the start of the listing and
+      // queue every eligible video on this first check.
+      const backfillAll = initial && backfillCount === Infinity;
+      const hardLimit = backfillAll
+        ? FULL_BACKFILL_LIMIT
+        : (initial ? Math.min(HARD_SCAN_LIMIT, Math.max(pageSize, backfillCount)) : HARD_SCAN_LIMIT);
       const scan = await scanAllSources(watch, { known, pageSize, hardLimit, initial });
 
       const counts = { baseline: 0, new: 0, backfill: 0, matched: 0, excluded: 0 };
@@ -182,6 +194,7 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
 
       const agg = repository.aggregateWatch(watch.id);
       const partial = !initial && scan.saturated;
+      const backfillTruncated = backfillAll && scan.saturated;
       const run = repository.finishRun(runId, {
         status: partial ? 'partial' : 'completed',
         scanned_count: scan.entries.length,
@@ -200,7 +213,9 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
       repository.updateWatchStatus(watch.id, {
         last_checked_at: repository.nowSql(),
         last_status: 'ok',
-        last_error: partial ? 'Scan limit reached before known content' : null,
+        last_error: partial
+          ? 'Scan limit reached before known content'
+          : (backfillTruncated ? `Only the newest ${FULL_BACKFILL_LIMIT} videos were downloaded; older ones were skipped` : null),
         last_new_count: counts.new,
         thumbnail: latest.thumbnail || extractThumbnail(scan.info),
         channel_name: latest.channel_name || scan.info.uploader || scan.info.channel || null,
@@ -251,7 +266,7 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
     }
     const resolvedTrigger = trigger || (!watch.last_checked_at ? 'initial' : (manual ? 'manual' : 'scheduled'));
     const runId = repository.createRun(watch.id, resolvedTrigger);
-    const promise = runCheck(watch, runId, { backfillCount: Math.max(0, parseInt(backfillCount, 10) || 0), trigger: resolvedTrigger })
+    const promise = runCheck(watch, runId, { backfillCount: normalizeBackfill(backfillCount), trigger: resolvedTrigger })
       .finally(() => running.delete(watch.id));
     running.set(watch.id, { runId, promise });
     return promise;
@@ -286,4 +301,4 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
   };
 }
 
-module.exports = { createWatchService, buildDownloadOptions, extractThumbnail };
+module.exports = { createWatchService, buildDownloadOptions, extractThumbnail, normalizeBackfill };

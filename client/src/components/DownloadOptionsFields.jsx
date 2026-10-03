@@ -63,6 +63,19 @@ export function normalizeUrl(input) {
   return raw;
 }
 
+// A YouTube playlist or channel link (not a single video, even one opened from a playlist):
+// something worth following as a Watch rather than downloading once.
+export function isWatchableUrl(url) {
+  if (!isYouTubeUrl(url) || /^ytsearch/i.test(String(url).trim())) return false;
+  try {
+    const parsed = new URL(normalizeUrl(url));
+    if (parsed.pathname === '/playlist' && parsed.searchParams.get('list')) return true;
+    return /^\/(?:@[^/]+|channel\/[\w-]+|c\/[^/]+|user\/[^/]+)(?:\/(?:featured|home|videos|shorts|streams))?\/?$/i.test(parsed.pathname);
+  } catch (_) {
+    return false;
+  }
+}
+
 export function isYouTubeUrl(url, extractor = null) {
   if (extractor && typeof extractor === 'string') {
     return /^youtube/i.test(extractor);

@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Eye,
   Radio,
+  Radar,
 } from 'lucide-react';
 import { api } from '../api.js';
 import { useModalA11y } from '../hooks/useModalA11y.js';
@@ -80,6 +81,7 @@ export default function MediaPreviewModal({
   urls = [],
   onClose,
   onConfirmDownload,
+  onWatchPlaylist = null, // when set, a single playlist gets a "Watch Playlist" button
   initialSettings = {},
 }) {
   const isBatch = urls.length > 1;
@@ -352,6 +354,17 @@ export default function MediaPreviewModal({
           <button type="button" className="btn-secondary" onClick={onClose}>
             Cancel
           </button>
+          {onWatchPlaylist && !isBatch && single?.data?.isPlaylist && (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => onWatchPlaylist(single.url)}
+              disabled={downloading}
+              title="Download every video now and keep downloading new ones as they're added"
+            >
+              <Radar size={15} /> Watch Playlist
+            </button>
+          )}
           <button
             type="button"
             onClick={handleDownload}

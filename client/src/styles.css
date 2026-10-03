@@ -857,7 +857,7 @@ button.theme-toggle-switch.active {
 .backfill-segmented {
   width: 100%;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
 }
 .backfill-segmented button {
   font-size: 12px;
@@ -1108,6 +1108,31 @@ button.btn-primary-gradient:hover:not(:disabled) {
   color: inherit;
 }
 .btn-link-sm:hover:not(:disabled) { background: transparent; opacity: 0.8; }
+
+.btn-link {
+  display: inline;
+  padding: 0;
+  font-size: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  background: transparent;
+  color: inherit;
+}
+.btn-link:hover:not(:disabled) { background: transparent; opacity: 0.8; }
+
+/* Playlist/channel hint on the dashboard: a pasted playlist can become a Watch. */
+.watch-suggestion { align-items: flex-start; line-height: 1.5; }
+.watch-suggestion > div { flex: 1; min-width: 0; }
+.watch-suggestion svg { margin-top: 3px; }
+.watch-suggestion-link {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  margin-top: 2px;
+}
 
 .log-copy-btn {
   padding: 2px 8px;

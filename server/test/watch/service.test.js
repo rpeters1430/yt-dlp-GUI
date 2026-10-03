@@ -165,3 +165,23 @@ test('migration: upgrading a watch with 89 seen IDs triggers no downloads', asyn
   assert.equal(created.length, 0);
   assert.equal(repo.aggregateWatch(id).cataloged_count, 89);
 });
+
+test('"all" backfill pages past the scan size and queues every eligible video, then watches for new ones', async (t) => {
+  const s = setupWatchService(t);
+  const id = s.addWatch({ max_scan_entries: 10, download_limit: 2, match_title: 'keep' });
+  s.state.entries = [
+    ...Array.from({ length: 24 }, (_, i) => entry(`old-${i + 1}`, `keep ${i + 1}`)),
+    entry('skip-1', 'other'),
+  ];
+  const initial = await s.service.checkWatch(s.getWatch(id), { manual: true, backfillCount: 'all', trigger: 'initial' });
+  assert.equal(initial.scannedCount, 25);
+  assert.equal(initial.backfillCount, 24);
+  assert.equal(initial.queuedCount, 24);
+  assert.equal(initial.baselineCount, 1);
+  assert.equal(s.repository.getWatch(id).last_error, null);
+
+  s.state.entries = [entry('fresh-1', 'keep new'), ...s.state.entries];
+  const second = await s.service.checkWatch(s.getWatch(id), { manual: true, trigger: 'manual' });
+  assert.equal(second.newCount, 1);
+  assert.equal(second.queuedCount, 1);
+});
