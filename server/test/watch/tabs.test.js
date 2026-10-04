@@ -156,3 +156,19 @@ test('switching a tab off stops its pending backlog from being queued', async (t
   assert.equal(second.queuedCount, 0, 'pending Shorts are not queued once Shorts is off');
   assert.equal(s.getWatch(id).baselined_tabs, 'videos');
 });
+
+test('"all" backfill limit is shared across a channel\'s tabs, newest first', async (t) => {
+  const { FULL_BACKFILL_LIMIT } = require('../../src/services/watch/discovery');
+  const s = setupWatchService(t);
+  const id = s.addWatch({ url: ROOT, content_types: 'videos,shorts', max_scan_entries: 100 });
+  const half = FULL_BACKFILL_LIMIT / 2 + 10;
+  const dated = (prefix, i) => ({ ...entry(`${prefix}-${i + 1}`), timestamp: 2e9 - i * 10 - (prefix === 's' ? 5 : 0) });
+  s.state.byUrl = {
+    [`${ROOT}/videos`]: Array.from({ length: half }, (_, i) => dated('v', i)),
+    [`${ROOT}/shorts`]: Array.from({ length: half }, (_, i) => dated('s', i)),
+  };
+  const result = await s.service.checkWatch(s.getWatch(id), { manual: true, backfillCount: 'all', trigger: 'initial' });
+  assert.equal(result.queuedCount, FULL_BACKFILL_LIMIT);
+  assert.equal(result.baselineCount, 20);
+  assert.equal(result.status, 'partial');
+});

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Radar,
@@ -51,6 +51,9 @@ function regexSyntaxError(value, label) {
 }
 import { previewTemplate } from '../outputTemplatePreview.js';
 import { useModalA11y } from '../hooks/useModalA11y.js';
+
+// Matches FULL_BACKFILL_LIMIT on the server: the most videos an "All existing videos" backfill queues.
+const FULL_BACKFILL_LIMIT = 5000;
 
 const CHECK_INTERVAL_OPTIONS = [
   { value: 15, label: 'Every 15 minutes' },
@@ -141,6 +144,9 @@ export default function WatchModal({
   const [inspecting, setInspecting] = useState(false);
   const [inspectData, setInspectData] = useState(null);
   const [inspectError, setInspectError] = useState('');
+  // Bumped on every inspect and every open/close, so a slow response for an earlier URL can't
+  // overwrite the form after the modal moved on.
+  const inspectSeq = useRef(0);
 
   // Submit state
   const [saving, setSaving] = useState(false);
@@ -160,6 +166,7 @@ export default function WatchModal({
     if (!open) return;
     setFormError('');
     setInspectError('');
+    setInspecting(false);
     setActiveTab('general');
     setPreviewRows(null);
     setPreviewError('');
@@ -222,6 +229,7 @@ export default function WatchModal({
       setInspectData(null);
     }
     if (!watch && initialUrl) handleInspect(initialUrl, { fillName: true });
+    return () => { inspectSeq.current++; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, watch]);
 
@@ -233,18 +241,20 @@ export default function WatchModal({
   async function handleInspect(urlToInspect, { fillName = false } = {}) {
     const target = (urlToInspect || url).trim();
     if (!target) return;
+    const seq = ++inspectSeq.current;
     setInspecting(true);
     setInspectError('');
     try {
       const data = await api.inspectWatch(target);
+      if (seq !== inspectSeq.current) return;
       setInspectData(data);
       if ((fillName || !name.trim()) && data.title) {
         setName(data.title);
       }
     } catch (err) {
-      setInspectError(err.message);
+      if (seq === inspectSeq.current) setInspectError(err.message);
     } finally {
-      setInspecting(false);
+      if (seq === inspectSeq.current) setInspecting(false);
     }
   }
 
@@ -591,9 +601,11 @@ export default function WatchModal({
                     </div>
                     {backfillCount === 'all' && (
                       <span className="muted small" style={{ display: 'block', marginTop: 8 }}>
-                        {inspectData?.entryCount > 6
-                          ? `Downloads all ${inspectData.entryCount} videos that match your filters, then keeps watching for new ones.`
-                          : 'Downloads every video that matches your filters, then keeps watching for new ones.'}
+                        {inspectData?.entryCount > FULL_BACKFILL_LIMIT
+                          ? `This source has ${inspectData.entryCount.toLocaleString()} videos; the newest ${FULL_BACKFILL_LIMIT.toLocaleString()} that match your filters are downloaded and older ones are skipped. New uploads keep downloading.`
+                          : inspectData?.entryCount > 6
+                            ? `Downloads all ${inspectData.entryCount} videos that match your filters, then keeps watching for new ones.`
+                            : `Downloads every video that matches your filters (up to ${FULL_BACKFILL_LIMIT.toLocaleString()}), then keeps watching for new ones.`}
                         {' '}Large channels can take a long time.
                       </span>
                     )}

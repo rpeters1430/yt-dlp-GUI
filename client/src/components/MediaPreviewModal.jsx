@@ -360,7 +360,7 @@ export default function MediaPreviewModal({
               className="btn-secondary"
               onClick={() => onWatchPlaylist(single.url)}
               disabled={downloading}
-              title="Download every video now and keep downloading new ones as they're added"
+              title="Download the videos already here (up to the newest 5,000) and keep downloading new ones as they're added"
             >
               <Radar size={15} /> Watch Playlist
             </button>

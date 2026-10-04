@@ -185,3 +185,27 @@ test('"all" backfill pages past the scan size and queues every eligible video, t
   assert.equal(second.newCount, 1);
   assert.equal(second.queuedCount, 1);
 });
+
+test('"all" backfill of exactly the limit downloads everything and is not reported as truncated', async (t) => {
+  const { FULL_BACKFILL_LIMIT } = require('../../src/services/watch/discovery');
+  const s = setupWatchService(t);
+  const id = s.addWatch({ max_scan_entries: 100 });
+  s.state.entries = many(FULL_BACKFILL_LIMIT, 'v');
+  const result = await s.service.checkWatch(s.getWatch(id), { manual: true, backfillCount: 'all', trigger: 'initial' });
+  assert.equal(result.queuedCount, FULL_BACKFILL_LIMIT);
+  assert.equal(result.status, 'completed');
+  assert.equal(s.repository.getWatch(id).last_error, null);
+});
+
+test('"all" backfill past the limit queues the newest ones and warns that older ones were skipped', async (t) => {
+  const { FULL_BACKFILL_LIMIT } = require('../../src/services/watch/discovery');
+  const s = setupWatchService(t);
+  const id = s.addWatch({ max_scan_entries: 100 });
+  s.state.entries = many(FULL_BACKFILL_LIMIT + 1, 'v');
+  const result = await s.service.checkWatch(s.getWatch(id), { manual: true, backfillCount: 'all', trigger: 'initial' });
+  assert.equal(result.queuedCount, FULL_BACKFILL_LIMIT);
+  assert.equal(result.baselineCount, 1);
+  assert.equal(result.status, 'partial');
+  assert.equal(s.itemByVideo(id, `v-${FULL_BACKFILL_LIMIT + 1}`).discovery_type, 'baseline');
+  assert.match(s.repository.getWatch(id).last_error, /older ones were skipped/);
+});

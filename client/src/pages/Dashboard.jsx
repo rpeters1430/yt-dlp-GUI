@@ -276,8 +276,8 @@ export default function Dashboard() {
               <div>
                 {singleWatchable ? (
                   <>
-                    This is a playlist or channel. Clicking <strong>Set up Watch</strong> downloads every video in it
-                    and keeps downloading new ones as they're added.{' '}
+                    This is a playlist or channel. Clicking <strong>Set up Watch</strong> downloads the videos already
+                    in it (up to the newest 5,000 that match your filters) and keeps downloading new ones as they're added.{' '}
                     <button type="button" className="btn-link" onClick={openPreview}>Download once instead</button>
                   </>
                 ) : (

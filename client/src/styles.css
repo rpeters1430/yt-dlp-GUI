@@ -734,6 +734,7 @@ button.icon-btn-neutral:hover:not(:disabled) { color: var(--text); background: v
 .alert-success { background: var(--success-soft); color: var(--success); }
 .alert-info { background: var(--accent-soft); color: var(--accent); }
 .alert-warning { background: var(--warning-soft); color: var(--warning); }
+.alert-warning { background: var(--warning-soft); color: var(--warning); }
 .alert > div { min-width: 0; }
 
 /* Small text-color/utility hooks used inline across pages */
