@@ -3,12 +3,13 @@ import { Link } from 'react-router-dom';
 import {
   ListChecks, CheckCircle2, XCircle, AlertCircle,
   Inbox, PartyPopper, Sparkles, SlidersHorizontal, ChevronDown, Globe,
-  ClipboardPaste, Trash2, Video, Tv, Music2, Clock,
+  ClipboardPaste, Trash2, Video, Tv, Music2, Clock, Radar,
 } from 'lucide-react';
 import { api } from '../api.js';
 import QueueItem from '../components/QueueItem.jsx';
 import MediaPreviewModal from '../components/MediaPreviewModal.jsx';
-import DownloadOptionsFields, { defaultDownloadOptions, isYouTubeUrl, capsFromUrl, mergeCapabilities, normalizeUrl } from '../components/DownloadOptionsFields.jsx';
+import WatchModal from '../components/WatchModal.jsx';
+import DownloadOptionsFields, { defaultDownloadOptions, isYouTubeUrl, isWatchableUrl, capsFromUrl, mergeCapabilities, normalizeUrl } from '../components/DownloadOptionsFields.jsx';
 import { useDownloads } from '../context/DownloadsContext.jsx';
 
 export default function Dashboard() {
@@ -19,6 +20,9 @@ export default function Dashboard() {
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [previewUrls, setPreviewUrls] = useState([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  // Playlist/channel link being set up as a Watch, and the confirmation shown afterwards.
+  const [watchUrl, setWatchUrl] = useState(null);
+  const [watchNotice, setWatchNotice] = useState(null);
 
   const {
     jobs,
@@ -42,6 +46,10 @@ export default function Dashboard() {
     () => parsedUrls.map(normalizeUrl).filter((u) => /^https?:\/\//i.test(u)),
     [parsedUrls]
   );
+
+  const watchableUrls = useMemo(() => validUrls.filter(isWatchableUrl), [validUrls]);
+  // A lone playlist or channel link goes straight to Watch setup instead of a one-off download.
+  const singleWatchable = validUrls.length === 1 && watchableUrls.length === 1;
 
   const hasUrls = validUrls.length > 0;
   const pastedCaps = useMemo(
@@ -92,8 +100,35 @@ export default function Dashboard() {
     e.preventDefault();
     setError('');
     if (validUrls.length === 0) return;
+    if (singleWatchable) {
+      setWatchUrl(validUrls[0]);
+      return;
+    }
+    openPreview();
+  }
+
+  function openPreview() {
     setPreviewUrls(validUrls);
     setPreviewModalOpen(true);
+  }
+
+  function handleWatchPlaylist(url) {
+    setPreviewModalOpen(false);
+    setWatchUrl(url);
+  }
+
+  async function handleSaveWatch(payload) {
+    const created = await api.addWatch(payload);
+    const watched = watchUrl;
+    // Take the link out of the box so it isn't downloaded a second time by accident.
+    setUrlText((prev) => prev.split(/[\r\n]+/)
+      .flatMap((line) => line.trim().split(/\s+/))
+      .filter((u) => u && normalizeUrl(u) !== watched)
+      .join('\n'));
+    setWatchNotice({
+      name: created.name || created.channel_name || watched,
+      all: payload.backfillCount === 'all',
+    });
   }
 
   // Enqueues one or more groups of { urls, options } produced by the analyze modal — a single
@@ -139,6 +174,14 @@ export default function Dashboard() {
         onClose={() => setPreviewModalOpen(false)}
         onConfirmDownload={handleConfirmDownload}
         initialSettings={options}
+        onWatchPlaylist={handleWatchPlaylist}
+      />
+      <WatchModal
+        open={!!watchUrl}
+        initialUrl={watchUrl || ''}
+        initialBackfill="all"
+        onClose={() => setWatchUrl(null)}
+        onSave={handleSaveWatch}
       />
       <div className="page-header">
         <div>
@@ -227,6 +270,43 @@ export default function Dashboard() {
             />
           </div>
 
+          {watchableUrls.length > 0 && (
+            <div className="alert alert-info watch-suggestion">
+              <Radar size={15} />
+              <div>
+                {singleWatchable ? (
+                  <>
+                    This is a playlist or channel. Clicking <strong>Set up Watch</strong> downloads the videos already
+                    in it (up to the newest 5,000 that match your filters) and keeps downloading new ones as they're added.{' '}
+                    <button type="button" className="btn-link" onClick={openPreview}>Download once instead</button>
+                  </>
+                ) : (
+                  <>
+                    {watchableUrls.length === 1 ? 'One link is a playlist or channel' : `${watchableUrls.length} links are playlists or channels`}.
+                    {' '}Watch to download everything and keep grabbing new videos:
+                    {watchableUrls.map((u) => (
+                      <button key={u} type="button" className="btn-link watch-suggestion-link" onClick={() => setWatchUrl(u)} title={u}>
+                        Watch {u.replace(/^https?:\/\/(www\.)?/i, '')}
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {watchNotice && (
+            <div className="alert alert-success watch-suggestion">
+              <CheckCircle2 size={15} />
+              <div>
+                Now watching <strong>{watchNotice.name}</strong>.{' '}
+                {watchNotice.all ? 'Existing videos are being queued and new ones will download automatically.' : 'New videos will download automatically.'}{' '}
+                <Link to="/watches">Open Watches</Link>
+              </div>
+              <button type="button" className="btn-ghost btn-sm" onClick={() => setWatchNotice(null)} aria-label="Dismiss">×</button>
+            </div>
+          )}
+
           {validUrls.length > 0 && (
             <div className="detected-platforms-row">
               {platformCounts.yt > 0 && (
@@ -269,6 +349,10 @@ export default function Dashboard() {
               <button type="submit" className="btn-primary-gradient" disabled={submitting || validUrls.length === 0}>
                 {submitting ? (
                   'Analyzing…'
+                ) : singleWatchable ? (
+                  <>
+                    <Radar size={14} /> Set up Watch
+                  </>
                 ) : (
                   <>
                     <Sparkles size={14} />

@@ -2,6 +2,10 @@
 // listing until it reaches a video the watch already knows about.
 
 const HARD_SCAN_LIMIT = 1000;
+// How far the first check of a "download everything" watch pages back. Larger than the
+// regular limit because it has to reach the start of the channel or playlist, not just the
+// last video the watch already knows.
+const FULL_BACKFILL_LIMIT = 5000;
 
 function pickThumbnail(node) {
   if (Array.isArray(node.thumbnails) && node.thumbnails.length) {
@@ -87,4 +91,4 @@ async function scanToBoundary({ getInfo, url, knownIds, pageSize = 30, hardLimit
   };
 }
 
-module.exports = { HARD_SCAN_LIMIT, normalizeEntries, scanToBoundary };
+module.exports = { HARD_SCAN_LIMIT, FULL_BACKFILL_LIMIT, normalizeEntries, scanToBoundary };

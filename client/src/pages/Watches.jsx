@@ -589,6 +589,14 @@ export default function Watches() {
                   ) : null}
                 </div>
 
+                {/* Warning from a check that finished but left something out (e.g. a capped backfill) */}
+                {!isError && w.last_error && w.last_status !== 'checking' && (
+                  <div className="alert alert-warning watch-card-alert">
+                    <AlertTriangle size={14} />
+                    <span>{w.last_error}</span>
+                  </div>
+                )}
+
                 {/* Error Banner if last check failed */}
                 {isError && w.last_error && (
                   <div className="alert alert-error watch-card-alert">

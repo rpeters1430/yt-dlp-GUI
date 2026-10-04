@@ -69,6 +69,18 @@ test('create returns at once and runs an initial check with the requested backfi
   assert.equal(runs[0].baseline_count, 2);
 });
 
+test('create with backfillCount "all" queues everything already posted', async (t) => {
+  const { s, call } = await startApp(t);
+  s.state.entries = [entry('a'), entry('b'), entry('c')];
+  const res = await call('POST', '/', { url: 'https://www.youtube.com/playlist?list=PLx', backfillCount: 'all' });
+  assert.equal(res.status, 200);
+  await settle();
+  const runs = (await call('GET', `/${res.body.id}/runs`)).body;
+  assert.equal(runs[0].backfill_count, 3);
+  assert.equal(runs[0].queued_count, 3);
+  assert.equal(runs[0].baseline_count, 0);
+});
+
 test('preview evaluates recent entries and persists nothing', async (t) => {
   const { s, call } = await startApp(t);
   s.state.entries = [entry('a', 'Official Trailer'), entry('b', 'Trailer reaction'), entry('c', 'Podcast')];

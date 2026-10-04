@@ -1,6 +1,6 @@
 const path = require('path');
 const { evaluateEntry, watchConfigError } = require('./filters');
-const { scanToBoundary, HARD_SCAN_LIMIT } = require('./discovery');
+const { scanToBoundary, HARD_SCAN_LIMIT, FULL_BACKFILL_LIMIT } = require('./discovery');
 const { CONTENT_TYPES, scanSources, mergeNewestFirst, isMissingTabError, parseContentTypes, watchContentTypes } = require('./tabs');
 
 function extractThumbnail(info) {
@@ -49,6 +49,13 @@ function buildDownloadOptions(watch, downloadDir) {
       isMusicDownload: !!watch.is_music,
     },
   };
+}
+
+// A backfill request is a count of newest videos, or 'all' (Infinity) for everything
+// already posted.
+function normalizeBackfill(value) {
+  if (value === 'all' || value === Infinity) return Infinity;
+  return Math.max(0, parseInt(value, 10) || 0);
 }
 
 function itemEntry(item) {
@@ -149,11 +156,20 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
       const initial = !watch.last_checked_at;
       const pageSize = Math.max(10, Math.min(100, watch.max_scan_entries || 30));
       const known = repository.knownIds(watch.id);
-      const hardLimit = initial ? Math.min(HARD_SCAN_LIMIT, Math.max(pageSize, backfillCount)) : HARD_SCAN_LIMIT;
+      // "All" backfills everything already posted, up to FULL_BACKFILL_LIMIT videos across all
+      // tabs: page back to the start of the listing and queue every eligible video on this
+      // first check. Each source scans one entry past the limit so a source holding exactly
+      // the limit isn't mistaken for a longer one.
+      const backfillAll = initial && backfillCount === Infinity;
+      const backfillLimit = backfillAll ? FULL_BACKFILL_LIMIT : backfillCount;
+      const hardLimit = backfillAll
+        ? FULL_BACKFILL_LIMIT + 1
+        : (initial ? Math.min(HARD_SCAN_LIMIT, Math.max(pageSize, backfillCount)) : HARD_SCAN_LIMIT);
       const scan = await scanAllSources(watch, { known, pageSize, hardLimit, initial });
 
       const counts = { baseline: 0, new: 0, backfill: 0, matched: 0, excluded: 0 };
-      let backfillLeft = initial ? backfillCount : 0;
+      let backfillLeft = initial ? backfillLimit : 0;
+      let backfillSkipped = 0; // eligible videos past the "all" limit, recorded as baseline
       const items = scan.entries.map((entry) => {
         if (known.has(entry.id)) return { entry };
         const { eligible, reason } = evaluateEntry(entry, watch);
@@ -161,7 +177,10 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
         if (scan.baselineOnly.has(entry.id)) discoveryType = 'baseline';
         else if (!initial) discoveryType = 'new';
         else if (eligible && backfillLeft > 0) { discoveryType = 'backfill'; backfillLeft--; }
-        else discoveryType = 'baseline';
+        else {
+          discoveryType = 'baseline';
+          if (backfillAll && eligible) backfillSkipped++;
+        }
         counts[discoveryType]++;
         if (discoveryType !== 'baseline') counts[eligible ? 'matched' : 'excluded']++;
         return { entry, discoveryType, filterStatus: eligible ? 'eligible' : 'excluded', filterReason: reason };
@@ -174,14 +193,17 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
         repository.reevaluateItems(watch.id, (item) => evaluateEntry(itemEntry(item), watch));
       })();
 
-      const budget = initial ? backfillCount : (watch.download_limit || 5);
+      const budget = initial ? backfillLimit : (watch.download_limit || 5);
       // A tab switched off stops queueing, including its pending backlog and retries.
       const selectedTabs = scanSources(watch).some((src) => src.tab) ? watchContentTypes(watch) : null;
       const candidates = repository.queueCandidates(watch.id, repository.now(), budget, { tabs: selectedTabs });
       const queued = queueItems(watch, candidates, runId);
 
       const agg = repository.aggregateWatch(watch.id);
-      const partial = !initial && scan.saturated;
+      // A full backfill that hit its limit is reported like a partial scan, so the Watch card
+      // says older videos were left out.
+      const backfillTruncated = backfillAll && (backfillSkipped > 0 || scan.saturated);
+      const partial = (!initial && scan.saturated) || backfillTruncated;
       const run = repository.finishRun(runId, {
         status: partial ? 'partial' : 'completed',
         scanned_count: scan.entries.length,
@@ -200,7 +222,9 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
       repository.updateWatchStatus(watch.id, {
         last_checked_at: repository.nowSql(),
         last_status: 'ok',
-        last_error: partial ? 'Scan limit reached before known content' : null,
+        last_error: backfillTruncated
+          ? `Only the newest ${FULL_BACKFILL_LIMIT} videos were downloaded; older ones were skipped`
+          : (partial ? 'Scan limit reached before known content' : null),
         last_new_count: counts.new,
         thumbnail: latest.thumbnail || extractThumbnail(scan.info),
         channel_name: latest.channel_name || scan.info.uploader || scan.info.channel || null,
@@ -251,7 +275,7 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
     }
     const resolvedTrigger = trigger || (!watch.last_checked_at ? 'initial' : (manual ? 'manual' : 'scheduled'));
     const runId = repository.createRun(watch.id, resolvedTrigger);
-    const promise = runCheck(watch, runId, { backfillCount: Math.max(0, parseInt(backfillCount, 10) || 0), trigger: resolvedTrigger })
+    const promise = runCheck(watch, runId, { backfillCount: normalizeBackfill(backfillCount), trigger: resolvedTrigger })
       .finally(() => running.delete(watch.id));
     running.set(watch.id, { runId, promise });
     return promise;
@@ -286,4 +310,4 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
   };
 }
 
-module.exports = { createWatchService, buildDownloadOptions, extractThumbnail };
+module.exports = { createWatchService, buildDownloadOptions, extractThumbnail, normalizeBackfill };

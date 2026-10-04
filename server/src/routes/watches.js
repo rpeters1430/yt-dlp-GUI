@@ -8,6 +8,7 @@ const { requireAuth } = require('../auth');
 const { validateWatchFilters, evaluateEntry } = require('../services/watch/filters');
 const { normalizeEntries } = require('../services/watch/discovery');
 const { ITEM_STATUS_FILTERS } = require('../services/watch/repository');
+const { normalizeBackfill } = require('../services/watch/service');
 const tabs = require('../services/watch/tabs');
 
 const FORMAT_SELECTOR_RE = /^[\w+\-/*.,:()!<>=\s]{0,200}$/;
@@ -251,7 +252,8 @@ function createWatchesRouter({
 
     const watch = repository.getWatch(Number(result.lastInsertRowid));
 
-    const initialBackfill = Math.max(0, parseInt(backfillCount, 10) || 0);
+    // A number of newest videos, or 'all' to download everything already posted.
+    const initialBackfill = normalizeBackfill(backfillCount);
     const { runId } = watchService.startCheck(watch, { manual: true, backfillCount: initialBackfill, trigger: 'initial' });
 
     res.json({ ...(repository.getWatch(watch.id) || watch), initial_run_id: runId });

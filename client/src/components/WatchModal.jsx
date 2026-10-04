@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Radar,
@@ -52,6 +52,9 @@ function regexSyntaxError(value, label) {
 import { previewTemplate } from '../outputTemplatePreview.js';
 import { useModalA11y } from '../hooks/useModalA11y.js';
 
+// Matches FULL_BACKFILL_LIMIT on the server: the most videos an "All existing videos" backfill queues.
+const FULL_BACKFILL_LIMIT = 5000;
+
 const CHECK_INTERVAL_OPTIONS = [
   { value: 15, label: 'Every 15 minutes' },
   { value: 30, label: 'Every 30 minutes (Standard)' },
@@ -94,6 +97,8 @@ function formatDuration(sec) {
 export default function WatchModal({
   open,
   watch = null, // if set, edit mode; if null, create mode
+  initialUrl = '', // create mode: prefill the URL (e.g. a playlist pasted on the dashboard)
+  initialBackfill = 0, // create mode: preselected first-check behavior (a count, or 'all')
   onClose,
   onSave,
 }) {
@@ -139,6 +144,9 @@ export default function WatchModal({
   const [inspecting, setInspecting] = useState(false);
   const [inspectData, setInspectData] = useState(null);
   const [inspectError, setInspectError] = useState('');
+  // Bumped on every inspect and every open/close, so a slow response for an earlier URL can't
+  // overwrite the form after the modal moved on.
+  const inspectSeq = useRef(0);
 
   // Submit state
   const [saving, setSaving] = useState(false);
@@ -158,6 +166,7 @@ export default function WatchModal({
     if (!open) return;
     setFormError('');
     setInspectError('');
+    setInspecting(false);
     setActiveTab('general');
     setPreviewRows(null);
     setPreviewError('');
@@ -193,11 +202,11 @@ export default function WatchModal({
       setOutputTemplate(watch.output_template || '');
       setInspectData(null);
     } else {
-      setUrl('');
+      setUrl(initialUrl || '');
       setName('');
       setCheckIntervalMins(30);
       setEnabled(true);
-      setBackfillCount(0);
+      setBackfillCount(initialBackfill);
       setAudioOnly(false);
       setQuality('');
       setContainer('mp4');
@@ -219,6 +228,9 @@ export default function WatchModal({
       setOutputTemplate('');
       setInspectData(null);
     }
+    if (!watch && initialUrl) handleInspect(initialUrl, { fillName: true });
+    return () => { inspectSeq.current++; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, watch]);
 
   useEffect(() => {
@@ -226,21 +238,23 @@ export default function WatchModal({
     api.getOutputTemplate().then((data) => setGlobalTemplate(data.template)).catch(() => {});
   }, [open]);
 
-  async function handleInspect(urlToInspect) {
+  async function handleInspect(urlToInspect, { fillName = false } = {}) {
     const target = (urlToInspect || url).trim();
     if (!target) return;
+    const seq = ++inspectSeq.current;
     setInspecting(true);
     setInspectError('');
     try {
       const data = await api.inspectWatch(target);
+      if (seq !== inspectSeq.current) return;
       setInspectData(data);
-      if (!name.trim() && data.title) {
+      if ((fillName || !name.trim()) && data.title) {
         setName(data.title);
       }
     } catch (err) {
-      setInspectError(err.message);
+      if (seq === inspectSeq.current) setInspectError(err.message);
     } finally {
-      setInspecting(false);
+      if (seq === inspectSeq.current) setInspecting(false);
     }
   }
 
@@ -327,7 +341,7 @@ export default function WatchModal({
       contentTypes: isChannel ? contentTypes : undefined,
       thumbnail: inspectData?.thumbnail || watch?.thumbnail || null,
       channelName: inspectData?.channelName || watch?.channel_name || null,
-      backfillCount: !isEdit ? Number(backfillCount) || 0 : undefined,
+      backfillCount: !isEdit ? (backfillCount === 'all' ? 'all' : Number(backfillCount) || 0) : undefined,
     };
 
     try {
@@ -564,7 +578,8 @@ export default function WatchModal({
                       First Check Behavior (Backfill Option)
                     </label>
                     <span className="muted small" style={{ display: 'block', marginBottom: 10 }}>
-                      Control whether you only want new uploads going forward, or want to download recent uploads right now.
+                      Control whether you only want new uploads going forward, or want to download what's already there right now.
+                      New uploads are downloaded automatically either way.
                     </span>
                     <div className="segmented backfill-segmented">
                       {[
@@ -572,6 +587,7 @@ export default function WatchModal({
                         { count: 1, label: '1 latest video' },
                         { count: 3, label: '3 latest' },
                         { count: 5, label: '5 latest' },
+                        { count: 'all', label: 'All existing videos' },
                       ].map((b) => (
                         <button
                           key={b.count}
@@ -583,6 +599,16 @@ export default function WatchModal({
                         </button>
                       ))}
                     </div>
+                    {backfillCount === 'all' && (
+                      <span className="muted small" style={{ display: 'block', marginTop: 8 }}>
+                        {inspectData?.entryCount > FULL_BACKFILL_LIMIT
+                          ? `This source has ${inspectData.entryCount.toLocaleString()} videos; the newest ${FULL_BACKFILL_LIMIT.toLocaleString()} that match your filters are downloaded and older ones are skipped. New uploads keep downloading.`
+                          : inspectData?.entryCount > 6
+                            ? `Downloads all ${inspectData.entryCount} videos that match your filters, then keeps watching for new ones.`
+                            : `Downloads every video that matches your filters (up to ${FULL_BACKFILL_LIMIT.toLocaleString()}), then keeps watching for new ones.`}
+                        {' '}Large channels can take a long time.
+                      </span>
+                    )}
                   </div>
                 )}
 
