@@ -18,6 +18,7 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 - [Notifications](#notifications)
 - [Site cookies](#site-cookies-youtube-twitch-and-others)
 - [Jellyfin integration](#jellyfin-integration)
+- [Plex integration](#plex-integration)
 - [Scheduled tasks](#scheduled-tasks)
 - [Where your data lives](#where-your-data-lives)
 - [Security notes](#security-notes)
@@ -295,6 +296,16 @@ Set your Jellyfin URL, API key, and (optionally) user in **Settings**. This one 
 
 Videos are matched to Jellyfin library items **by filename**, not full path, so it works even when this app and Jellyfin mount the download folder at different paths. A new download only appears in its playlist after Jellyfin has scanned it; the 15-minute sync picks it up once the scan finishes.
 
+## Plex integration
+
+Set your Plex server URL and `X-Plex-Token` in the **Plex** panel in **Settings** (in Plex Web, open any item, choose **Get Info → View XML**, and copy the token from the address bar). If this app runs in Docker, use your machine's LAN IP rather than `localhost`. The connection powers three optional features:
+
+- **Library scan** after each download, so new videos show up in Plex without waiting for its own scheduled scan.
+- **Playlist sync** — one Plex playlist per Watch, matched by filename like the Jellyfin sync. Use **Sync to Plex** on the Watches page or **Sync all playlists now** for an immediate sync.
+- **"Watched in Plex" auto-delete** — uses the same safety guards as the rest of auto-delete. Plex only reports what the token's own account has watched, so other Plex users' viewing doesn't count.
+
+By default every video and music library is used; enter library IDs (shown after **Test connection**) to limit it. Plex doesn't read `.nfo` files, so titles come from file names; an *Other Videos* library works best.
+
 ## Scheduled tasks
 
 All times are server-local (set `TZ`).
@@ -303,6 +314,7 @@ All times are server-local (set `TZ`).
 |---|---|
 | Watch checks | Evaluated every 5 minutes; each Watch runs once its own interval (default 30 min) has elapsed |
 | Jellyfin playlist sync | Every 15 minutes, plus right after each Watch download |
+| Plex playlist sync | Every 15 minutes, plus right after each Watch download |
 | Auto-delete | Nightly at 03:00 |
 | yt-dlp nightly check | 03:00 (`YTDLP_UPDATE_CRON`, Nightly channel only) |
 | FFmpeg check | 03:30 (`FFMPEG_UPDATE_CRON`) — downloaded only when the upstream build changes |

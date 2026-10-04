@@ -3,6 +3,7 @@ import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload, Tras
 import { api } from '../api.js';
 import FileNamingSettings from '../components/FileNamingSettings.jsx';
 import NotificationSettings from '../components/NotificationSettings.jsx';
+import PlexSettings from '../components/PlexSettings.jsx';
 
 export default function Settings() {
   const [newPassword, setNewPassword] = useState('');
@@ -641,6 +642,12 @@ export default function Settings() {
                     <span>Jellyfin check failed for this preview: {previewResult.jellyfinError}</span>
                   </div>
                 )}
+                {previewResult.plexError && (
+                  <div className="alert alert-warning">
+                    <AlertCircle size={14} />
+                    <span>Plex check failed for this preview: {previewResult.plexError}</span>
+                  </div>
+                )}
                 <div>
                   <strong style={{ fontSize: 13 }}>Would delete ({previewResult.toDelete.length})</strong>
                   {previewResult.toDelete.length === 0 ? (
@@ -753,6 +760,8 @@ export default function Settings() {
           </div>
         )}
       </section>
+
+      <PlexSettings />
 
       <section className="panel">
         <div className="panel-header">

@@ -72,6 +72,8 @@ export default function Watches() {
   const [checkingAll, setCheckingAll] = useState(false);
   const [jellyfinSyncBusyId, setJellyfinSyncBusyId] = useState(null);
   const [jellyfinSyncMsg, setJellyfinSyncMsg] = useState({}); // watchId -> { text, isError }
+  const [plexConfigured, setPlexConfigured] = useState(false);
+  const [plexSyncBusyId, setPlexSyncBusyId] = useState(null);
 
   // Modals
   const [modalOpen, setModalOpen] = useState(false);
@@ -142,6 +144,30 @@ export default function Watches() {
       console.error('Failed to check watch:', err);
     } finally {
       setBusyId(null);
+    }
+  }
+
+  useEffect(() => {
+    api.getPlexSettings().then((s) => setPlexConfigured(!!(s.url && s.tokenConfigured))).catch(() => {});
+  }, []);
+
+  // Shares the per-watch message slot with the Jellyfin button; only one runs at a time.
+  async function handleSyncPlex(watch) {
+    setPlexSyncBusyId(watch.id);
+    setJellyfinSyncMsg((prev) => ({ ...prev, [watch.id]: null }));
+    try {
+      const result = await api.syncWatchPlex(watch.id);
+      const text = result.added > 0
+        ? `Added ${result.added} item(s) to "${result.playlistName}" in Plex.`
+        : result.missingFromLibrary > 0
+          ? `Playlist up to date — ${result.missingFromLibrary} item(s) not yet scanned by Plex.`
+          : 'Plex playlist already up to date.';
+      setJellyfinSyncMsg((prev) => ({ ...prev, [watch.id]: { text, isError: false } }));
+    } catch (err) {
+      setJellyfinSyncMsg((prev) => ({ ...prev, [watch.id]: { text: err.message, isError: true } }));
+    } finally {
+      setPlexSyncBusyId(null);
+      setTimeout(() => setJellyfinSyncMsg((prev) => ({ ...prev, [watch.id]: null })), 7000);
     }
   }
 
@@ -670,6 +696,19 @@ export default function Watches() {
                       <ListMusic size={13} className={jellyfinSyncBusyId === w.id ? 'spin-icon' : ''} />
                       <span>{jellyfinSyncBusyId === w.id ? 'Syncing…' : 'Sync to Jellyfin'}</span>
                     </button>
+
+                    {plexConfigured && (
+                      <button
+                        type="button"
+                        className="btn-secondary btn-sm"
+                        onClick={() => handleSyncPlex(w)}
+                        disabled={plexSyncBusyId === w.id || !w.completed_count}
+                        title="Create/update a Plex playlist with this watch's downloads"
+                      >
+                        <ListMusic size={13} className={plexSyncBusyId === w.id ? 'spin-icon' : ''} />
+                        <span>{plexSyncBusyId === w.id ? 'Syncing…' : 'Sync to Plex'}</span>
+                      </button>
+                    )}
 
                     <button
                       type="button"

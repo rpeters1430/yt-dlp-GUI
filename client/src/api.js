@@ -53,6 +53,7 @@ export const api = {
   retryWatchItem: (watchId, itemId) => request(`/watches/${watchId}/items/${itemId}/retry`, { method: 'POST' }),
   resetWatchSeen: (id) => request(`/watches/${id}/reset-seen`, { method: 'POST' }),
   syncWatchJellyfin: (id) => request(`/watches/${id}/sync-jellyfin`, { method: 'POST' }),
+  syncWatchPlex: (id) => request(`/watches/${id}/sync-plex`, { method: 'POST' }),
 
   getSettings: () => request('/settings'),
   updateSettings: (payload) => request('/settings', { method: 'PUT', body: JSON.stringify(payload) }),
@@ -79,6 +80,12 @@ export const api = {
   syncJellyfinPlaylists: () => request('/jellyfin/sync', { method: 'POST' }),
   refreshJellyfinLibrary: () => request('/jellyfin/refresh', { method: 'POST' }),
   getJellyfinStatus: () => request('/jellyfin/status'),
+  // Plex — library scan, playlist per watch, and delete-when-watched for the token's account
+  getPlexSettings: () => request('/plex/settings'),
+  updatePlexSettings: (payload) => request('/plex/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  testPlexConnection: (payload) => request('/plex/test', { method: 'POST', body: JSON.stringify(payload || {}) }),
+  refreshPlexLibrary: () => request('/plex/refresh', { method: 'POST' }),
+  syncPlexPlaylists: () => request('/plex/sync', { method: 'POST' }),
   checkJellyfinAlbum: (artist, album) => request(`/jellyfin/music-check?artist=${encodeURIComponent(artist || '')}&album=${encodeURIComponent(album || '')}`),
   checkJellyfinMusicLibrary: (payload) => request('/jellyfin/music-library', { method: 'POST', body: JSON.stringify(payload) }),
 
