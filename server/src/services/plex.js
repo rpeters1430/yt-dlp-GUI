@@ -106,11 +106,17 @@ async function fetchSectionItems(baseUrl, token, section, { pageSize = 2000 } = 
   return items;
 }
 
+// Splits on both separators: a Windows-hosted Plex reports C:\\... paths, which Node's
+// POSIX path.basename (this app usually runs in Linux/Docker) would leave whole.
+function fileBasename(file) {
+  return path.basename(String(file).replace(/\\/g, '/'));
+}
+
 function itemBasenames(item) {
   const names = [];
   for (const media of item.Media || []) {
     for (const part of media.Part || []) {
-      if (part.file) names.push(path.basename(part.file));
+      if (part.file) names.push(fileBasename(part.file));
     }
   }
   return names;
@@ -157,19 +163,35 @@ function itemsUri(machineIdentifier, ratingKeys) {
   return `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${ratingKeys.join(',')}`;
 }
 
-async function findPlaylistByName(baseUrl, token, name, { isMusic = false } = {}) {
+// excludeIds: playlists already owned by another watch, so two same-named watches never
+// adopt (and merge into) one playlist.
+async function findPlaylistByName(baseUrl, token, name, { isMusic = false, excludeIds = [] } = {}) {
   const qs = new URLSearchParams({ playlistType: playlistType(isMusic) });
   const mc = container(await plexRequest(baseUrl, token, `/playlists?${qs}`));
-  const match = (mc.Metadata || []).find((p) => p.title === name && !p.smart);
+  const taken = new Set(excludeIds.map(String));
+  const match = (mc.Metadata || []).find((p) => p.title === name && !p.smart && !taken.has(String(p.ratingKey)));
   return match ? String(match.ratingKey) : null;
 }
 
 // Returns null (rather than throwing) when the playlist no longer exists in Plex, so callers
-// can treat that as "needs to be recreated".
-async function getPlaylistItemKeys(baseUrl, token, playlistId) {
+// can treat that as "needs to be recreated". Paged, since Plex caps each response.
+async function getPlaylistItemKeys(baseUrl, token, playlistId, { pageSize = 1000 } = {}) {
   try {
-    const mc = container(await plexRequest(baseUrl, token, `/playlists/${encodeURIComponent(playlistId)}/items`));
-    return new Set((mc.Metadata || []).map((i) => String(i.ratingKey)).filter(Boolean));
+    const keys = new Set();
+    let fetched = 0;
+    for (let start = 0; ; start += pageSize) {
+      const qs = new URLSearchParams({
+        'X-Plex-Container-Start': String(start),
+        'X-Plex-Container-Size': String(pageSize),
+      });
+      const mc = container(await plexRequest(baseUrl, token, `/playlists/${encodeURIComponent(playlistId)}/items?${qs}`));
+      const page = mc.Metadata || [];
+      fetched += page.length;
+      for (const i of page) if (i.ratingKey) keys.add(String(i.ratingKey));
+      const total = typeof mc.totalSize === 'number' ? mc.totalSize : null;
+      if (page.length < pageSize || (total !== null && fetched >= total)) break;
+    }
+    return keys;
   } catch (err) {
     if (err.status === 404) return null;
     throw err;
@@ -205,6 +227,7 @@ async function createPlaylist(baseUrl, token, machineIdentifier, name, ratingKey
 }
 
 module.exports = {
+  fileBasename,
   testConnection,
   getIdentity,
   getSections,

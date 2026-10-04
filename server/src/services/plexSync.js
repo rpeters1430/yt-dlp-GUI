@@ -33,16 +33,54 @@ function playlistNameForWatch(watch) {
   return watch.name || watch.channel_name || `Watch #${watch.id}`;
 }
 
+// Library index and server identity are the same for every watch in one run, so a run builds
+// them once (lazily — music libraries are only read if a music watch needs them) and every
+// watch sync shares the result instead of re-reading the whole Plex library each time.
+function createRunContext(cfg) {
+  const indexes = new Map();
+  let identity = null;
+  return {
+    getIndex(includeAudio) {
+      if (!indexes.has(includeAudio)) {
+        indexes.set(includeAudio, plex.getLibraryIndex(cfg.url, cfg.token, { sectionIds: cfg.sectionIds, includeAudio }));
+      }
+      return indexes.get(includeAudio);
+    },
+    getIdentity() {
+      if (!identity) identity = plex.getIdentity(cfg.url, cfg.token);
+      return identity;
+    },
+  };
+}
+
+// Download completions, the 15-minute job and manual syncs can overlap; serializing per watch
+// stops two of them from both seeing "no playlist yet" and each creating one.
+const watchLocks = new Map();
+
+function withWatchLock(watchId, fn) {
+  const previous = watchLocks.get(watchId) || Promise.resolve();
+  const run = previous.catch(() => {}).then(fn);
+  const tail = run.catch(() => {});
+  watchLocks.set(watchId, tail);
+  tail.then(() => { if (watchLocks.get(watchId) === tail) watchLocks.delete(watchId); });
+  return run;
+}
+
 // Mirrors jellyfinSync.syncWatch: builds/updates a Plex playlist named after the watch with
 // every downloaded file Plex has already scanned (matched by filename). Safe to call
 // repeatedly — only missing items are added, and the playlist ID is cached on the watch so a
 // rename inside this app doesn't create a second playlist.
-async function syncWatch(watchId, { config } = {}) {
+function syncWatch(watchId, opts = {}) {
+  return withWatchLock(Number(watchId), () => syncWatchUnlocked(watchId, opts));
+}
+
+async function syncWatchUnlocked(watchId, { config, context } = {}) {
   const watch = db.prepare('SELECT * FROM watches WHERE id = ?').get(watchId);
   if (!watch) throw new Error('Watch not found');
 
   const cfg = config || getPlexConfig();
   if (!isConfigured(cfg)) throw new Error('Plex URL and token are required for playlist sync');
+  const ctx = context || createRunContext(cfg);
 
   const playlistName = playlistNameForWatch(watch);
   const downloads = db.prepare(
@@ -54,7 +92,7 @@ async function syncWatch(watchId, { config } = {}) {
   }
 
   const isMusic = !!watch.is_music;
-  const { byBasename } = await plex.getLibraryIndex(cfg.url, cfg.token, { sectionIds: cfg.sectionIds, includeAudio: isMusic });
+  const { byBasename } = await ctx.getIndex(isMusic);
   const itemKeys = [];
   let missingFromLibrary = 0;
   for (const d of downloads) {
@@ -67,7 +105,7 @@ async function syncWatch(watchId, { config } = {}) {
     return { watchId, playlistName, added: 0, alreadyPresent: 0, missingFromLibrary };
   }
 
-  const { machineIdentifier } = await plex.getIdentity(cfg.url, cfg.token);
+  const { machineIdentifier } = await ctx.getIdentity();
 
   let playlistId = watch.plex_playlist_id || null;
   let existing = null;
@@ -76,7 +114,10 @@ async function syncWatch(watchId, { config } = {}) {
     if (existing === null) playlistId = null; // deleted on the Plex side — recreate below
   }
   if (!playlistId) {
-    playlistId = await plex.findPlaylistByName(cfg.url, cfg.token, playlistName, { isMusic });
+    const ownedElsewhere = db.prepare(
+      'SELECT plex_playlist_id FROM watches WHERE id != ? AND plex_playlist_id IS NOT NULL'
+    ).all(watchId).map((r) => r.plex_playlist_id);
+    playlistId = await plex.findPlaylistByName(cfg.url, cfg.token, playlistName, { isMusic, excludeIds: ownedElsewhere });
     if (playlistId) existing = await plex.getPlaylistItemKeys(cfg.url, cfg.token, playlistId);
   }
 
@@ -109,10 +150,11 @@ async function syncAllWatches({ force = false } = {}) {
     "SELECT id FROM watches WHERE id IN (SELECT DISTINCT watch_id FROM downloads WHERE watch_id IS NOT NULL AND status = 'completed')"
   ).all();
 
+  const context = createRunContext(cfg);
   const results = [];
   for (const w of watches) {
     try {
-      results.push(await syncWatch(w.id, { config: cfg }));
+      results.push(await syncWatch(w.id, { config: cfg, context }));
     } catch (err) {
       console.error(`[plex-sync] Failed to sync watch #${w.id}: ${err.message}`);
       results.push({ watchId: w.id, error: err.message });

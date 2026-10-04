@@ -101,3 +101,33 @@ test('a rejected token surfaces a clear error', async (t) => {
   global.fetch = async () => ({ ok: false, status: 401, statusText: 'Unauthorized' });
   await assert.rejects(plex.getSections('http://plex', 'bad'), /rejected the token/);
 });
+
+test('fileBasename handles paths from a Windows-hosted Plex server', () => {
+  assert.equal(plex.fileBasename('C:\\Media\\YouTube\\Chan\\Video A [abc].mp4'), 'Video A [abc].mp4');
+  assert.equal(plex.fileBasename('/data/youtube/Chan/Video B.mp4'), 'Video B.mp4');
+});
+
+test('getPlaylistItemKeys pages through large playlists', async (t) => {
+  const calls = mockFetch(t, (url) => {
+    const start = Number(url.searchParams.get('X-Plex-Container-Start'));
+    const size = Number(url.searchParams.get('X-Plex-Container-Size'));
+    const total = 5;
+    const Metadata = [];
+    for (let i = start; i < Math.min(start + size, total); i++) Metadata.push({ ratingKey: i + 1 });
+    return { MediaContainer: { totalSize: total, Metadata } };
+  });
+  const keys = await plex.getPlaylistItemKeys('http://plex', 'tok', '7', { pageSize: 2 });
+  assert.deepEqual([...keys], ['1', '2', '3', '4', '5']);
+  assert.equal(calls.length, 3);
+});
+
+test('findPlaylistByName skips playlists already owned by another watch', async (t) => {
+  mockFetch(t, () => ({ MediaContainer: { Metadata: [
+    { ratingKey: 1, title: 'Same Name' },
+    { ratingKey: 2, title: 'Same Name' },
+    { ratingKey: 3, title: 'Same Name', smart: true },
+  ] } }));
+  assert.equal(await plex.findPlaylistByName('http://plex', 'tok', 'Same Name'), '1');
+  assert.equal(await plex.findPlaylistByName('http://plex', 'tok', 'Same Name', { excludeIds: ['1'] }), '2');
+  assert.equal(await plex.findPlaylistByName('http://plex', 'tok', 'Same Name', { excludeIds: ['1', '2'] }), null);
+});

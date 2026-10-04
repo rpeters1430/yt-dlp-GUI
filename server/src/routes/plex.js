@@ -39,8 +39,15 @@ router.put('/settings', (req, res) => {
       return res.status(400).json({ error: `${name} must be a string` });
     }
   }
+  // Cached playlist IDs only mean something on the server/account they were created on; after
+  // pointing at a different one, each watch finds or recreates its playlist on the next sync.
+  const before = plexSync.getPlexConfig();
   if (url !== undefined) setSetting('plex_url', url.trim());
   if (token !== undefined) setSetting('plex_token', token.trim());
+  const after = plexSync.getPlexConfig();
+  if (before.url !== after.url || before.token !== after.token) {
+    db.prepare('UPDATE watches SET plex_playlist_id = NULL WHERE plex_playlist_id IS NOT NULL').run();
+  }
   if (sectionIds !== undefined) setSetting('plex_section_ids', sectionIds.trim());
   if (syncEnabled !== undefined) setSetting('plex_sync_enabled', syncEnabled ? '1' : '0');
   if (autoScanEnabled !== undefined) setSetting('plex_auto_scan_enabled', autoScanEnabled ? '1' : '0');
