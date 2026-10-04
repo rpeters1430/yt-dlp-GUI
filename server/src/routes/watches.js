@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const defaultYtdlp = require('../services/ytdlp');
 const jellyfinSync = require('../services/jellyfinSync');
+const plexSync = require('../services/plexSync');
 const outputTemplate = require('../services/outputTemplate');
 const { requireAuth } = require('../auth');
 const { validateWatchFilters, evaluateEntry } = require('../services/watch/filters');
@@ -436,6 +437,19 @@ function createWatchesRouter({
     if (!watch) return res.status(404).json({ error: 'Watch not found' });
     try {
       const result = await jellyfinSync.syncWatch(watch.id);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Plex counterpart of sync-jellyfin: works regardless of the auto-sync toggle, as long as a
+  // Plex URL and token are configured.
+  router.post('/:id/sync-plex', async (req, res) => {
+    const watch = database.prepare('SELECT * FROM watches WHERE id = ?').get(req.params.id);
+    if (!watch) return res.status(404).json({ error: 'Watch not found' });
+    try {
+      const result = await plexSync.syncWatch(watch.id);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: err.message });

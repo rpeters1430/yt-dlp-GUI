@@ -4,6 +4,7 @@ const ytdlp = require('./ytdlp');
 const siteProfiles = require('./siteProfiles');
 const nfo = require('./nfo');
 const jellyfinSync = require('./jellyfinSync');
+const plexSync = require('./plexSync');
 const outputTemplate = require('./outputTemplate');
 const notify = require('./notify');
 
@@ -388,6 +389,21 @@ async function runJob(job) {
         jellyfinSync.syncWatch(job.watch_id, { config: syncConfig })
           .catch((e) => console.error(`[queue] [job:${job.id}] Jellyfin playlist sync failed: ${e.message}`));
       }
+    }
+
+    // Same two steps for Plex: a debounced library refresh, then a best-effort playlist sync
+    // that the periodic job (plexSync.start) catches up on once Plex has scanned the file.
+    try {
+      const plexConfig = plexSync.getPlexConfig();
+      if (plexSync.isConfigured(plexConfig)) {
+        plexSync.scheduleLibraryScan();
+        if (job.watch_id && plexConfig.syncEnabled) {
+          plexSync.syncWatch(job.watch_id, { config: plexConfig })
+            .catch((e) => console.error(`[queue] [job:${job.id}] Plex playlist sync failed: ${e.message}`));
+        }
+      }
+    } catch (e) {
+      console.error(`[queue] [job:${job.id}] Plex scan/sync schedule failed: ${e.message}`);
     }
   } catch (err) {
     if (!getJob(job.id)) {

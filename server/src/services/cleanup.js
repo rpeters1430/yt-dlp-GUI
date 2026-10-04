@@ -3,6 +3,8 @@ const path = require('path');
 const cron = require('node-cron');
 const db = require('../db');
 const jellyfin = require('./jellyfin');
+const plex = require('./plex');
+const plexSync = require('./plexSync');
 
 let io = null;
 
@@ -28,6 +30,7 @@ function getCleanupConfig() {
     jellyfinApiKey: getSetting('jellyfin_api_key', ''),
     jellyfinUserId: getSetting('jellyfin_user_id', ''),
     keepRecentPerWatch: parseInt(getSetting('cleanup_keep_recent', '0'), 10) || 0,
+    plexEnabled: isTruthy(getSetting('cleanup_plex_enabled', '0')),
   };
 }
 
@@ -75,6 +78,25 @@ async function computeCleanupPlan() {
     }
   }
 
+  // Plex only reports what the token's own account has played, so this rule is judged by
+  // that one account (unlike Jellyfin, which can combine every user).
+  let plexPlayed = null;
+  let plexError = null;
+  if (config.plexEnabled) {
+    const plexCfg = plexSync.getPlexConfig();
+    if (plexSync.isConfigured(plexCfg)) {
+      try {
+        plexPlayed = await plex.getPlayedBasenames(plexCfg.url, plexCfg.token, { sectionIds: plexCfg.sectionIds });
+        if (!plexCfg.sectionIds) {
+          for (const name of await plex.getPlayedBasenames(plexCfg.url, plexCfg.token, { includeAudio: true })) plexPlayed.add(name);
+        }
+      } catch (err) {
+        plexError = err.message;
+        console.error(`[cleanup] Skipping Plex-based deletion this run: ${err.message}`);
+      }
+    }
+  }
+
   // "Keep newest N per watch" only matters among videos that would otherwise be deleted —
   // grouping by watch and ranking by created_at lets that guard apply per-source rather than
   // treating the whole library as one pool.
@@ -108,6 +130,7 @@ async function computeCleanupPlan() {
       const basename = path.basename(d.filepath);
       if (playedBasenames.has(basename)) reasons.push('watched in Jellyfin');
     }
+    if (plexPlayed && plexPlayed.has(path.basename(d.filepath))) reasons.push('watched in Plex');
 
     if (reasons.length === 0) continue; // doesn't match any rule — not relevant to the plan
 
@@ -123,7 +146,7 @@ async function computeCleanupPlan() {
     }
   }
 
-  return { toDelete, toKeep, checked: candidates.length, config, jellyfinError };
+  return { toDelete, toKeep, checked: candidates.length, config, jellyfinError, plexError };
 }
 
 function emitJobUpdate(id) {
@@ -186,7 +209,7 @@ function deleteDownloadFile(id, filepath, title, reason) {
 
 async function runCleanup() {
   const config = getCleanupConfig();
-  if (!config.ageEnabled && !config.jellyfinEnabled) {
+  if (!config.ageEnabled && !config.jellyfinEnabled && !config.plexEnabled) {
     console.log('[cleanup] Auto-delete is disabled, skipping run');
     return { deleted: 0, checked: 0, kept: 0 };
   }

@@ -107,6 +107,7 @@ ensureColumn('watches', 'channel_name', 'TEXT');
 ensureColumn('watches', 'last_new_count', 'INTEGER DEFAULT 0');
 ensureColumn('watches', 'cleanup_exempt', 'INTEGER DEFAULT 0');
 ensureColumn('watches', 'jellyfin_playlist_id', 'TEXT');
+ensureColumn('watches', 'plex_playlist_id', 'TEXT');
 ensureColumn('watches', 'is_music', 'INTEGER DEFAULT 0');
 ensureColumn('watches', 'music_folder', 'TEXT');
 ensureColumn('watches', 'audio_quality', "TEXT DEFAULT '320k'");
