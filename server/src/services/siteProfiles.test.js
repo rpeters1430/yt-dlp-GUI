@@ -128,8 +128,12 @@ test('subtitle language patterns resolve to exact probed tracks', () => {
 
   const autoOnly = getCapabilities({ extractor_key: 'Youtube', formats: [{ vcodec: 'avc1' }], automatic_captions: { 'en-orig': [{}], en: [{}], 'en-de': [{}], fr: [{}] } });
   const b = resolveDownloadOptions(url, { subtitles: true, subLangs: 'en.*', caps: autoOnly }).options;
-  assert.equal(b.subLangs, 'en-orig,en');
+  // "en" duplicates "en-orig" through the translation endpoint; only the -orig track is fetched.
+  assert.equal(b.subLangs, 'en-orig');
   assert.equal(b.useAutoSubs, true);
+
+  const noOrig = getCapabilities({ extractor_key: 'Youtube', formats: [{ vcodec: 'avc1' }], automatic_captions: { en: [{}], 'en-de': [{}] } });
+  assert.equal(resolveDownloadOptions(url, { subtitles: true, subLangs: 'en.*', caps: noOrig }).options.subLangs, 'en');
 
   const none = resolveDownloadOptions(url, { subtitles: true, subLangs: 'ja.*', caps: withManual });
   assert.equal(none.options.subtitles, false);

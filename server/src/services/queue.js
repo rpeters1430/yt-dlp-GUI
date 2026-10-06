@@ -283,9 +283,9 @@ async function runJob(job) {
     let lastProgressSave = 0;
     let lastPercent = -1;
 
-    const result = await ytdlp.download(
+    const runDownload = (opts) => ytdlp.download(
       job.url,
-      { ...resolvedOptions, onSpawn: (pid) => updateJob(job.id, { pid }) },
+      { ...opts, onSpawn: (pid) => updateJob(job.id, { pid }) },
       (progress) => {
         const now = Date.now();
         const percentChanged = Math.abs((progress.percent || 0) - lastPercent) >= 1;
@@ -310,6 +310,23 @@ async function runJob(job) {
         appendLog(logLine);
       }
     );
+
+    let result;
+    try {
+      result = await runDownload(resolvedOptions);
+    } catch (e) {
+      // A subtitle track that can't be fetched (usually YouTube rate-limiting caption
+      // requests with HTTP 429) fails the whole yt-dlp run before the video is downloaded.
+      // Losing the subtitles beats losing the video, so try once more without them.
+      if (!resolvedOptions.subtitles || !ytdlp.isSubtitleDownloadError(e.message) || !getJob(job.id)) throw e;
+      resolvedOptions.subtitles = false;
+      appendLog(`WARNING: Subtitle download failed (${e.message.replace(/^ERROR:\s*/, '')}); retrying without subtitles`);
+      const retryCommand = ytdlp.formatCommand(process.env.YTDLP_BIN || 'yt-dlp', ytdlp.buildDownloadArgs(job.url, resolvedOptions));
+      appendLog(`Command: ${retryCommand}`);
+      updateJob(job.id, { command_args: retryCommand, stage: 'Retrying without subtitles…', percent: 0, log: logLines.join('\n') });
+      lastPercent = -1;
+      result = await runDownload(resolvedOptions);
+    }
 
     // Removed from the list mid-download (DELETE stops the process): there's no row left to
     // complete, tag, notify about or sync, so don't treat it as a finished download.

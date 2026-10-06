@@ -236,6 +236,15 @@ function isBotCheckError(message) {
   return BOT_CHECK_RE.test(String(message || ''));
 }
 
+// yt-dlp aborts the whole download when one subtitle track can't be fetched — most often
+// YouTube answering the caption request with HTTP 429. Callers retry without subtitles so
+// the video itself still downloads.
+const SUBTITLE_DOWNLOAD_ERROR_RE = /Unable to download (?:video )?subtitles/i;
+
+function isSubtitleDownloadError(message) {
+  return SUBTITLE_DOWNLOAD_ERROR_RE.test(String(message || ''));
+}
+
 // Pasted links often lack a scheme ("www.tiktok.com/@user/live", "youtu.be/abc"). yt-dlp
 // treats those as search terms or local paths, so give anything that looks like a host an
 // https:// prefix. Everything else (including ytsearch: queries) passes through untouched.
@@ -660,7 +669,11 @@ function pickSubtitleTracks(pattern, { manual = [], auto = [] }) {
   const manualHits = manual.filter(matches);
   if (manualHits.length) return { langs: manualHits, auto: false };
   const autoHits = auto.filter(matches);
-  const originals = autoHits.filter((l) => !l.includes('-') || l.endsWith('-orig'));
+  let originals = autoHits.filter((l) => !l.includes('-') || l.endsWith('-orig'));
+  // YouTube lists both "en-orig" (the original ASR captions) and "en" (the same captions,
+  // served through its translation endpoint) — fetching both doubles the requests that
+  // trigger 429s for no extra content, so keep just the -orig track.
+  originals = originals.filter((l) => !originals.includes(`${l}-orig`));
   return { langs: originals.length ? originals : autoHits, auto: autoHits.length > 0 };
 }
 
@@ -1986,6 +1999,7 @@ module.exports = {
   summarizeErrorOutput,
   isYouTube,
   isBotCheckError,
+  isSubtitleDownloadError,
   BOT_CHECK_HINT,
   normalizeUrl,
   isNotLiveError,
