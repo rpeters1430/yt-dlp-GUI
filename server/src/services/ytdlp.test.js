@@ -218,6 +218,14 @@ test('resolveShareUrl uses whichever user agent Reddit answers', async (t) => {
   );
 });
 
+test('isSubtitleDownloadError matches yt-dlp subtitle fetch failures', () => {
+  const { isSubtitleDownloadError } = require('./ytdlp');
+  assert.equal(isSubtitleDownloadError("ERROR: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests"), true);
+  assert.equal(isSubtitleDownloadError('ERROR: Unable to download subtitles for "en": HTTP Error 404'), true);
+  assert.equal(isSubtitleDownloadError('ERROR: [youtube] abc: Video unavailable'), false);
+  assert.equal(isSubtitleDownloadError(undefined), false);
+});
+
 test('isBotCheckError matches YouTube bot-check errors with straight or curly apostrophes', () => {
   const { isBotCheckError } = require('./ytdlp');
   assert.equal(isBotCheckError("ERROR: [youtube] abc: Sign in to confirm you’re not a bot. Use --cookies"), true);
