@@ -23,7 +23,7 @@ COPY requirements-docker.txt /tmp/requirements-docker.txt
 # "Update yt-dlp" action can run `pip3 install -U [--pre] yt-dlp` at runtime.
 # curl, unzip, and xz-utils are kept so the Settings page's "Update FFmpeg" and "Update yt-dlp"
 # actions can download and unpack builds at runtime.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     python3 python3-pip ca-certificates build-essential curl unzip xz-utils \
     && pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements-docker.txt \
     && rm /tmp/requirements-docker.txt \
@@ -81,6 +81,11 @@ COPY server/package.json server/package-lock.json ./server/
 RUN cd server && npm ci --omit=dev --omit=optional --no-audit --no-fund \
     && apt-get purge -y --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/*
+
+# Runtime tool updates use pip/curl, not npm. Do not ship the unused npm/corepack
+# dependency trees and their vulnerability surface in the production container.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
 COPY server/ ./server/
 COPY --from=client-build /app/client/dist ./client/dist
