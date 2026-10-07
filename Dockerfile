@@ -1,13 +1,23 @@
 # --- Build client ---
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS client-build
+FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS client-build
 WORKDIR /app/client
-COPY client/package.json ./
-RUN npm install
+COPY client/package.json client/package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY client/ ./
 RUN npm run build
 
 # --- Final image ---
 FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+
+# Immutable image baselines. Update release, asset version and checksums together.
+ARG DENO_VERSION=2.9.7
+ARG DENO_SHA256_AMD64=c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490
+ARG DENO_SHA256_ARM64=c832298b1ad4422481334855f6003e0f54145762c5a134f20a489511d2f65bbf
+ARG FFMPEG_RELEASE=autobuild-2026-10-06-19-26
+ARG FFMPEG_VERSION=N-127226-gdc234edb2c
+ARG FFMPEG_SHA256_AMD64=43e8dfcfbad7ec3a1e01681face41e5afaffe50edfdcf7d7daf0e749b1d10c20
+ARG FFMPEG_SHA256_ARM64=7ad92dce89cd7d5813ecae07bb6d9400c586d51c3715c2930bae0e9a6b6a78bc
+COPY requirements-docker.txt /tmp/requirements-docker.txt
 
 # python3-pip is kept in the final image (not purged after install) so the Settings page's
 # "Update yt-dlp" action can run `pip3 install -U [--pre] yt-dlp` at runtime.
@@ -15,17 +25,19 @@ FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca92
 # actions can download and unpack builds at runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip ca-certificates build-essential curl unzip xz-utils \
-    && pip3 install --no-cache-dir --break-system-packages -U "yt-dlp[default,curl-cffi]" \
+    && pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements-docker.txt \
+    && rm /tmp/requirements-docker.txt \
     && rm -rf /var/lib/apt/lists/*
 
-# Install latest static FFmpeg build (amd64 / arm64) from yt-dlp/FFmpeg-Builds
+# Install a checksum-verified static FFmpeg build (amd64 / arm64).
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in \
-      amd64) FFMPEG_ARCH=linux64 ;; \
-      arm64) FFMPEG_ARCH=linuxarm64 ;; \
+      amd64) FFMPEG_ARCH=linux64; FFMPEG_SHA256="$FFMPEG_SHA256_AMD64" ;; \
+      arm64) FFMPEG_ARCH=linuxarm64; FFMPEG_SHA256="$FFMPEG_SHA256_ARM64" ;; \
       *) echo "Unsupported architecture for ffmpeg" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/ffmpeg.tar.xz "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-${FFMPEG_ARCH}-gpl.tar.xz"; \
+    curl --retry 3 -fsSL -o /tmp/ffmpeg.tar.xz "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/${FFMPEG_RELEASE}/ffmpeg-${FFMPEG_VERSION}-${FFMPEG_ARCH}-gpl.tar.xz"; \
+    echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.xz" | sha256sum -c -; \
     mkdir -p /tmp/ffmpeg-extracted; \
     tar -xf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg-extracted; \
     cp /tmp/ffmpeg-extracted/*/bin/ffmpeg /tmp/ffmpeg-extracted/*/bin/ffprobe /usr/local/bin/; \
@@ -38,11 +50,12 @@ RUN set -eux; \
 # from GitHub releases so both amd64 and arm64 NAS builds get the right binary.
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in \
-      amd64) DENO_ARCH=x86_64-unknown-linux-gnu ;; \
-      arm64) DENO_ARCH=aarch64-unknown-linux-gnu ;; \
+      amd64) DENO_ARCH=x86_64-unknown-linux-gnu; DENO_SHA256="$DENO_SHA256_AMD64" ;; \
+      arm64) DENO_ARCH=aarch64-unknown-linux-gnu; DENO_SHA256="$DENO_SHA256_ARM64" ;; \
       *) echo "Unsupported architecture for deno" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/deno.zip "https://github.com/denoland/deno/releases/latest/download/deno-${DENO_ARCH}.zip"; \
+    curl --retry 3 -fsSL -o /tmp/deno.zip "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-${DENO_ARCH}.zip"; \
+    echo "${DENO_SHA256}  /tmp/deno.zip" | sha256sum -c -; \
     unzip -o /tmp/deno.zip -d /usr/local/bin; \
     chmod +x /usr/local/bin/deno; \
     rm /tmp/deno.zip; \
@@ -52,7 +65,7 @@ WORKDIR /app
 
 # build-essential above lets native deps (better-sqlite3) compile from source when no
 # prebuilt binary exists yet for the current Node version.
-COPY server/package.json ./server/
+COPY server/package.json server/package-lock.json ./server/
 #
 # --omit=optional drops connect-sqlite3's optional `sqlite3` dependency (and the node-gyp/
 # tar/http-proxy-agent toolchain it pulls in to build from source). It's dead weight here:
@@ -65,7 +78,7 @@ COPY server/package.json ./server/
 # together the single largest CVE surface in this image. Nothing at runtime needs a
 # compiler: the "Update yt-dlp" pip install pulls curl-cffi's prebuilt manylinux/musllinux
 # wheels for amd64/arm64, never a source build.
-RUN cd server && npm install --omit=dev --omit=optional \
+RUN cd server && npm ci --omit=dev --omit=optional --no-audit --no-fund \
     && apt-get purge -y --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/*
 
@@ -83,4 +96,6 @@ RUN mkdir -p /downloads /config
 VOLUME ["/downloads", "/config"]
 
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/health', {signal: AbortSignal.timeout(3000)}).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 CMD ["node", "server/src/index.js"]

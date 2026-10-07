@@ -1,0 +1,2 @@
+# Image baseline; Settings can still update yt-dlp at runtime.
+yt-dlp[default,curl-cffi]==2026.08.19
