@@ -96,6 +96,17 @@ auth.ensureBootstrapAdmin();
 
 const app = express();
 
+// Readiness includes database access and does not create a login session.
+app.get('/api/health', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    db.prepare('SELECT 1').get();
+    res.json({ status: 'ok' });
+  } catch {
+    res.status(503).json({ status: 'unavailable' });
+  }
+});
+
 // Socket.IO is created further down; watch updates are dropped until it exists.
 let io = null;
 const watchRepository = createRepository(db);
