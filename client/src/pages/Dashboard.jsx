@@ -27,6 +27,7 @@ export default function Dashboard() {
   const {
     jobs,
     setJobs,
+    loaded,
     activeJobs,
     downloadingJobs,
     queuedJobs,
@@ -196,7 +197,7 @@ export default function Dashboard() {
             <span className="stat-label">In queue</span>
             <span className="stat-icon"><Clock size={16} /></span>
           </div>
-          <span className="stat-value">{activeJobs.length}</span>
+          <span className="stat-value">{loaded ? activeJobs.length : '—'}</span>
           {activeJobs.length > 0 && (
             <div className="stat-subtext" style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
               {downloadingJobs.length > 0
@@ -210,14 +211,14 @@ export default function Dashboard() {
             <span className="stat-label">Completed</span>
             <span className="stat-icon"><CheckCircle2 size={16} /></span>
           </div>
-          <span className="stat-value">{completedCount}</span>
+          <span className="stat-value">{loaded ? completedCount : '—'}</span>
         </div>
         <div className="stat-card danger">
           <div className="stat-top">
             <span className="stat-label">Failed</span>
             <span className="stat-icon"><XCircle size={16} /></span>
           </div>
-          <span className="stat-value">{failedCount}</span>
+          <span className="stat-value">{loaded ? failedCount : '—'}</span>
         </div>
       </div>
 
@@ -416,7 +417,9 @@ export default function Dashboard() {
             </div>
           )}
         </div>
-        {activeJobs.length === 0 ? (
+        {!loaded ? (
+          <div className="empty-state"><div className="spinner" /></div>
+        ) : activeJobs.length === 0 ? (
           <div className="empty-state">
             <Inbox size={30} />
             <span className="empty-title">Nothing in progress</span>
@@ -435,7 +438,9 @@ export default function Dashboard() {
         <div className="panel-header">
           <h2>Recently finished</h2>
         </div>
-        {recentFinished.length === 0 ? (
+        {!loaded ? (
+          <div className="empty-state"><div className="spinner" /></div>
+        ) : recentFinished.length === 0 ? (
           <div className="empty-state">
             <PartyPopper size={30} />
             <span className="empty-title">No downloads yet</span>

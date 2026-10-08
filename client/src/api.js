@@ -33,6 +33,7 @@ export const api = {
   getInfo: (url) => request('/downloads/info', { method: 'POST', body: JSON.stringify({ url }) }),
   enqueue: (payload) => request('/downloads', { method: 'POST', body: JSON.stringify(payload) }),
   listDownloads: () => request('/downloads'),
+  getDownloadLog: (id) => request(`/downloads/${id}/log`),
   deleteDownload: (id) => request(`/downloads/${id}`, { method: 'DELETE' }),
   stopDownload: (id) => request(`/downloads/${id}/stop`, { method: 'POST' }),
   toggleDownloadProtect: (id, protectedFlag) => request(`/downloads/${id}/protect`, { method: 'PATCH', body: JSON.stringify({ protected: protectedFlag }) }),

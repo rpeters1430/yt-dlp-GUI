@@ -13,10 +13,24 @@ export default function History() {
   const [expandedId, setExpandedId] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
+  // The list arrives without logs; the expanded row's log is fetched on demand.
+  const [expandedLog, setExpandedLog] = useState(null); // { id, log, command_args }
 
   useEffect(() => {
     api.listDownloads().then(setJobs).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!expandedId) return undefined;
+    let cancelled = false;
+    setExpandedLog(null);
+    api.getDownloadLog(expandedId)
+      .then((row) => { if (!cancelled) setExpandedLog({ id: expandedId, ...row }); })
+      .catch(() => { if (!cancelled) setExpandedLog({ id: expandedId, log: null, command_args: null }); });
+    return () => { cancelled = true; };
+  }, [expandedId]);
+
+  const expandedDetails = expandedLog && expandedLog.id === expandedId ? expandedLog : null;
 
   function handleDelete(id, label) {
     setPendingDelete({ id, label });
@@ -35,7 +49,8 @@ export default function History() {
   }
 
   function handleCopy(job) {
-    const text = `${job.command_args ? `Command:\n${job.command_args}\n\n` : ''}Log:\n${job.log || ''}`;
+    const details = job.id === expandedId && expandedDetails ? expandedDetails : {};
+    const text = `${details.command_args ? `Command:\n${details.command_args}\n\n` : ''}Log:\n${details.log || ''}`;
     navigator.clipboard.writeText(text).then(
       () => {
         setCopiedId(job.id);
@@ -158,16 +173,16 @@ export default function History() {
                                 {copiedId === job.id ? 'Copied' : 'Copy'}
                               </button>
                             </div>
-                            {job.command_args && (
+                            {expandedDetails?.command_args && (
                               <div className="command-box">
                                 <div style={{ color: 'var(--text-tertiary)', fontSize: '10px', marginBottom: '3px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                                   Command &amp; Arguments
                                 </div>
-                                <code>{job.command_args}</code>
+                                <code>{expandedDetails.command_args}</code>
                               </div>
                             )}
                             <pre className="log-panel-content">
-                              {job.log || 'No log output recorded.'}
+                              {expandedDetails ? (expandedDetails.log || 'No log output recorded.') : 'Loading log…'}
                             </pre>
                           </div>
                         </td>
