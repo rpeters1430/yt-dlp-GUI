@@ -127,11 +127,21 @@ jobs:
       - name: Verify runtime on each release architecture
         env:
           CANDIDATE: ${{ steps.candidate.outputs.ref }}
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
         run: |
           platforms=linux/amd64
           if [ "$PUBLISH" = true ]; then platforms="$platforms linux/arm64"; fi
           for platform in $platforms; do
-            bash scripts/ci/docker-smoke.sh "$CANDIDATE" "$platform"
+            image="$CANDIDATE"
+            if [ "$PUBLISH" = true ]; then
+              architecture="${platform#linux/}"
+              digest=$(docker buildx imagetools inspect --raw "$CANDIDATE" | \
+                jq -er --arg architecture "$architecture" '
+                  [.manifests[] | select(.platform.os == "linux" and .platform.architecture == $architecture) | .digest]
+                  | if length == 1 then .[0] else error("expected exactly one platform manifest") end')
+              image="$IMAGE_NAME@$digest"
+            fi
+            bash scripts/ci/docker-smoke.sh "$image" "$platform"
           done
 
       - name: Scan amd64 candidate for fixable vulnerabilities
