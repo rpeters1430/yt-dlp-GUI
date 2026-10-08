@@ -15,6 +15,7 @@ export default function History() {
   const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
   // The list arrives without logs; the expanded row's log is fetched on demand.
   const [expandedLog, setExpandedLog] = useState(null); // { id, log, command_args }
+  const [logRetry, setLogRetry] = useState(0);
 
   useEffect(() => {
     api.listDownloads().then(setJobs).finally(() => setLoading(false));
@@ -26,9 +27,9 @@ export default function History() {
     setExpandedLog(null);
     api.getDownloadLog(expandedId)
       .then((row) => { if (!cancelled) setExpandedLog({ id: expandedId, ...row }); })
-      .catch(() => { if (!cancelled) setExpandedLog({ id: expandedId, log: null, command_args: null }); });
+      .catch((err) => { if (!cancelled) setExpandedLog({ id: expandedId, error: err.message || 'Failed to load log.' }); });
     return () => { cancelled = true; };
-  }, [expandedId]);
+  }, [expandedId, logRetry]);
 
   const expandedDetails = expandedLog && expandedLog.id === expandedId ? expandedLog : null;
 
@@ -168,6 +169,7 @@ export default function History() {
                                 className="btn-ghost btn-sm"
                                 style={{ padding: '2px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: 4 }}
                                 onClick={() => handleCopy(job)}
+                                disabled={!expandedDetails || !!expandedDetails.error}
                               >
                                 {copiedId === job.id ? <Check size={12} /> : <Copy size={12} />}
                                 {copiedId === job.id ? 'Copied' : 'Copy'}
@@ -181,9 +183,16 @@ export default function History() {
                                 <code>{expandedDetails.command_args}</code>
                               </div>
                             )}
-                            <pre className="log-panel-content">
-                              {expandedDetails ? (expandedDetails.log || 'No log output recorded.') : 'Loading log…'}
-                            </pre>
+                            {expandedDetails?.error ? (
+                              <div className="alert alert-error" style={{ marginTop: 8 }}>
+                                <span>{expandedDetails.error}</span>
+                                <button type="button" className="btn-ghost btn-sm" onClick={() => setLogRetry((attempt) => attempt + 1)}>Retry</button>
+                              </div>
+                            ) : (
+                              <pre className="log-panel-content">
+                                {expandedDetails ? (expandedDetails.log || 'No log output recorded.') : 'Loading log…'}
+                              </pre>
+                            )}
                           </div>
                         </td>
                       </tr>

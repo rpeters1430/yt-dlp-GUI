@@ -64,6 +64,7 @@ export default function QueueItem({ job, onDeleted }) {
   // Job lists arrive without logs; fetched here when the log panel opens. Live socket
   // updates carry job.log, which takes over once present.
   const [fetchedLog, setFetchedLog] = useState(null);
+  const [logRetry, setLogRetry] = useState(0);
   const logRef = useRef(null);
   const meta = STATUS_META[job.status] || { label: job.status, icon: Clock };
   const StatusIcon = meta.icon;
@@ -99,15 +100,17 @@ export default function QueueItem({ job, onDeleted }) {
   useEffect(() => {
     if (!showLogs || hasInlineLog) return undefined;
     let cancelled = false;
+    setFetchedLog(null);
     api.getDownloadLog(job.id)
       .then((row) => { if (!cancelled) setFetchedLog(row); })
-      .catch(() => { if (!cancelled) setFetchedLog({ log: null, command_args: null }); });
+      .catch((err) => { if (!cancelled) setFetchedLog({ error: err.message || 'Failed to load log.' }); });
     return () => { cancelled = true; };
-  }, [showLogs, hasInlineLog, job.id]);
+  }, [showLogs, hasInlineLog, job.id, logRetry]);
 
   const logText = hasInlineLog ? job.log : fetchedLog?.log;
   const commandArgs = hasInlineLog ? job.command_args : fetchedLog?.command_args;
   const logLoading = showLogs && !hasInlineLog && !fetchedLog;
+  const logError = !hasInlineLog && fetchedLog?.error;
 
   useEffect(() => {
     if (showLogs && logRef.current && job.status === 'downloading') {
@@ -273,6 +276,7 @@ export default function QueueItem({ job, onDeleted }) {
               type="button"
               className="btn-ghost btn-sm log-copy-btn"
               onClick={handleCopy}
+              disabled={logLoading || !!logError}
             >
               {copied ? <Check size={12} /> : <Copy size={12} />}
               {copied ? 'Copied' : 'Copy'}
@@ -286,9 +290,17 @@ export default function QueueItem({ job, onDeleted }) {
               <code>{commandArgs}</code>
             </div>
           )}
-          <pre ref={logRef} className="log-panel-content">
-            {logLoading ? 'Loading log…' : (logText || 'No log output recorded yet.')}
-          </pre>
+          {logError ? (
+            <div className="alert alert-error" style={{ marginTop: 8 }}>
+              <XCircle size={14} />
+              <span>{logError}</span>
+              <button type="button" className="btn-ghost btn-sm" onClick={() => setLogRetry((attempt) => attempt + 1)}>Retry</button>
+            </div>
+          ) : (
+            <pre ref={logRef} className="log-panel-content">
+              {logLoading ? 'Loading log…' : (logText || 'No log output recorded yet.')}
+            </pre>
+          )}
         </div>
       )}
     </div>
