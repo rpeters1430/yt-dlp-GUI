@@ -209,6 +209,12 @@ router.get('/', (req, res) => {
   res.json(queue.listJobs());
 });
 
+router.get('/:id/log', (req, res) => {
+  const row = queue.getJobLog(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Download not found' });
+  res.json(row);
+});
+
 router.delete('/:id', (req, res) => {
   queue.removeJob(req.params.id);
   res.json({ ok: true });

@@ -54,8 +54,25 @@ function getJob(id) {
   return db.prepare('SELECT * FROM downloads WHERE id = ?').get(id);
 }
 
+// The job list skips each row's yt-dlp log and command line: across a long history those
+// add up to megabytes, which stalled the dashboard's first load. getJobLog fetches them
+// for a single job when its log panel is opened.
+const LIST_EXCLUDED_COLUMNS = new Set(['log', 'command_args']);
+let listColumnsSql = null;
+
 function listJobs() {
-  return db.prepare('SELECT * FROM downloads ORDER BY created_at DESC').all();
+  if (!listColumnsSql) {
+    listColumnsSql = db.prepare('PRAGMA table_info(downloads)').all()
+      .map((c) => c.name)
+      .filter((name) => !LIST_EXCLUDED_COLUMNS.has(name))
+      .map((name) => `"${name}"`)
+      .join(', ');
+  }
+  return db.prepare(`SELECT ${listColumnsSql} FROM downloads ORDER BY created_at DESC`).all();
+}
+
+function getJobLog(id) {
+  return db.prepare('SELECT log, command_args FROM downloads WHERE id = ?').get(id);
 }
 
 // Inserts a queued job without announcing or starting it, so a caller can create it inside
@@ -466,5 +483,5 @@ function getActiveCount() {
 }
 
 module.exports = {
-  init, enqueue, createQueuedJob, startQueuedJobs, setWatchItemListener, listJobs, getJob, stopJob, removeJob, getActiveCount,
+  init, enqueue, createQueuedJob, startQueuedJobs, setWatchItemListener, listJobs, getJobLog, getJob, stopJob, removeJob, getActiveCount,
 };

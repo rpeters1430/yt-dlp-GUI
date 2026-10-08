@@ -61,6 +61,10 @@ export default function QueueItem({ job, onDeleted }) {
   const [confirmStop, setConfirmStop] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState('');
+  // Job lists arrive without logs; fetched here when the log panel opens. Live socket
+  // updates carry job.log, which takes over once present.
+  const [fetchedLog, setFetchedLog] = useState(null);
+  const [logRetry, setLogRetry] = useState(0);
   const logRef = useRef(null);
   const meta = STATUS_META[job.status] || { label: job.status, icon: Clock };
   const StatusIcon = meta.icon;
@@ -92,14 +96,30 @@ export default function QueueItem({ job, onDeleted }) {
     }
   }
 
+  const hasInlineLog = job.log !== undefined;
+  useEffect(() => {
+    if (!showLogs || hasInlineLog) return undefined;
+    let cancelled = false;
+    setFetchedLog(null);
+    api.getDownloadLog(job.id)
+      .then((row) => { if (!cancelled) setFetchedLog(row); })
+      .catch((err) => { if (!cancelled) setFetchedLog({ error: err.message || 'Failed to load log.' }); });
+    return () => { cancelled = true; };
+  }, [showLogs, hasInlineLog, job.id, logRetry]);
+
+  const logText = hasInlineLog ? job.log : fetchedLog?.log;
+  const commandArgs = hasInlineLog ? job.command_args : fetchedLog?.command_args;
+  const logLoading = showLogs && !hasInlineLog && !fetchedLog;
+  const logError = !hasInlineLog && fetchedLog?.error;
+
   useEffect(() => {
     if (showLogs && logRef.current && job.status === 'downloading') {
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
-  }, [showLogs, job.log, job.status]);
+  }, [showLogs, logText, job.status]);
 
   function handleCopy() {
-    const text = `${job.command_args ? `Command:\n${job.command_args}\n\n` : ''}Log:\n${job.log || ''}`;
+    const text = `${commandArgs ? `Command:\n${commandArgs}\n\n` : ''}Log:\n${logText || ''}`;
     navigator.clipboard.writeText(text).then(
       () => {
         setCopied(true);
@@ -256,22 +276,31 @@ export default function QueueItem({ job, onDeleted }) {
               type="button"
               className="btn-ghost btn-sm log-copy-btn"
               onClick={handleCopy}
+              disabled={logLoading || !!logError}
             >
               {copied ? <Check size={12} /> : <Copy size={12} />}
               {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
-          {job.command_args && (
+          {commandArgs && (
             <div className="command-box">
               <div className="command-box-label">
                 Command &amp; Arguments
               </div>
-              <code>{job.command_args}</code>
+              <code>{commandArgs}</code>
             </div>
           )}
-          <pre ref={logRef} className="log-panel-content">
-            {job.log || 'No log output recorded yet.'}
-          </pre>
+          {logError ? (
+            <div className="alert alert-error" style={{ marginTop: 8 }}>
+              <XCircle size={14} />
+              <span>{logError}</span>
+              <button type="button" className="btn-ghost btn-sm" onClick={() => setLogRetry((attempt) => attempt + 1)}>Retry</button>
+            </div>
+          ) : (
+            <pre ref={logRef} className="log-panel-content">
+              {logLoading ? 'Loading log…' : (logText || 'No log output recorded yet.')}
+            </pre>
+          )}
         </div>
       )}
     </div>

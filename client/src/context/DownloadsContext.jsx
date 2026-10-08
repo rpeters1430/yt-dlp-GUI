@@ -4,13 +4,28 @@ import { api } from '../api.js';
 
 const DownloadsContext = createContext(null);
 
+// The job list from the server leaves out each job's log and command line (they're large);
+// live socket updates still carry them, so keep any we already have when the list refreshes.
+function mergeList(prev, list) {
+  if (!Array.isArray(list)) return prev;
+  const byId = new Map(prev.map((j) => [j.id, j]));
+  return list.map((job) => {
+    const old = byId.get(job.id);
+    if (!old || job.log !== undefined || old.log === undefined) return job;
+    return { ...job, log: old.log, command_args: old.command_args };
+  });
+}
+
 export function DownloadsProvider({ children, isAuthenticated }) {
   const [jobs, setJobs] = useState([]);
+  // False until the first job list arrives, so pages can show a loading state instead of zeros.
+  const [loaded, setLoaded] = useState(false);
   const socketRef = useRef(null);
 
   useEffect(() => {
     if (!isAuthenticated) {
       setJobs([]);
+      setLoaded(false);
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
@@ -18,14 +33,19 @@ export function DownloadsProvider({ children, isAuthenticated }) {
       return;
     }
 
-    // Initial fetch
-    api.listDownloads().then(setJobs).catch(() => {});
+    const applyList = (list) => {
+      setJobs((prev) => mergeList(prev, list));
+      setLoaded(true);
+    };
+
+    // Initial fetch; the socket's jobs:init carries the same list, so whichever lands first wins.
+    api.listDownloads().then(applyList).catch(() => {});
 
     // WebSocket connection for real-time updates across all pages
     const socket = io({ path: '/socket.io' });
     socketRef.current = socket;
 
-    socket.on('jobs:init', (initialJobs) => setJobs(initialJobs || []));
+    socket.on('jobs:init', (initialJobs) => applyList(initialJobs || []));
     socket.on('job:update', (job) => {
       if (!job || !job.id) return;
       setJobs((prev) => {
@@ -48,7 +68,7 @@ export function DownloadsProvider({ children, isAuthenticated }) {
     if (!hasActive) return;
 
     const interval = setInterval(() => {
-      api.listDownloads().then(setJobs).catch(() => {});
+      api.listDownloads().then((list) => setJobs((prev) => mergeList(prev, list))).catch(() => {});
     }, 2000);
 
     return () => clearInterval(interval);
@@ -81,6 +101,7 @@ export function DownloadsProvider({ children, isAuthenticated }) {
   const value = {
     jobs,
     setJobs,
+    loaded,
     activeJobs,
     downloadingJobs,
     queuedJobs,
@@ -89,7 +110,7 @@ export function DownloadsProvider({ children, isAuthenticated }) {
     currentJob,
     hasActive: activeJobs.length > 0,
     isDownloading: downloadingJobs.length > 0,
-    refreshJobs: () => api.listDownloads().then(setJobs).catch(() => {}),
+    refreshJobs: () => api.listDownloads().then((list) => setJobs((prev) => mergeList(prev, list))).catch(() => {}),
   };
 
   return (

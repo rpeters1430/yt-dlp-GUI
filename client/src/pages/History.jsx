@@ -13,10 +13,25 @@ export default function History() {
   const [expandedId, setExpandedId] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
+  // The list arrives without logs; the expanded row's log is fetched on demand.
+  const [expandedLog, setExpandedLog] = useState(null); // { id, log, command_args }
+  const [logRetry, setLogRetry] = useState(0);
 
   useEffect(() => {
     api.listDownloads().then(setJobs).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!expandedId) return undefined;
+    let cancelled = false;
+    setExpandedLog(null);
+    api.getDownloadLog(expandedId)
+      .then((row) => { if (!cancelled) setExpandedLog({ id: expandedId, ...row }); })
+      .catch((err) => { if (!cancelled) setExpandedLog({ id: expandedId, error: err.message || 'Failed to load log.' }); });
+    return () => { cancelled = true; };
+  }, [expandedId, logRetry]);
+
+  const expandedDetails = expandedLog && expandedLog.id === expandedId ? expandedLog : null;
 
   function handleDelete(id, label) {
     setPendingDelete({ id, label });
@@ -35,7 +50,8 @@ export default function History() {
   }
 
   function handleCopy(job) {
-    const text = `${job.command_args ? `Command:\n${job.command_args}\n\n` : ''}Log:\n${job.log || ''}`;
+    const details = job.id === expandedId && expandedDetails ? expandedDetails : {};
+    const text = `${details.command_args ? `Command:\n${details.command_args}\n\n` : ''}Log:\n${details.log || ''}`;
     navigator.clipboard.writeText(text).then(
       () => {
         setCopiedId(job.id);
@@ -153,22 +169,30 @@ export default function History() {
                                 className="btn-ghost btn-sm"
                                 style={{ padding: '2px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: 4 }}
                                 onClick={() => handleCopy(job)}
+                                disabled={!expandedDetails || !!expandedDetails.error}
                               >
                                 {copiedId === job.id ? <Check size={12} /> : <Copy size={12} />}
                                 {copiedId === job.id ? 'Copied' : 'Copy'}
                               </button>
                             </div>
-                            {job.command_args && (
+                            {expandedDetails?.command_args && (
                               <div className="command-box">
                                 <div style={{ color: 'var(--text-tertiary)', fontSize: '10px', marginBottom: '3px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                                   Command &amp; Arguments
                                 </div>
-                                <code>{job.command_args}</code>
+                                <code>{expandedDetails.command_args}</code>
                               </div>
                             )}
-                            <pre className="log-panel-content">
-                              {job.log || 'No log output recorded.'}
-                            </pre>
+                            {expandedDetails?.error ? (
+                              <div className="alert alert-error" style={{ marginTop: 8 }}>
+                                <span>{expandedDetails.error}</span>
+                                <button type="button" className="btn-ghost btn-sm" onClick={() => setLogRetry((attempt) => attempt + 1)}>Retry</button>
+                              </div>
+                            ) : (
+                              <pre className="log-panel-content">
+                                {expandedDetails ? (expandedDetails.log || 'No log output recorded.') : 'Loading log…'}
+                              </pre>
+                            )}
                           </div>
                         </td>
                       </tr>
