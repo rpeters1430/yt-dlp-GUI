@@ -18,6 +18,9 @@ concurrency:
 env:
   DOCKER_BUILD_RECORD_UPLOAD: 'false'
   PUBLISH: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+  # Install the newest Trivy release on every run (trivy-action defaults to an
+  # older pinned binary). `latest` is resolved by aquasecurity/setup-trivy.
+  TRIVY_VERSION: latest
 
 jobs:
   test:
@@ -92,6 +95,19 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
 
+      # The GHA layer cache would otherwise keep serving a stale `apt-get upgrade`
+      # layer, so Debian security fixes never land and the Trivy gate fails. Key
+      # that layer on the security archive's publish date so it rebuilds exactly
+      # when new security updates are available.
+      - name: Compute apt refresh key
+        id: apt
+        run: |
+          set -eu
+          key=$(curl --retry 3 -fsSL https://deb.debian.org/debian-security/dists/bookworm-security/InRelease \
+            | sed -n 's/^Date: //p' | head -n1) || true
+          if [ -z "$key" ]; then key="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"; fi
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
       # PRs load an amd64 candidate locally. Releases push a multiarch staging
       # index, validate both architectures by digest, then promote that index.
       - name: Build candidate image
@@ -105,6 +121,8 @@ jobs:
           load: ${{ env.PUBLISH != 'true' }}
           tags: ${{ steps.image.outputs.candidate }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APT_REFRESH=${{ steps.apt.outputs.key }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: ${{ env.PUBLISH == 'true' && 'mode=max' || 'false' }}
@@ -153,6 +171,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '1'
+          version: ${{ env.TRIVY_VERSION }}
 
       - name: Scan arm64 candidate for fixable vulnerabilities
         if: env.PUBLISH == 'true'
@@ -164,6 +183,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '1'
+          version: ${{ env.TRIVY_VERSION }}
 
       - name: Promote validated digest to release tags
         if: env.PUBLISH == 'true'

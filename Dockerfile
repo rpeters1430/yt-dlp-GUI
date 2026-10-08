@@ -19,6 +19,10 @@ ARG FFMPEG_SHA256_AMD64=43e8dfcfbad7ec3a1e01681face41e5afaffe50edfdcf7d7daf0e749
 ARG FFMPEG_SHA256_ARM64=7ad92dce89cd7d5813ecae07bb6d9400c586d51c3715c2930bae0e9a6b6a78bc
 COPY requirements-docker.txt /tmp/requirements-docker.txt
 
+# CI sets this to the Debian security archive's publish date so the cached
+# `apt-get upgrade` layer is rebuilt whenever new security fixes ship.
+ARG APT_REFRESH=
+
 # python3-pip is kept in the final image (not purged after install) so the Settings page's
 # "Update yt-dlp" action can run `pip3 install -U [--pre] yt-dlp` at runtime.
 # curl, unzip, and xz-utils are kept so the Settings page's "Update FFmpeg" and "Update yt-dlp"
