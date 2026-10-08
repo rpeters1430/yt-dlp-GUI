@@ -18,8 +18,9 @@ concurrency:
 env:
   DOCKER_BUILD_RECORD_UPLOAD: 'false'
   PUBLISH: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
-  # renovate: datasource=github-releases depName=aquasecurity/trivy
-  TRIVY_VERSION: v0.75.0
+  # Install the newest Trivy release on every run (trivy-action defaults to an
+  # older pinned binary). `latest` is resolved by aquasecurity/setup-trivy.
+  TRIVY_VERSION: latest
 
 jobs:
   test:
