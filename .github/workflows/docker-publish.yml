@@ -41,6 +41,8 @@ jobs:
       - name: Install server dependencies
         working-directory: server
         run: npm ci --omit=optional --no-audit --no-fund
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y ffmpeg
       - name: Test server
         working-directory: server
         run: npm test
