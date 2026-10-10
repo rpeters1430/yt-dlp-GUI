@@ -16,6 +16,7 @@ import {
   Check,
   ShieldCheck,
   Zap,
+  Scissors,
 } from 'lucide-react';
 import { api } from '../api.js';
 
@@ -125,6 +126,8 @@ export default function WatchModal({
   const [embedChapters, setEmbedChapters] = useState(false);
   const [sponsorblock, setSponsorblock] = useState(false);
   const [sponsorCats, setSponsorCats] = useState(['sponsor']);
+  const [splitLiveChunks, setSplitLiveChunks] = useState(false);
+  const [liveChunkDuration, setLiveChunkDuration] = useState(30);
 
   // Filters
   const [matchTitle, setMatchTitle] = useState('');
@@ -200,6 +203,8 @@ export default function WatchModal({
       setMaxScanEntries(watch.max_scan_entries || 30);
       setCleanupExempt(!!watch.cleanup_exempt);
       setOutputTemplate(watch.output_template || '');
+      setSplitLiveChunks(Boolean(watch.split_live_chunks));
+      setLiveChunkDuration(watch.live_chunk_mins || 30);
       setInspectData(null);
     } else {
       setUrl(initialUrl || '');
@@ -217,6 +222,8 @@ export default function WatchModal({
       setEmbedChapters(false);
       setSponsorblock(false);
       setSponsorCats(['sponsor']);
+      setSplitLiveChunks(false);
+      setLiveChunkDuration(30);
       setMatchTitle('');
       setRejectTitle('');
       setMinDuration('');
@@ -338,6 +345,8 @@ export default function WatchModal({
       maxScanEntries: Number(maxScanEntries) || 30,
       cleanupExempt: !!cleanupExempt,
       outputTemplate: outputTemplate.trim(),
+      splitLiveChunks: !!splitLiveChunks,
+      liveChunkDuration: Number(liveChunkDuration) || 30,
       contentTypes: isChannel ? contentTypes : undefined,
       thumbnail: inspectData?.thumbnail || watch?.thumbnail || null,
       channelName: inspectData?.channelName || watch?.channel_name || null,
@@ -789,6 +798,46 @@ export default function WatchModal({
                     <div className="template-preview" style={{ marginTop: 8 }}>
                       <span className="muted small">Example result (approximate):</span>
                       <code>downloads/{previewTemplate(outputTemplate.trim())}</code>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                  <label className="checkbox-label" style={{ marginBottom: 8, fontWeight: 600 }}>
+                    <input
+                      type="checkbox"
+                      checked={splitLiveChunks}
+                      onChange={(e) => setSplitLiveChunks(e.target.checked)}
+                    />
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <Scissors size={14} /> Split live stream recordings into chunks
+                    </span>
+                  </label>
+                  <span className="muted small" style={{ display: 'block', marginBottom: splitLiveChunks ? 8 : 0 }}>
+                    When this watch records a live broadcast (YouTube Live, Twitch, etc.), automatically split the finished recording into smaller time chunks without re-encoding.
+                  </span>
+                  {splitLiveChunks && (
+                    <div style={{ marginTop: 8 }}>
+                      <label className="field-label" style={{ fontSize: 12, marginBottom: 4, display: 'block' }}>
+                        Chunk duration
+                      </label>
+                      <div className="segmented segmented-split">
+                        {[
+                          { mins: 15, label: '15 min' },
+                          { mins: 30, label: '30 min' },
+                          { mins: 60, label: '1 hour' },
+                          { mins: 120, label: '2 hours' },
+                        ].map((opt) => (
+                          <button
+                            key={opt.mins}
+                            type="button"
+                            className={liveChunkDuration === opt.mins ? 'active' : ''}
+                            onClick={() => setLiveChunkDuration(opt.mins)}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

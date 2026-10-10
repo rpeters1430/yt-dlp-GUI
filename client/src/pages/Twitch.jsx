@@ -69,6 +69,8 @@ export default function Twitch() {
   const [hlsUseMpegts, setHlsUseMpegts] = useState(true);
   const [twitchChat, setTwitchChat] = useState(false);
   const [audioOnly, setAudioOnly] = useState(false);
+  const [splitLiveChunks, setSplitLiveChunks] = useState(false);
+  const [liveChunkDuration, setLiveChunkDuration] = useState(30);
   const [startingLive, setStartingLive] = useState(false);
   const [liveSuccess, setLiveSuccess] = useState('');
   const [liveError, setLiveError] = useState('');
@@ -187,11 +189,14 @@ export default function Twitch() {
         hlsUseMpegts,
         twitchChat,
         audioOnly,
+        splitLiveChunks,
+        liveChunkDuration,
       });
+      const splitNote = splitLiveChunks ? ` (will auto-split into ${liveChunkDuration}m chunks)` : '';
       setLiveSuccess(
         waitForLive
-          ? `Monitoring stream for ${ch}. yt-dlp will automatically begin recording as soon as the channel goes live.`
-          : `Started recording live stream for ${ch}. Tracking progress below.`
+          ? `Monitoring stream for ${ch}${splitNote}. yt-dlp will automatically begin recording as soon as the channel goes live.`
+          : `Started recording live stream for ${ch}${splitNote}. Tracking progress below.`
       );
     } catch (err) {
       setLiveError(err.message || 'Failed to start live recording');
@@ -534,7 +539,89 @@ export default function Twitch() {
                 />
                 <Captions size={14} /> Twitch Chat Log
               </label>
+            </div>
 
+            <div className="live-options-panel live-split-panel" style={{ marginTop: 14 }}>
+              <div className="live-split-header">
+                <span className="live-split-label">
+                  <Scissors size={14} /> Split recording into chunks
+                </span>
+                <span className="muted small">
+                  {splitLiveChunks
+                    ? `Every ${liveChunkDuration >= 60 ? `${liveChunkDuration / 60} hour${liveChunkDuration > 60 ? 's' : ''}` : `${liveChunkDuration} min`}`
+                    : 'Single continuous file'}
+                </span>
+              </div>
+              <div className="segmented-choice segmented-split">
+                <button
+                  type="button"
+                  className={!splitLiveChunks ? 'active' : ''}
+                  onClick={() => setSplitLiveChunks(false)}
+                >
+                  Single file
+                </button>
+                <button
+                  type="button"
+                  className={splitLiveChunks && liveChunkDuration === 15 ? 'active' : ''}
+                  onClick={() => { setSplitLiveChunks(true); setLiveChunkDuration(15); }}
+                >
+                  15 min
+                </button>
+                <button
+                  type="button"
+                  className={splitLiveChunks && liveChunkDuration === 30 ? 'active' : ''}
+                  onClick={() => { setSplitLiveChunks(true); setLiveChunkDuration(30); }}
+                >
+                  30 min
+                </button>
+                <button
+                  type="button"
+                  className={splitLiveChunks && liveChunkDuration === 60 ? 'active' : ''}
+                  onClick={() => { setSplitLiveChunks(true); setLiveChunkDuration(60); }}
+                >
+                  1 hour
+                </button>
+                <button
+                  type="button"
+                  className={splitLiveChunks && liveChunkDuration === 120 ? 'active' : ''}
+                  onClick={() => { setSplitLiveChunks(true); setLiveChunkDuration(120); }}
+                >
+                  2 hours
+                </button>
+                <button
+                  type="button"
+                  className={splitLiveChunks && ![15, 30, 60, 120].includes(liveChunkDuration) ? 'active' : ''}
+                  onClick={() => { setSplitLiveChunks(true); setLiveChunkDuration((d) => [15, 30, 60, 120].includes(d) ? 45 : d); }}
+                >
+                  Custom
+                </button>
+              </div>
+              {splitLiveChunks && (
+                <div className="live-split-info">
+                  {![15, 30, 60, 120].includes(liveChunkDuration) && (
+                    <div className="live-split-custom-row">
+                      <label htmlFor="twitch-custom-chunk-mins" className="muted small">Chunk time (minutes):</label>
+                      <input
+                        id="twitch-custom-chunk-mins"
+                        type="number"
+                        min="1"
+                        max="1440"
+                        value={liveChunkDuration || 30}
+                        onChange={(e) => setLiveChunkDuration(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                        className="input-sm"
+                      />
+                    </div>
+                  )}
+                  <p className="muted small">
+                    ✂️ When recording finishes, this Twitch stream will automatically be split into{' '}
+                    <strong>{liveChunkDuration >= 60 ? `${liveChunkDuration / 60} hour` : `${liveChunkDuration} minute`}</strong> chunks
+                    via lossless stream copy (no quality loss). Files will be saved as <code>.part01.mp4</code>, <code>.part02.mp4</code>, etc.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginTop: 14 }}>
               <div className="spacer">
                 <button type="submit" disabled={startingLive || !liveChannel.trim()}>
                   {startingLive ? (

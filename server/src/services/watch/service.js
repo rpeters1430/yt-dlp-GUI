@@ -31,6 +31,8 @@ function buildDownloadOptions(watch, downloadDir) {
     audioQuality = watch.audio_quality || '320k';
   }
 
+  const chunkMins = watch.split_live_chunks ? (parseInt(watch.live_chunk_mins, 10) || 0) : 0;
+
   return {
     formatSelector: watch.format_selector,
     audioOnly: !!watch.audio_only || !!watch.is_music,
@@ -39,6 +41,7 @@ function buildDownloadOptions(watch, downloadDir) {
     subtitles: !!watch.subtitles,
     subLangs: watch.sub_langs || 'en.*',
     watchId: watch.id,
+    liveChunkMins: chunkMins,
     optionsJson: {
       embedThumbnail: !!watch.embed_thumbnail || !!watch.is_music,
       embedMetadata: !!watch.embed_metadata || !!watch.is_music,
@@ -47,6 +50,8 @@ function buildDownloadOptions(watch, downloadDir) {
       outputTemplate,
       audioQuality,
       isMusicDownload: !!watch.is_music,
+      splitLiveChunks: !!watch.split_live_chunks && chunkMins > 0,
+      liveChunkDuration: chunkMins,
     },
   };
 }

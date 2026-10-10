@@ -154,6 +154,8 @@ router.post('/', async (req, res) => {
     liveFromStart,
     waitForLive,
     waitInterval,
+    splitLiveChunks,
+    liveChunkDuration,
   } = req.body || {};
   const list = urls ? urls : url ? [url] : [];
   const trimmed = list.map(ytdlp.normalizeUrl).filter(Boolean);
@@ -176,6 +178,7 @@ router.post('/', async (req, res) => {
     }
   }
 
+  const chunkMins = splitLiveChunks ? (parseInt(liveChunkDuration, 10) || 0) : 0;
   const optionsJson = {
     embedThumbnail: !!embedThumbnail,
     embedMetadata: !!embedMetadata,
@@ -184,12 +187,15 @@ router.post('/', async (req, res) => {
     liveFromStart: !!liveFromStart,
     waitForLive: !!waitForLive,
     waitInterval: parseInt(waitInterval, 10) || 15,
+    splitLiveChunks: !!splitLiveChunks && chunkMins > 0,
+    liveChunkDuration: chunkMins,
   };
 
   const ids = cleaned.map((u) =>
     queue.enqueue(u, {
       formatSelector, audioOnly, quality, container, subtitles, subLangs,
       isLive: !!isLive || !!waitForLive,
+      liveChunkMins: chunkMins,
       optionsJson,
     })
   );

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Clock, Loader2, CheckCircle2, XCircle, Film, X, Terminal, Copy, Check, Trash2, Square, Video, Tv, Music, Globe } from 'lucide-react';
+import { Clock, Loader2, CheckCircle2, XCircle, Film, X, Terminal, Copy, Check, Trash2, Square, Video, Tv, Music, Globe, Scissors } from 'lucide-react';
 import { api } from '../api.js';
 import ConfirmDialog from './ConfirmDialog.jsx';
 
@@ -70,17 +70,39 @@ export default function QueueItem({ job, onDeleted }) {
   const StatusIcon = meta.icon;
 
   const isLive = job.is_live === 1 || job.is_live === true;
+  const chunkMins = job.live_chunk_mins || (() => {
+    try {
+      const parsed = JSON.parse(job.options_json || '{}');
+      return parsed.splitLiveChunks ? (parseInt(parsed.liveChunkDuration, 10) || 0) : 0;
+    } catch (_) {
+      return 0;
+    }
+  })();
+  const hasSplitChunks = isLive && chunkMins > 0;
+  const chunkLabel = chunkMins >= 60 ? `${chunkMins / 60}h` : `${chunkMins}m`;
+
+  const splitParts = (() => {
+    if (!job.split_parts) return null;
+    try {
+      const arr = JSON.parse(job.split_parts);
+      return Array.isArray(arr) && arr.length > 1 ? arr : null;
+    } catch (_) {
+      return null;
+    }
+  })();
+  const [showSplitParts, setShowSplitParts] = useState(false);
+
   const isRecording = isLive && job.status === 'downloading';
   const elapsed = useElapsed(isRecording, parseUtc(job.created_at));
   // Show a separate progress panel while yt-dlp finalizes an early-stopped capture.
   const isFinalizing = isLive && job.status === 'downloading' && (
-    stopping || /finaliz|post-processing recording|merging formats|extracting audio|embedding thumbnail|applying sponsorblock/i.test(job.stage || '')
+    stopping || /finaliz|split|post-processing recording|merging formats|extracting audio|embedding thumbnail|applying sponsorblock/i.test(job.stage || '')
   );
-  const isStopping = stopping && !/post-processing recording|merging formats|extracting audio|applying sponsorblock/i.test(job.stage || '');
+  const isStopping = stopping && !/post-processing recording|merging formats|extracting audio|applying sponsorblock|split/i.test(job.stage || '');
 
   useEffect(() => {
     if (job.status !== 'downloading' || !isLive) setStopping(false);
-    else if (/post-processing recording|merging formats|extracting audio|applying sponsorblock/i.test(job.stage || '')) setStopping(false);
+    else if (/post-processing recording|merging formats|extracting audio|applying sponsorblock|split/i.test(job.stage || '')) setStopping(false);
   }, [job.status, job.stage, isLive]);
 
   async function handleStop() {
@@ -161,6 +183,11 @@ export default function QueueItem({ job, onDeleted }) {
                 {isFinalizing ? <><Loader2 size={11} className="spin-icon" /> FINALIZING</> : <><span className="pulsing-dot" /> LIVE</>}
               </span>
             )}
+            {hasSplitChunks && (
+              <span className="tag tag-split-chunks" title={`Configured to automatically split into ${chunkLabel} chunks when finished`}>
+                <Scissors size={11} /> Split: {chunkLabel}
+              </span>
+            )}
           </div>
           {isRecording ? (
             isFinalizing ? (
@@ -181,6 +208,11 @@ export default function QueueItem({ job, onDeleted }) {
             ) : (
               <div className="queue-item-live-row">
                 <span className="queue-item-live-elapsed"><Clock size={12} /> {elapsed || '0:00'} recorded</span>
+                {hasSplitChunks && (
+                  <span className="queue-item-live-split-note" title={`Will automatically split into ${chunkLabel} chunks on stop`}>
+                    <Scissors size={11} /> {chunkLabel} chunks
+                  </span>
+                )}
                 {job.stage && <span className="muted small">· {job.stage}</span>}
                 {job.speed && <span className="muted small">· {job.speed}</span>}
                 <button
@@ -222,12 +254,39 @@ export default function QueueItem({ job, onDeleted }) {
               <span>{job.stage || 'Waiting in queue…'}</span>
             </div>
           )}
-          {job.status === 'completed' && job.filepath && (
+          {job.status === 'completed' && splitParts ? (
+            <div className="queue-item-split-completed">
+              <div className="muted small queue-item-status-line">
+                <CheckCircle2 size={13} className="success-icon" />
+                <span>
+                  Split into <strong>{splitParts.length} parts</strong> ({chunkLabel} chunks)
+                </span>
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm btn-link-sm"
+                  style={{ marginLeft: 6, fontSize: '0.8rem', padding: '1px 6px' }}
+                  onClick={() => setShowSplitParts((prev) => !prev)}
+                >
+                  {showSplitParts ? 'Hide parts' : `View ${splitParts.length} parts`}
+                </button>
+              </div>
+              {showSplitParts && (
+                <div className="queue-item-split-parts-list">
+                  {splitParts.map((partPath, idx) => (
+                    <div key={partPath} className="queue-item-part-row muted small" title={partPath}>
+                      <Film size={11} />
+                      <span>Part {idx + 1}: {partPath.split(/[\\/]/).pop()}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : job.status === 'completed' && job.filepath ? (
             <div className="muted small queue-item-status-line" title={job.filepath}>
               <CheckCircle2 size={13} className="success-icon" />
               <span className="queue-item-filename">{job.filepath.split(/[\\/]/).pop()}</span>
             </div>
-          )}
+          ) : null}
           {job.status === 'deleted' && (
             <div className="muted small queue-item-status-line">
               <Trash2 size={12} />
@@ -307,8 +366,12 @@ export default function QueueItem({ job, onDeleted }) {
     <ConfirmDialog
       open={confirmStop}
       title="Stop recording"
-      message="Stop recording and save the stream captured so far? The finished file will remain in your downloads."
-      confirmLabel="Stop recording"
+      message={
+        hasSplitChunks
+          ? `Stop recording and save the stream captured so far (${elapsed || 'in progress'})? It will be automatically split into ${chunkLabel} chunks and saved to your downloads.`
+          : 'Stop recording and save the stream captured so far? The finished file will remain in your downloads.'
+      }
+      confirmLabel={hasSplitChunks ? `Stop & Split (${chunkLabel})` : 'Stop recording'}
       onCancel={() => setConfirmStop(false)}
       onConfirm={() => {
         setConfirmStop(false);

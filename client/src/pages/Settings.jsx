@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload, Trash2, ListMusic } from 'lucide-react';
+import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload, Trash2, ListMusic, Scissors } from 'lucide-react';
 import { api } from '../api.js';
 import FileNamingSettings from '../components/FileNamingSettings.jsx';
 import NotificationSettings from '../components/NotificationSettings.jsx';
@@ -50,6 +50,10 @@ export default function Settings() {
   const [nfoBusy, setNfoBusy] = useState(false);
   const [nfoMessage, setNfoMessage] = useState('');
 
+  const [defaultLiveChunkMins, setDefaultLiveChunkMins] = useState(0);
+  const [liveChunkBusy, setLiveChunkBusy] = useState(false);
+  const [liveChunkMessage, setLiveChunkMessage] = useState('');
+
   const [jellyfinSync, setJellyfinSync] = useState(null);
   const [jellyfinSyncBusy, setJellyfinSyncBusy] = useState(false);
   const [jellyfinSyncMessage, setJellyfinSyncMessage] = useState('');
@@ -71,6 +75,9 @@ export default function Settings() {
     api.getSettings().then((s) => {
       if (s.ytdlpChannel) setChannel(s.ytdlpChannel);
       setNfoEnabled(s.nfo_enabled !== '0');
+      if (s.default_live_chunk_mins !== undefined) {
+        setDefaultLiveChunkMins(parseInt(s.default_live_chunk_mins, 10) || 0);
+      }
     }).catch(() => {});
   }, []);
   useEffect(() => {
@@ -279,6 +286,24 @@ export default function Settings() {
       setNfoEnabled(!checked);
     } finally {
       setNfoBusy(false);
+    }
+  }
+
+  async function handleDefaultLiveChunkChange(mins) {
+    setDefaultLiveChunkMins(mins);
+    setLiveChunkMessage('');
+    setLiveChunkBusy(true);
+    try {
+      await api.updateSettings({ default_live_chunk_mins: String(mins) });
+      setLiveChunkMessage(
+        mins > 0
+          ? `Default chunk split set to ${mins < 60 ? `${mins} minutes` : `${mins / 60} hour(s)`}.`
+          : 'Live stream chunk splitting disabled by default.'
+      );
+    } catch (err) {
+      setLiveChunkMessage(err.message);
+    } finally {
+      setLiveChunkBusy(false);
     }
   }
 
@@ -762,6 +787,43 @@ export default function Settings() {
       </section>
 
       <PlexSettings />
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2><Scissors size={16} /> Live stream chunk splitting</h2>
+        </div>
+        <p className="panel-description">
+          Configure a default chunk duration for live stream recordings (YouTube Live, Twitch, TikTok, etc.).
+          When enabled, completed recordings are automatically and losslessly segmented into smaller video files (using FFmpeg stream copy) so long broadcasts are easy to navigate, edit, and archive.
+          This can also be customized individually per download or per watch.
+        </p>
+        <div className="options-row" style={{ marginTop: 12 }}>
+          <div className="segmented segmented-split">
+            {[
+              { mins: 0, label: 'Off (Single file)' },
+              { mins: 15, label: '15 minutes' },
+              { mins: 30, label: '30 minutes' },
+              { mins: 60, label: '1 hour' },
+              { mins: 120, label: '2 hours' },
+            ].map((opt) => (
+              <button
+                key={opt.mins}
+                type="button"
+                disabled={liveChunkBusy}
+                className={defaultLiveChunkMins === opt.mins ? 'active' : ''}
+                onClick={() => handleDefaultLiveChunkChange(opt.mins)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {liveChunkMessage && (
+          <div className="alert alert-success" style={{ marginTop: 10 }}>
+            <CheckCircle2 size={15} />{liveChunkMessage}
+          </div>
+        )}
+      </section>
 
       <section className="panel">
         <div className="panel-header">

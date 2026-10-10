@@ -201,6 +201,23 @@ function deleteDownloadFile(id, filepath, title, reason) {
     }
   }
   if (sidecarFailed) return false;
+
+  // If this download was split into multiple parts, remove all other part files too
+  try {
+    const row = db.prepare('SELECT split_parts FROM downloads WHERE id = ?').get(id);
+    if (row && row.split_parts) {
+      const parts = JSON.parse(row.split_parts);
+      for (const p of parts) {
+        if (p && p !== filepath && fs.existsSync(p)) {
+          try { fs.unlinkSync(p); } catch (_) {}
+          for (const s of listSidecars(p)) {
+            try { fs.unlinkSync(s); } catch (_) {}
+          }
+        }
+      }
+    }
+  } catch (_) {}
+
   console.log(`[cleanup] Deleted "${title || filepath}" (${reason})`);
   db.prepare("UPDATE downloads SET status = 'deleted', filepath = NULL WHERE id = ?").run(id);
   emitJobUpdate(id);

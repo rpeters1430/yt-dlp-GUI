@@ -18,6 +18,7 @@ const ALLOWED_SETTINGS_KEYS = new Set([
   'music_quality',
   'music_save_cover',
   'output_template',
+  'default_live_chunk_mins',
 ]);
 
 function saveSetting(key, value) {
@@ -118,6 +119,7 @@ router.get('/', (req, res) => {
   const settings = {};
   for (const r of rows) settings[r.key] = r.value;
   settings.ytdlpChannel = settings.ytdlpChannel === 'nightly' ? 'nightly' : 'stable';
+  settings.default_live_chunk_mins = parseInt(settings.default_live_chunk_mins || '0', 10);
   res.json(settings);
 });
 

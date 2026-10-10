@@ -156,11 +156,20 @@ async function sendTest(overrides = {}) {
   });
 }
 
-function downloadCompleted(job, { filepath = null, stoppedByUser = false, completedWithErrors = false } = {}) {
+function downloadCompleted(job, { filepath = null, stoppedByUser = false, completedWithErrors = false, splitParts = null } = {}) {
   const name = job.title || job.url;
-  const title = stoppedByUser ? 'Recording saved' : completedWithErrors ? 'Download finished with errors' : 'Download completed';
+  const count = splitParts && splitParts.length > 1 ? splitParts.length : null;
+  const title = count
+    ? (stoppedByUser ? `Recording saved (${count} chunks)` : `Download completed (${count} chunks)`)
+    : (stoppedByUser ? 'Recording saved' : completedWithErrors ? 'Download finished with errors' : 'Download completed');
   const lines = [name];
-  if (filepath) lines.push(filepath);
+  if (count) {
+    lines.push(`Split into ${count} chunk files:`);
+    lines.push(...splitParts.slice(0, 5).map((p) => `• ${path.basename(p)}`));
+    if (splitParts.length > 5) lines.push(`…and ${splitParts.length - 5} more`);
+  } else if (filepath) {
+    lines.push(filepath);
+  }
   send('download_completed', { title, body: lines.join('\n'), link: job.url, thumbnail: job.thumbnail }, { watchId: job.watch_id });
 }
 

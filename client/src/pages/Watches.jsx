@@ -27,6 +27,7 @@ import {
   Activity,
   AlertTriangle,
   Hourglass,
+  Scissors,
 } from 'lucide-react';
 import { api } from '../api.js';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
@@ -585,6 +586,12 @@ export default function Watches() {
                   {w.cleanup_exempt ? (
                     <span className="watch-chip filter" title="This watch's downloads are never auto-deleted">
                       <Shield size={11} /> Auto-delete exempt
+                    </span>
+                  ) : null}
+
+                  {w.split_live_chunks ? (
+                    <span className="watch-chip" title={`Splits live streams into ${w.live_chunk_mins || 30}m chunks`}>
+                      <Scissors size={11} /> Split: {w.live_chunk_mins || 30}m chunks
                     </span>
                   ) : null}
                 </div>

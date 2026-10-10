@@ -69,6 +69,7 @@ function toItem(row) {
     size: row.size,
     exists: row.exists,
     hasPoster: row.hasPoster,
+    splitParts: row.split_parts ? (() => { try { return JSON.parse(row.split_parts); } catch (_) { return null; } })() : null,
   };
 }
 
@@ -106,7 +107,7 @@ router.get('/', (req, res) => {
 
   let rows = db.prepare(`
     SELECT d.id, d.url, d.title, d.thumbnail, d.extractor, d.filepath, d.created_at,
-      d.watch_id, d.protected, w.name AS watch_name, w.channel_name AS watch_channel_name
+      d.watch_id, d.protected, d.split_parts, w.name AS watch_name, w.channel_name AS watch_channel_name
     FROM downloads d LEFT JOIN watches w ON w.id = d.watch_id
     WHERE d.status = 'completed' AND d.filepath IS NOT NULL
   `).all();

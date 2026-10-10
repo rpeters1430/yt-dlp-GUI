@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ListChecks, CheckCircle2, XCircle, AlertCircle,
@@ -23,6 +23,19 @@ export default function Dashboard() {
   // Playlist/channel link being set up as a Watch, and the confirmation shown afterwards.
   const [watchUrl, setWatchUrl] = useState(null);
   const [watchNotice, setWatchNotice] = useState(null);
+
+  useEffect(() => {
+    api.getSettings().then((s) => {
+      const defaultMins = parseInt(s?.default_live_chunk_mins, 10);
+      if (defaultMins > 0) {
+        setOptions((prev) => ({
+          ...prev,
+          splitLiveChunks: true,
+          liveChunkDuration: defaultMins,
+        }));
+      }
+    }).catch(() => {});
+  }, []);
 
   const {
     jobs,
@@ -155,6 +168,8 @@ export default function Dashboard() {
           liveFromStart: opts.liveFromStart,
           waitForLive: opts.isLive && opts.liveStatus === 'is_upcoming' ? opts.waitForLive : false,
           waitInterval: opts.waitInterval,
+          splitLiveChunks: opts.splitLiveChunks,
+          liveChunkDuration: opts.liveChunkDuration,
         });
       }
       setUrlText('');

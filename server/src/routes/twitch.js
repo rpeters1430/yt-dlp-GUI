@@ -129,6 +129,8 @@ router.post('/download', (req, res) => {
     hlsUseMpegts = true,
     downloadSections = '',
     audioOnly = false,
+    splitLiveChunks = false,
+    liveChunkDuration = 0,
   } = req.body || {};
 
   let targetUrl = (url || '').trim();
@@ -140,6 +142,7 @@ router.post('/download', (req, res) => {
     return res.status(400).json({ error: 'URL or channel is required' });
   }
 
+  const chunkMins = splitLiveChunks ? (parseInt(liveChunkDuration, 10) || 0) : 0;
   // Auth (if configured) rides the shared cookies.txt via setTwitchAuthCookie — see
   // ytdlp.js — so there's no per-request token to thread through here anymore.
   const optionsJson = {
@@ -150,6 +153,8 @@ router.post('/download', (req, res) => {
     hlsUseMpegts: hlsUseMpegts !== false,
     downloadSections: downloadSections ? downloadSections.trim() : null,
     isTwitch: true,
+    splitLiveChunks: !!splitLiveChunks && chunkMins > 0,
+    liveChunkDuration: chunkMins,
   };
 
   const id = queue.enqueue(targetUrl, {
@@ -157,6 +162,7 @@ router.post('/download', (req, res) => {
     container,
     audioOnly: !!audioOnly,
     isLive: !!isLive,
+    liveChunkMins: chunkMins,
     optionsJson,
   });
 

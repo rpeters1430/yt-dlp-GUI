@@ -7,6 +7,7 @@ const jellyfinSync = require('./jellyfinSync');
 const plexSync = require('./plexSync');
 const outputTemplate = require('./outputTemplate');
 const notify = require('./notify');
+const liveSplitter = require('./liveSplitter');
 
 // The channel's own page, for its name, description, avatar and banner (TV-layout show
 // artwork). One entry per tab is enough; only the channel-level fields are used.
@@ -84,9 +85,19 @@ function createQueuedJob(url, options = {}) {
     ? (typeof options.optionsJson === 'string' ? options.optionsJson : JSON.stringify(options.optionsJson))
     : null;
 
+  let liveChunkMins = parseInt(options.liveChunkMins, 10) || 0;
+  if (!liveChunkMins && optionsJson) {
+    try {
+      const p = JSON.parse(optionsJson);
+      if (p.splitLiveChunks && p.liveChunkDuration) {
+        liveChunkMins = parseInt(p.liveChunkDuration, 10) || 0;
+      }
+    } catch (_) {}
+  }
+
   db.prepare(`
-    INSERT INTO downloads (id, url, status, format_selector, audio_only, subtitles, quality, container, sub_langs, watch_id, watch_item_id, is_live, options_json, command_args, log)
-    VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+    INSERT INTO downloads (id, url, status, format_selector, audio_only, subtitles, quality, container, sub_langs, watch_id, watch_item_id, is_live, live_chunk_mins, options_json, command_args, log)
+    VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
   `).run(
     id,
     url,
@@ -99,6 +110,7 @@ function createQueuedJob(url, options = {}) {
     options.watchId || null,
     options.watchItemId || null,
     isLive,
+    liveChunkMins,
     optionsJson
   );
   return { id, job: getJob(id) };
@@ -379,19 +391,50 @@ async function runJob(job) {
       return;
     }
 
-    const completionMsg = result.stoppedByUser
-      ? `Live stream recording stopped by user -> ${result.filepath || 'saved stream'}`
-      : result.completedWithErrors
-        ? `Download completed with errors (file saved, may have gaps) -> ${result.filepath}`
-        : `Download completed successfully -> ${result.filepath || 'unknown destination'}`;
+    let splitResult = null;
+    const splitLiveChunks = !!(resolvedOptions.splitLiveChunks ?? extraOptions.splitLiveChunks);
+    const liveChunkDuration = parseInt(resolvedOptions.liveChunkDuration ?? extraOptions.liveChunkDuration ?? job.live_chunk_mins, 10) || 0;
+
+    if (splitLiveChunks && liveChunkDuration > 0 && result.filepath && fs.existsSync(result.filepath)) {
+      try {
+        const chunkLabel = liveChunkDuration >= 60 ? `${liveChunkDuration / 60}h` : `${liveChunkDuration}m`;
+        updateJob(job.id, { stage: `Splitting recording into ${chunkLabel} chunks…`, log: logLines.join('\n') });
+        appendLog(`[split] Splitting live stream recording into ${liveChunkDuration}-minute chunks…`);
+        splitResult = await liveSplitter.splitRecording(result.filepath, liveChunkDuration, (line) => {
+          appendLog(`[split] ${line}`);
+        });
+        if (splitResult.split && splitResult.files?.length > 1) {
+          result.filepath = splitResult.files[0];
+          result.splitParts = splitResult.files;
+          updateJob(job.id, {
+            filepath: splitResult.files[0],
+            split_parts: JSON.stringify(splitResult.files),
+            log: logLines.join('\n'),
+          });
+          appendLog(`[split] Live stream recording successfully split into ${splitResult.files.length} chunks`);
+        }
+      } catch (e) {
+        appendLog(`[split] WARNING: Chunk splitting failed (${e.message}) — kept original single file`);
+        console.error(`[queue] [job:${job.id}] Failed to split live recording: ${e.message}`);
+      }
+    }
+
+    const completionMsg = result.splitParts && result.splitParts.length > 1
+      ? `Live stream recording completed (split into ${result.splitParts.length} chunks) -> ${result.filepath}`
+      : result.stoppedByUser
+        ? `Live stream recording stopped by user -> ${result.filepath || 'saved stream'}`
+        : result.completedWithErrors
+          ? `Download completed with errors (file saved, may have gaps) -> ${result.filepath}`
+          : `Download completed successfully -> ${result.filepath || 'unknown destination'}`;
 
     appendLog(completionMsg);
     console.log(`[queue] [job:${job.id}] ${completionMsg}`);
     updateJob(job.id, {
       status: 'completed',
       percent: 100,
-      stage: 'Completed',
+      stage: result.splitParts && result.splitParts.length > 1 ? `Split into ${result.splitParts.length} chunks` : 'Completed',
       filepath: result.filepath || null,
+      split_parts: result.splitParts ? JSON.stringify(result.splitParts) : null,
       pid: null,
       log: logLines.join('\n'),
     });
@@ -401,8 +444,13 @@ async function runJob(job) {
     // sidecar uses a Kodi <movie> schema and the raw YouTube thumbnail, which is meaningless
     // (and visually wrong) clutter next to a song file.
     if (nfoInfo && result.filepath && isNfoEnabled() && !extraOptions.isMusicDownload) {
-      nfo.writeSidecarFiles(result.filepath, nfoInfo, { fetchChannelInfo: fetchChannelListing })
-        .catch((e) => console.error(`[queue] [job:${job.id}] Failed to write .nfo/poster: ${e.message}`));
+      const filesToTag = (result.splitParts && result.splitParts.length > 1) ? result.splitParts : [result.filepath];
+      for (let i = 0; i < filesToTag.length; i++) {
+        const targetPath = filesToTag[i];
+        const partInfo = filesToTag.length > 1 ? { ...nfoInfo, title: `${nfoInfo.title} (Part ${i + 1})` } : nfoInfo;
+        nfo.writeSidecarFiles(targetPath, partInfo, { fetchChannelInfo: fetchChannelListing })
+          .catch((e) => console.error(`[queue] [job:${job.id}] Failed to write .nfo/poster for ${targetPath}: ${e.message}`));
+      }
     }
 
     // Trigger debounced Jellyfin library scan so newly downloaded media shows up automatically

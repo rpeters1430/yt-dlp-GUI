@@ -174,6 +174,8 @@ function createWatchesRouter({
       cleanupExempt,
       outputTemplate,
       contentTypes,
+      splitLiveChunks,
+      liveChunkDuration,
     } = req.body || {};
 
     if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
@@ -214,13 +216,15 @@ function createWatchesRouter({
         quality, container, subtitles, sub_langs, embed_thumbnail,
         embed_metadata, embed_chapters, sponsorblock, sponsorblock_categories,
         match_title, reject_title, min_duration, max_duration,
-        download_limit, max_scan_entries, thumbnail, channel_name, cleanup_exempt, output_template, content_types, enabled
+        download_limit, max_scan_entries, thumbnail, channel_name, cleanup_exempt, output_template, content_types,
+        split_live_chunks, live_chunk_mins, enabled
       ) VALUES (
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, 1
+        ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, 1
       )
     `).run(
       url,
@@ -247,7 +251,9 @@ function createWatchesRouter({
       channelName || null,
       cleanupExempt ? 1 : 0,
       normalizeTemplate(outputTemplate),
-      storedContentTypes
+      storedContentTypes,
+      splitLiveChunks ? 1 : 0,
+      splitLiveChunks ? (parseInt(liveChunkDuration, 10) || 0) : 0
     );
 
     const watch = repository.getWatch(Number(result.lastInsertRowid));
@@ -288,6 +294,8 @@ function createWatchesRouter({
       cleanupExempt,
       outputTemplate,
       contentTypes,
+      splitLiveChunks,
+      liveChunkDuration,
     } = req.body || {};
 
     const templateError = outputTemplateError(outputTemplate);
@@ -331,6 +339,8 @@ function createWatchesRouter({
       ? (Array.isArray(sponsorblockCategories) ? sponsorblockCategories.join(',') : (sponsorblockCategories || null))
       : watch.sponsorblock_categories;
     const isCleanupExempt = cleanupExempt !== undefined ? (cleanupExempt ? 1 : 0) : watch.cleanup_exempt;
+    const nextSplitLive = splitLiveChunks !== undefined ? (splitLiveChunks ? 1 : 0) : (watch.split_live_chunks || 0);
+    const nextChunkMins = liveChunkDuration !== undefined ? (parseInt(liveChunkDuration, 10) || 0) : (watch.live_chunk_mins || 0);
 
     database.prepare(`
       UPDATE watches SET
@@ -357,7 +367,9 @@ function createWatchesRouter({
         cleanup_exempt = ?,
         output_template = ?,
         content_types = ?,
-        baselined_tabs = ?
+        baselined_tabs = ?,
+        split_live_chunks = ?,
+        live_chunk_mins = ?
       WHERE id = ?
     `).run(
       name !== undefined ? (name || null) : watch.name,
@@ -384,6 +396,8 @@ function createWatchesRouter({
       outputTemplate !== undefined ? normalizeTemplate(outputTemplate) : watch.output_template,
       nextContentTypes,
       nextBaselinedTabs,
+      nextSplitLive,
+      nextChunkMins,
       watch.id
     );
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Captions, Film, Music, Radio, Clock } from 'lucide-react';
+import { Captions, Film, Music, Radio, Clock, Scissors } from 'lucide-react';
 
 export const SUBTITLE_LANG_OPTIONS = [
   { value: 'en.*', label: 'English' },
@@ -48,6 +48,8 @@ export function defaultDownloadOptions(overrides = {}) {
     liveFromStart: false,
     waitForLive: true,
     waitInterval: 15,
+    splitLiveChunks: false,
+    liveChunkDuration: 30,
     ...overrides,
   };
 }
@@ -159,6 +161,7 @@ export default function DownloadOptionsFields({
     embedThumbnail, embedMetadata, embedChapters,
     sponsorblock, sponsorblockCategories,
     liveFromStart, waitForLive, waitInterval,
+    splitLiveChunks, liveChunkDuration,
   } = values;
   const c = caps || UNKNOWN_CAPS;
   const siteName = c.site?.name || null;
@@ -257,6 +260,88 @@ export default function DownloadOptionsFields({
               ? "Downloads the full broadcast from the moment it started, not just from now. May take a while to catch up to the live edge."
               : 'Only what airs from now on will be recorded — anything already broadcast before this point is skipped.'}
           </p>
+        </div>
+      )}
+
+      {(isLive || isUpcoming || values.isLive || values.waitForLive) && (
+        <div className="live-options-panel live-split-panel">
+          <div className="live-split-header">
+            <span className="live-split-label">
+              <Scissors size={14} /> Split recording into chunks
+            </span>
+            <span className="muted small">
+              {splitLiveChunks
+                ? `Every ${liveChunkDuration >= 60 ? `${liveChunkDuration / 60} hour${liveChunkDuration > 60 ? 's' : ''}` : `${liveChunkDuration} min`}`
+                : 'Single continuous file'}
+            </span>
+          </div>
+          <div className="segmented-choice segmented-split">
+            <button
+              type="button"
+              className={!splitLiveChunks ? 'active' : ''}
+              onClick={() => set({ splitLiveChunks: false })}
+            >
+              Single file
+            </button>
+            <button
+              type="button"
+              className={splitLiveChunks && liveChunkDuration === 15 ? 'active' : ''}
+              onClick={() => set({ splitLiveChunks: true, liveChunkDuration: 15 })}
+            >
+              15 min
+            </button>
+            <button
+              type="button"
+              className={splitLiveChunks && liveChunkDuration === 30 ? 'active' : ''}
+              onClick={() => set({ splitLiveChunks: true, liveChunkDuration: 30 })}
+            >
+              30 min
+            </button>
+            <button
+              type="button"
+              className={splitLiveChunks && liveChunkDuration === 60 ? 'active' : ''}
+              onClick={() => set({ splitLiveChunks: true, liveChunkDuration: 60 })}
+            >
+              1 hour
+            </button>
+            <button
+              type="button"
+              className={splitLiveChunks && liveChunkDuration === 120 ? 'active' : ''}
+              onClick={() => set({ splitLiveChunks: true, liveChunkDuration: 120 })}
+            >
+              2 hours
+            </button>
+            <button
+              type="button"
+              className={splitLiveChunks && ![15, 30, 60, 120].includes(liveChunkDuration) ? 'active' : ''}
+              onClick={() => set({ splitLiveChunks: true, liveChunkDuration: [15, 30, 60, 120].includes(liveChunkDuration) ? 45 : (liveChunkDuration || 45) })}
+            >
+              Custom
+            </button>
+          </div>
+          {splitLiveChunks && (
+            <div className="live-split-info">
+              {![15, 30, 60, 120].includes(liveChunkDuration) && (
+                <div className="live-split-custom-row">
+                  <label htmlFor="custom-chunk-mins" className="muted small">Chunk time (minutes):</label>
+                  <input
+                    id="custom-chunk-mins"
+                    type="number"
+                    min="1"
+                    max="1440"
+                    value={liveChunkDuration || 30}
+                    onChange={(e) => set({ liveChunkDuration: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                    className="input-sm"
+                  />
+                </div>
+              )}
+              <p className="muted small">
+                ✂️ When recording finishes, this broadcast will be automatically split into{' '}
+                <strong>{liveChunkDuration >= 60 ? `${liveChunkDuration / 60} hour` : `${liveChunkDuration} minute`}</strong> chunks
+                via lossless stream copy (no quality loss or CPU re-encoding). Saved as <code>.part01.mp4</code>, <code>.part02.mp4</code>, etc.
+              </p>
+            </div>
+          )}
         </div>
       )}
 
