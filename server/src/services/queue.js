@@ -494,6 +494,8 @@ async function runJob(job) {
         appendLog(`[split] WARNING: Chunk splitting failed (${e.message}) — kept original single file`);
         console.error(`[queue] [job:${job.id}] Failed to split live recording: ${e.message}`);
       }
+    } else if (splitLiveChunks && liveChunkDuration > 0) {
+      appendLog(`[split] WARNING: Skipped chunk splitting — the finished recording file wasn't found${result.filepath ? ` (${result.filepath})` : ''}`);
     }
 
     const completionMsg = result.splitParts && result.splitParts.length > 1

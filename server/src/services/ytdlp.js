@@ -643,6 +643,11 @@ function buildDownloadArgs(url, rawOptions = {}) {
     '--progress-template', 'postprocess:YTDLP_POSTPROCESS %(progress._percent_str)s',
     '-o', targetOutput,
     '--print', 'after_move:FILEPATH %(filepath)s',
+    // The planned output path, printed before downloading starts. --print implies --quiet, so
+    // there are no "[download] Destination:" lines; without this a recording the user stops
+    // (or one killed mid-post-processing) never reports where it was saved, and post-steps
+    // like live chunk splitting are silently skipped.
+    '--print', 'before_dl:DESTFILE %(filename)s',
     // --print implies --quiet, and in quiet mode yt-dlp starts its ffmpeg downloader (live
     // HLS/FLV captures, --download-sections, ...) with "-loglevel quiet", so a failure surfaces
     // only as "ffmpeg exited with code N" with no reason. Raising ffmpeg back to "error" keeps
@@ -830,6 +835,14 @@ function stopDownload(jobId) {
   userStoppedJobs.add(jobId);
   console.log(`[ytdlp] Requesting graceful stop for job ${jobId}`);
   onProgress && onProgress({ stage: 'Finalizing recording…', percent: 99, speed: null, eta: null });
+  if (active.streamEnded) {
+    // Nothing is left to record, and interrupting yt-dlp now would abort the merge or
+    // SponsorBlock pass and lose the file. Let it finish; the busy check below still
+    // terminates it if it has actually hung.
+    onLog && onLog('Stream already ended — letting yt-dlp finish saving the recording instead of interrupting it');
+    active.stopTimers = [setTimeout(() => escalateStop(jobId, active, Date.now()), BUSY_SAMPLE_WINDOW_MS)];
+    return true;
+  }
   try {
     // On POSIX, yt-dlp receives SIGINT and handles its FFmpeg child. On Windows, a real
     // CTRL+BREAK reaches the detached process group; ChildProcess.kill('SIGINT') is forceful.
@@ -839,18 +852,47 @@ function stopDownload(jobId) {
     console.error(`[ytdlp] Failed to send SIGINT to job ${jobId}: ${err.message}`);
     return false;
   }
-  active.stopTimers = [setTimeout(() => {
-    if (activeProcesses.has(jobId)) {
-      console.log(`[ytdlp] Graceful stop still pending for job ${jobId}; terminating process group via SIGTERM`);
-      killProcessTree(proc, 'SIGTERM');
+  const stopRequestedAt = Date.now();
+  active.stopTimers = [setTimeout(() => escalateStop(jobId, active, stopRequestedAt), STOP_GRACE_MS)];
+  return true;
+}
+
+// Terminates a job that hasn't exited after a stop request, unless it is still busy.
+// Merging and SponsorBlock-cutting a multi-hour capture (a full re-encode with
+// --force-keyframes-at-cuts) can take hours, and killing it throws away the finished file,
+// so keep waiting while the process group is using CPU, up to STOP_MAX_WAIT_MS.
+function escalateStop(jobId, active, stopRequestedAt, cpuBaseline = null, busyNoted = false) {
+  if (activeProcesses.get(jobId) !== active) return;
+  const { proc, onLog } = active;
+  const cpu = readProcessGroupCpuTicks(proc.pid);
+  const waitedMs = Date.now() - stopRequestedAt;
+  if (cpu == null && waitedMs < STOP_GRACE_MS) {
+    // No /proc (Windows): can't tell busy from hung, so fall back to the plain grace period.
+    active.stopTimers.push(setTimeout(() => escalateStop(jobId, active, stopRequestedAt), STOP_GRACE_MS - waitedMs));
+    return;
+  }
+  if (cpu != null && waitedMs < STOP_MAX_WAIT_MS) {
+    if (cpuBaseline == null || isBusyCpuDelta(cpu - cpuBaseline.ticks, Date.now() - cpuBaseline.at)) {
+      if (cpuBaseline != null && !busyNoted) {
+        busyNoted = true;
+        onLog && onLog('Still finalizing the recording (yt-dlp/FFmpeg busy) — waiting for it to finish');
+      }
+      const baseline = { ticks: cpu, at: Date.now() };
+      active.stopTimers.push(setTimeout(
+        () => escalateStop(jobId, active, stopRequestedAt, baseline, busyNoted),
+        BUSY_SAMPLE_WINDOW_MS,
+      ));
+      return;
     }
-  }, 30 * 60 * 1000), setTimeout(() => {
-    if (activeProcesses.has(jobId)) {
+  }
+  console.log(`[ytdlp] Graceful stop still pending for job ${jobId}; terminating process group via SIGTERM`);
+  killProcessTree(proc, 'SIGTERM');
+  active.stopTimers.push(setTimeout(() => {
+    if (activeProcesses.get(jobId) === active) {
       console.log(`[ytdlp] Job ${jobId} still alive after SIGTERM, sending SIGKILL`);
       killProcessTree(proc, 'SIGKILL');
     }
-  }, 35 * 60 * 1000)];
-  return true;
+  }, 5 * 60 * 1000));
 }
 
 function clearStopTimers(active) {
@@ -876,6 +918,11 @@ const BUSY_SAMPLE_WINDOW_MS = 60 * 1000;
 // count as working. Linux reports CPU time in USER_HZ ticks, which is 100/s in practice.
 const BUSY_MIN_CPU_SHARE = 0.005;
 const CLOCK_TICKS_PER_SEC = 100;
+const STREAM_ENDED_STAGE = 'Stream ended — finishing & saving…';
+// After a stop request, how long yt-dlp gets to finalize before the process group is
+// terminated, and the hard cap on waiting while it is still visibly busy post-processing.
+const STOP_GRACE_MS = 30 * 60 * 1000;
+const STOP_MAX_WAIT_MS = parseInt(process.env.STOP_MAX_WAIT_MS || String(4 * 60 * 60 * 1000), 10);
 
 // Total CPU ticks (including reaped children) used by every process in a process group,
 // or null where /proc isn't available (non-Linux) so callers fall back to plain idle kills.
@@ -1055,6 +1102,7 @@ function download(url, options = {}, onProgress, onLog) {
     let currentPass = 1;
     let highestPassPercent = 0;
     let postprocessSample = null;
+    let streamEnded = false;
 
     function estimatePostprocessEta(percent) {
       const now = Date.now();
@@ -1110,6 +1158,8 @@ function download(url, options = {}, onProgress, onLog) {
       if (options.jobId && userStoppedJobs.has(options.jobId) && (!explicitStage || /^Downloading/i.test(explicitStage))) {
         effectivePercent = Math.max(effectivePercent, 99);
         stage = 'Finalizing recording…';
+      } else if (streamEnded && (!explicitStage || /^Downloading/i.test(explicitStage))) {
+        stage = STREAM_ENDED_STAGE;
       }
 
       effectivePercent = Math.round(effectivePercent * 10) / 10;
@@ -1158,6 +1208,22 @@ function download(url, options = {}, onProgress, onLog) {
           finalFilepath = filepath;
           console.log(`[${jobId}] Destination file: ${filepath}`);
           onLog && onLog(`[destination] ${filepath}`);
+          continue;
+        }
+
+        // With --live-from-start, yt-dlp keeps going after the broadcast ends: it finishes
+        // the remaining fragments, merges, and runs SponsorBlock, mostly without output. Say
+        // so, otherwise the job looks like it's still recording a stream that's over.
+        if (!streamEnded && /no longer live\. Giving up/i.test(trimmed)) {
+          streamEnded = true;
+          const active = options.jobId && activeProcesses.get(options.jobId);
+          if (active) active.streamEnded = true;
+          onLog && onLog('The live stream has ended. yt-dlp is finishing the download, then merging and post-processing — this can take a long time for a long stream; no need to stop it.');
+          reportProgress(99, null, null, STREAM_ENDED_STAGE, true);
+        }
+
+        if (trimmed.startsWith('DESTFILE ')) {
+          filepath = trimmed.slice('DESTFILE '.length).trim();
           continue;
         }
 
@@ -1249,6 +1315,10 @@ function download(url, options = {}, onProgress, onLog) {
       if (completedWithErrors) {
         console.warn(`[${jobId}] Exit code ${code} but output was saved -> ${finalFilepath}`);
         onLog && onLog(`[warning] yt-dlp exited with code ${code} but saved the file; it may have gaps:\n${errSummary}`);
+      }
+      if (stoppedByUser && !finalFilepath && filepath && !fs.existsSync(filepath)) {
+        onLog && onLog(`[warning] Stopped before yt-dlp finished writing ${filepath}; any partial files were left next to it`);
+        filepath = null;
       }
       if (stoppedByUser) {
         console.log(`[${jobId}] Recording stopped by user -> ${filepath || 'saved stream'}`);
