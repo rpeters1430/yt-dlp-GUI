@@ -670,6 +670,28 @@ button.icon-btn-neutral:hover:not(:disabled) { color: var(--text); background: v
   border-radius: var(--radius-pill);
   padding: 2px 9px;
 }
+/* Dashboard "Add downloads" header: wraps onto two rows on narrow screens
+   instead of pushing the action buttons past the card edge. */
+.intake-header { flex-wrap: wrap; row-gap: 8px; }
+.intake-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.intake-title .count-badge { white-space: nowrap; }
+.intake-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.intake-actions > * { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+/* The Sites Guide <Link> renders as <a>, which the button.btn-ghost rules don't reach. */
+.intake-actions a.btn-ghost {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.intake-actions a.btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
+@media (max-width: 640px) {
+  .intake-actions { margin-left: 0; width: 100%; }
+  .intake-actions a.btn-ghost { padding: 10px 14px; }
+}
 .panel p.panel-description { color: var(--text-secondary); font-size: 13px; line-height: 1.6; margin-bottom: 14px; }
 
 .stat-grid {

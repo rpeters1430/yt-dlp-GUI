@@ -238,20 +238,19 @@ export default function Dashboard() {
       </div>
 
       <section className="panel">
-        <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div className="panel-header intake-header">
+          <div className="intake-title">
             <h2>Add downloads</h2>
             {validUrls.length > 0 && (
               <span className="count-badge accent">{validUrls.length} link{validUrls.length > 1 ? 's' : ''} ready</span>
             )}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div className="intake-actions">
             <button
               type="button"
               className="btn-ghost btn-sm"
               onClick={handlePasteClipboard}
               title="Paste link from clipboard"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
             >
               <ClipboardPaste size={13} /> Paste
             </button>
@@ -261,7 +260,6 @@ export default function Dashboard() {
                 className="btn-ghost btn-sm text-danger"
                 onClick={() => setUrlText('')}
                 title="Clear input"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
               >
                 <Trash2 size={13} /> Clear
               </button>
@@ -269,7 +267,6 @@ export default function Dashboard() {
             <Link
               to="/sites"
               className="btn-ghost btn-sm"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
               title="View supported sites and feature requirements"
             >
               <Globe size={13} /> Sites Guide

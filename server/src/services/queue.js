@@ -1,4 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
+const fs = require('fs');
 const db = require('../db');
 const ytdlp = require('./ytdlp');
 const siteProfiles = require('./siteProfiles');
