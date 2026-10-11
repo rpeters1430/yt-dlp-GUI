@@ -386,16 +386,27 @@ function buildAudioFormatSelector({ container, audioQuality }) {
   return 'bestaudio/best/Audio_Only/audio_only';
 }
 
+// Plain "bestaudio" on YouTube is Opus, and Opus muxed into MP4 is poorly supported: many
+// players (QuickTime, Windows' built-in player, TVs, Plex/Jellyfin direct play) ignore its
+// pre-skip/edit list and play the audio out of sync with the video. For MP4 output, try an
+// AAC (m4a) stream first and only fall back to any audio when the site has none.
+function buildVideoFormatSelector(videoFilter, container) {
+  const video = `bestvideo*${videoFilter}`;
+  const pair = container === 'mp4'
+    ? `${video}+bestaudio[ext=m4a]/${video}+bestaudio`
+    : `${video}+bestaudio`;
+  return `${pair}/best${videoFilter}`;
+}
+
 function buildFormatSelector({ audioOnly, formatSelector, quality, container, audioQuality }) {
   if (audioOnly) return buildAudioFormatSelector({ container, audioQuality });
   if (formatSelector) return formatSelector;
-  if (!quality) return 'bestvideo*+bestaudio/best';
+  if (!quality) return buildVideoFormatSelector('', container);
   const parsed = parseInt(quality, 10);
   if (!Number.isNaN(parsed) && QUALITY_HEIGHTS[parsed]) {
-    const height = QUALITY_HEIGHTS[parsed];
-    return `bestvideo*[height<=${height}]+bestaudio/best[height<=${height}]/best[height<=${height}]`;
+    return buildVideoFormatSelector(`[height<=${QUALITY_HEIGHTS[parsed]}]`, container);
   }
-  return `${quality}/bestvideo*+bestaudio/best`;
+  return `${quality}/${buildVideoFormatSelector('', container)}`;
 }
 
 // Command strings built here are logged to the console and persisted to the downloads
@@ -648,7 +659,7 @@ function buildDownloadArgs(url, rawOptions = {}) {
       args.push('--audio-quality', String(audioQuality));
     }
   } else {
-    args.push('-f', buildFormatSelector({ formatSelector, quality }));
+    args.push('-f', buildFormatSelector({ formatSelector, quality, container }));
     if (container === 'ts') {
       args.push('--merge-output-format', 'ts');
     } else {
@@ -728,6 +739,13 @@ function buildDownloadArgs(url, rawOptions = {}) {
 
   if (options.downloadSections) {
     args.push('--download-sections', options.downloadSections.trim());
+  }
+
+  // SponsorBlock removal and --download-sections cut the file with a stream copy, which can
+  // only start video on a keyframe while audio is cut exactly — so every cut leaves the audio
+  // ahead of the video. Re-encoding just around the cut points keeps the two in sync.
+  if (sponsorblockRemoveCats || (options.downloadSections && options.downloadSections.trim())) {
+    args.push('--force-keyframes-at-cuts');
   }
 
   if (options.twitchChat) {
