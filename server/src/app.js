@@ -75,6 +75,7 @@ const musicRoutes = require('./routes/music');
 const sitesRoutes = require('./routes/sites');
 const libraryRoutes = require('./routes/library');
 const notificationsRoutes = require('./routes/notifications');
+const lidarrRoutes = require('./routes/lidarr');
 
 const SqliteStore = SqliteStoreFactory(session);
 
@@ -127,6 +128,7 @@ function createApp({ watchRepository, watchService, checkAllWatches }) {
   });
 
   app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
   app.use(sessionMiddleware);
 
   app.use('/api/auth', authRoutes);
@@ -145,6 +147,9 @@ function createApp({ watchRepository, watchService, checkAllWatches }) {
   app.use('/api/sites', sitesRoutes);
   app.use('/api/library', libraryRoutes);
   app.use('/api/notifications', notificationsRoutes);
+  app.use('/api/lidarr', lidarrRoutes);
+  app.use('/api/torznab', lidarrRoutes);
+  app.use('/api/v2', lidarrRoutes);
 
   const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
   app.use(express.static(clientDist));

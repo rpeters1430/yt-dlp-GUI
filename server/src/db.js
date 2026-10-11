@@ -62,6 +62,28 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS lidarr_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hash TEXT UNIQUE NOT NULL,
+  title TEXT NOT NULL,
+  artist TEXT,
+  album TEXT,
+  type TEXT DEFAULT 'album',
+  external_id TEXT,
+  total_tracks INTEGER DEFAULT 1,
+  job_ids TEXT,
+  status TEXT DEFAULT 'queued',
+  save_path TEXT,
+  content_path TEXT,
+  category TEXT DEFAULT 'music',
+  size_bytes INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_lidarr_tasks_hash ON lidarr_tasks (hash);
+CREATE INDEX IF NOT EXISTS idx_lidarr_tasks_status ON lidarr_tasks (status);
 `);
 
 // CREATE TABLE IF NOT EXISTS above only applies to brand-new databases, so upgrades of an

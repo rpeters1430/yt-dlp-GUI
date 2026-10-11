@@ -19,6 +19,7 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 - [Site cookies](#site-cookies-youtube-twitch-and-others)
 - [Jellyfin integration](#jellyfin-integration)
 - [Plex integration](#plex-integration)
+- [Lidarr integration](#lidarr-integration)
 - [Scheduled tasks](#scheduled-tasks)
 - [Where your data lives](#where-your-data-lives)
 - [Security notes](#security-notes)
@@ -82,6 +83,7 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 - Auto-match and download tracks from YouTube as OPUS (highest quality native stream, ~160 kbps VBR bitstream copy), MP3 (up to 320 kbps CBR), M4A (AAC), or FLAC, with embedded ID3/Vorbis tags and cover art
 - Organized into `{MusicFolder}/{Artist}/{Album}/{TrackNumber} - {Title}.{ext}`, with an optional `cover.jpg` for Jellyfin/Plex/Navidrome
 - Music Watches follow artist channels or playlists for new releases and add them to your library
+- **Lidarr integration** — serves as a Torznab Indexer and qBittorrent/SABnzbd Download Client for Lidarr, and browses/downloads wanted missing albums directly (see [Lidarr integration](#lidarr-integration))
 
 ### Notifications
 - Discord, Slack (and Mattermost/Rocket.Chat), ntfy, Gotify, or any generic JSON webhook (Home Assistant, n8n, Node-RED)
@@ -306,6 +308,34 @@ Set your Plex server URL and `X-Plex-Token` in the **Plex** panel in **Settings*
 - **"Watched in Plex" auto-delete** — uses the same safety guards as the rest of auto-delete. Plex only reports what the token's own account has watched, so other Plex users' viewing doesn't count.
 
 By default every video and music library is used; enter library IDs (shown after **Test connection**) to limit it. Plex doesn't read `.nfo` files, so titles come from file names; an *Other Videos* library works best.
+
+## Lidarr integration
+
+This app integrates seamlessly with [Lidarr](https://lidarr.audio) as both an **Indexer** and **Download Client**, allowing Lidarr to search, queue, and download music using yt-dlp.
+
+For full detailed setup instructions, see [docs/lidarr-integration.md](docs/lidarr-integration.md).
+
+### Quick Setup
+
+1. **Torznab Indexer**:
+   - In Lidarr, go to **Settings → Indexers → Add (+) → Torznab (Custom)**.
+   - **URL**: `http://<your-server-ip>:3000/api/lidarr/torznab`
+   - **API Key**: Copy your key from the **Music → Lidarr** tab in the web UI.
+   - **Categories**: `3000, 3010, 3020, 3040` (Audio).
+   - Test and Save.
+
+2. **Download Client**:
+   - In Lidarr, go to **Settings → Download Clients → Add (+) → qBittorrent**.
+   - **Host**: `<your-server-ip>`
+   - **Port**: `3000` (or your server port)
+   - **URL Base**: `/api/lidarr/qbit`
+   - **Category**: `music`
+   - Test and Save.
+
+3. **Lidarr Server Automation (Optional)**:
+   - In the app's **Music → Lidarr** tab, enter your Lidarr server URL and API key.
+   - Enable **Automatically notify Lidarr when downloads finish** to trigger `DownloadedAlbumsScan` as soon as music completes.
+   - Browse and download wanted/missing albums from Lidarr with a single click.
 
 ## Scheduled tasks
 

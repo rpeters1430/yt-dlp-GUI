@@ -32,6 +32,7 @@ import {
   Library,
   X,
   Link as LinkIcon,
+  Copy,
 } from 'lucide-react';
 import { api } from '../api.js';
 import { useDownloads } from '../context/DownloadsContext.jsx';
@@ -102,6 +103,28 @@ export default function MusicPage() {
     saveCover: true,
   });
   const [settingsSavedToast, setSettingsSavedToast] = useState(false);
+
+  // Lidarr Integration state
+  const [lidarrConfig, setLidarrConfig] = useState({
+    enabled: false,
+    url: 'http://localhost:8686',
+    apiKey: '',
+    torznabApiKey: '',
+    autoNotify: true,
+    musicFolder: 'Music',
+    category: 'music',
+    format: 'mp3',
+    quality: '320k',
+  });
+  const [lidarrStatus, setLidarrStatus] = useState(null);
+  const [lidarrTesting, setLidarrTesting] = useState(false);
+  const [lidarrTestResult, setLidarrTestResult] = useState(null);
+  const [lidarrSaving, setLidarrSaving] = useState(false);
+  const [lidarrSavedToast, setLidarrSavedToast] = useState(false);
+  const [lidarrWanted, setLidarrWanted] = useState({ records: [], totalRecords: 0, loading: false });
+  const [lidarrWantedFilter, setLidarrWantedFilter] = useState('');
+  const [downloadingWantedId, setDownloadingWantedId] = useState(null);
+  const [copiedKey, setCopiedKey] = useState(null);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -272,6 +295,89 @@ export default function MusicPage() {
       .then((st) => setJellyfinStatus(st))
       .catch(() => {});
   }, []);
+
+  // Load Lidarr config and status when entering Lidarr tab
+  useEffect(() => {
+    if (activeTab === 'lidarr') {
+      api.getLidarrSettings().then((cfg) => {
+        setLidarrConfig(cfg);
+        if (cfg.url && cfg.apiKey) {
+          loadLidarrWanted();
+        }
+      }).catch(() => {});
+
+      api.getLidarrStatus().then((st) => setLidarrStatus(st)).catch(() => {});
+    }
+  }, [activeTab]);
+
+  function copyToClipboard(text, key) {
+    if (!text) return;
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(text);
+    }
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2500);
+  }
+
+  async function handleTestLidarr() {
+    setLidarrTesting(true);
+    setLidarrTestResult(null);
+    try {
+      const res = await api.testLidarrConnection({ url: lidarrConfig.url, apiKey: lidarrConfig.apiKey });
+      setLidarrTestResult({ ok: true, message: `Connected to ${res.appName || 'Lidarr'} (v${res.version})` });
+    } catch (err) {
+      setLidarrTestResult({ ok: false, error: err.message });
+    } finally {
+      setLidarrTesting(false);
+    }
+  }
+
+  async function handleSaveLidarr(e) {
+    if (e) e.preventDefault();
+    setLidarrSaving(true);
+    try {
+      const updated = await api.updateLidarrSettings(lidarrConfig);
+      setLidarrConfig(updated);
+      setLidarrSavedToast(true);
+      setTimeout(() => setLidarrSavedToast(false), 3000);
+      if (updated.url && updated.apiKey) {
+        loadLidarrWanted();
+      }
+    } catch (err) {
+      alert(`Failed to save Lidarr settings: ${err.message}`);
+    } finally {
+      setLidarrSaving(false);
+    }
+  }
+
+  async function loadLidarrWanted() {
+    setLidarrWanted((prev) => ({ ...prev, loading: true }));
+    try {
+      const data = await api.getLidarrWanted({ page: 1, pageSize: 60 });
+      setLidarrWanted({
+        records: data.records || [],
+        totalRecords: data.totalRecords || (data.records || []).length,
+        loading: false,
+      });
+    } catch (err) {
+      setLidarrWanted((prev) => ({ ...prev, loading: false }));
+    }
+  }
+
+  async function handleDownloadWanted(item) {
+    const artist = item.artist?.artistName || item.artistName || '';
+    const album = item.title;
+    setDownloadingWantedId(item.id);
+    try {
+      await api.downloadLidarrWanted({ artist, album });
+      showToast(`Started download for "${artist} - ${album}"!`);
+      api.getLidarrStatus().then((st) => setLidarrStatus(st)).catch(() => {});
+    } catch (err) {
+      showToast(`Could not download "${album}": ${err.message}`, 'error');
+    } finally {
+      setDownloadingWantedId(null);
+    }
+  }
 
   // Check every release/song currently on screen against the Jellyfin library, so search
   // results can show what's already owned. Only items not checked yet are sent.
@@ -1004,6 +1110,14 @@ export default function MusicPage() {
             >
               <Radar size={15} />
               Music Watches
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${activeTab === 'lidarr' ? 'btn-music-active' : 'btn-secondary'}`}
+              onClick={() => setActiveTab('lidarr')}
+            >
+              <Radio size={15} />
+              Lidarr
             </button>
             <button
               type="button"
@@ -2800,6 +2914,436 @@ export default function MusicPage() {
           )}
         </div>
         </>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 5: LIDARR INTEGRATION                                                 */}
+      {/* ========================================================================= */}
+      {activeTab === 'lidarr' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          {/* Header Card */}
+          <div className="card" style={{ maxWidth: 840 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Radio size={24} color="var(--accent)" />
+                <h2 style={{ fontSize: '1.25rem', margin: 0, fontWeight: 700 }}>Lidarr Music Integration</h2>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {lidarrConfig.enabled ? (
+                  <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '4px 10px', fontSize: '0.8rem' }}>
+                    ● Integration Enabled
+                  </span>
+                ) : (
+                  <span className="badge" style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-secondary)', padding: '4px 10px', fontSize: '0.8rem' }}>
+                    Disabled
+                  </span>
+                )}
+              </div>
+            </div>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.5, margin: 0 }}>
+              Use this app as both an <strong>Indexer</strong> and <strong>Downloader</strong> for Lidarr. When Lidarr searches for an album or track, our Torznab indexer queries high-fidelity music releases and sends the download tasks directly to our queue via the built-in qBittorrent or SABnzbd client emulator. When downloads finish, Lidarr automatically imports and renames the files into your library!
+            </p>
+          </div>
+
+          {/* Quick Setup / Connection Guide Card */}
+          <div className="card" style={{ maxWidth: 840 }}>
+            <h3 style={{ fontSize: '1.05rem', margin: '0 0 14px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <FileAudio size={18} color="var(--accent)" /> How to Connect in Lidarr
+            </h3>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 16 }}>
+              {/* Step 1: Torznab Indexer */}
+              <div style={{ padding: 14, borderRadius: 8, background: 'var(--surface-hover)', border: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <strong style={{ fontSize: '0.92rem', color: 'var(--text-primary)' }}>1. Add as Indexer in Lidarr</strong>
+                  <span className="badge" style={{ fontSize: '0.72rem' }}>Torznab</span>
+                </div>
+                <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
+                  In Lidarr, go to <strong>Settings → Indexers → Add (+) → Torznab (Custom)</strong>:
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div>
+                    <label style={{ fontSize: '0.76rem', color: 'var(--text-tertiary)', display: 'block', marginBottom: 2 }}>URL</label>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input
+                        type="text"
+                        readOnly
+                        className="input"
+                        style={{ fontSize: '0.82rem', padding: '6px 8px', flex: 1 }}
+                        value={`${window.location.origin}/api/lidarr/torznab`}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        style={{ padding: '4px 8px' }}
+                        onClick={() => copyToClipboard(`${window.location.origin}/api/lidarr/torznab`, 'torznabUrl')}
+                        title="Copy Indexer URL"
+                      >
+                        {copiedKey === 'torznabUrl' ? <Check size={14} color="var(--success)" /> : <Copy size={14} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '0.76rem', color: 'var(--text-tertiary)', display: 'block', marginBottom: 2 }}>API Key</label>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input
+                        type="text"
+                        readOnly
+                        className="input"
+                        style={{ fontSize: '0.82rem', padding: '6px 8px', flex: 1 }}
+                        value={lidarrConfig.torznabApiKey || 'Generating...'}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        style={{ padding: '4px 8px' }}
+                        onClick={() => copyToClipboard(lidarrConfig.torznabApiKey, 'torznabKey')}
+                        title="Copy Torznab API Key"
+                      >
+                        {copiedKey === 'torznabKey' ? <Check size={14} color="var(--success)" /> : <Copy size={14} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 4 }}>
+                    Categories: <code>3000, 3010, 3020, 3040</code> (Audio)
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 2: Download Client */}
+              <div style={{ padding: 14, borderRadius: 8, background: 'var(--surface-hover)', border: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <strong style={{ fontSize: '0.92rem', color: 'var(--text-primary)' }}>2. Add as Download Client</strong>
+                  <span className="badge" style={{ fontSize: '0.72rem' }}>qBittorrent</span>
+                </div>
+                <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
+                  In Lidarr, go to <strong>Settings → Download Clients → Add (+) → qBittorrent</strong>:
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                    <div>
+                      <label style={{ fontSize: '0.76rem', color: 'var(--text-tertiary)', display: 'block', marginBottom: 2 }}>Host</label>
+                      <input
+                        type="text"
+                        readOnly
+                        className="input"
+                        style={{ fontSize: '0.82rem', padding: '6px 8px', width: '100%' }}
+                        value={window.location.hostname || '127.0.0.1'}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '0.76rem', color: 'var(--text-tertiary)', display: 'block', marginBottom: 2 }}>Port</label>
+                      <input
+                        type="text"
+                        readOnly
+                        className="input"
+                        style={{ fontSize: '0.82rem', padding: '6px 8px', width: '100%' }}
+                        value={window.location.port || '3000'}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '0.76rem', color: 'var(--text-tertiary)', display: 'block', marginBottom: 2 }}>URL Base</label>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input
+                        type="text"
+                        readOnly
+                        className="input"
+                        style={{ fontSize: '0.82rem', padding: '6px 8px', flex: 1 }}
+                        value="/api/lidarr/qbit"
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        style={{ padding: '4px 8px' }}
+                        onClick={() => copyToClipboard('/api/lidarr/qbit', 'qbitUrl')}
+                        title="Copy URL Base"
+                      >
+                        {copiedKey === 'qbitUrl' ? <Check size={14} color="var(--success)" /> : <Copy size={14} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 4 }}>
+                    Username/Password can be anything. Category: <code>music</code>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Lidarr Server Settings Form */}
+          <div className="card" style={{ maxWidth: 840 }}>
+            <h3 style={{ fontSize: '1.05rem', margin: '0 0 14px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Settings size={18} color="var(--accent)" /> Lidarr Server Connection & Automation
+            </h3>
+
+            <form onSubmit={handleSaveLidarr}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.9rem', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={lidarrConfig.enabled}
+                    onChange={(e) => setLidarrConfig({ ...lidarrConfig, enabled: e.target.checked })}
+                  />
+                  <strong>Enable Lidarr Integration</strong>
+                </label>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: 6 }}>
+                      Lidarr Server URL
+                    </label>
+                    <input
+                      type="text"
+                      className="input"
+                      style={{ width: '100%', fontSize: '0.9rem' }}
+                      placeholder="http://localhost:8686"
+                      value={lidarrConfig.url}
+                      onChange={(e) => setLidarrConfig({ ...lidarrConfig, url: e.target.value })}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: 6 }}>
+                      Lidarr API Key
+                    </label>
+                    <input
+                      type="password"
+                      className="input"
+                      style={{ width: '100%', fontSize: '0.9rem' }}
+                      placeholder="Found in Lidarr: Settings → General → Security → API Key"
+                      value={lidarrConfig.apiKey}
+                      onChange={(e) => setLidarrConfig({ ...lidarrConfig, apiKey: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.9rem', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={lidarrConfig.autoNotify}
+                      onChange={(e) => setLidarrConfig({ ...lidarrConfig, autoNotify: e.target.checked })}
+                    />
+                    Automatically notify Lidarr (trigger <code>DownloadedAlbumsScan</code>) when downloads finish
+                  </label>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 4, marginLeft: 24 }}>
+                    Instantly notifies Lidarr to scan and import completed albums into your library without waiting for the next download client poll cycle.
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
+                  <button type="button" className="btn btn-secondary" onClick={handleTestLidarr} disabled={lidarrTesting || !lidarrConfig.url}>
+                    <RefreshCw size={15} className={lidarrTesting ? 'spin' : ''} />
+                    {lidarrTesting ? 'Testing Connection...' : 'Test Connection'}
+                  </button>
+                  <button type="submit" className="btn btn-primary" disabled={lidarrSaving}>
+                    {lidarrSaving ? 'Saving...' : 'Save Lidarr Settings'}
+                  </button>
+                  {lidarrSavedToast && (
+                    <span style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.88rem' }}>
+                      <CheckCircle2 size={16} /> Settings Saved!
+                    </span>
+                  )}
+                </div>
+
+                {lidarrTestResult && (
+                  <div style={{
+                    padding: '10px 14px',
+                    borderRadius: 8,
+                    background: lidarrTestResult.ok ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                    border: `1px solid ${lidarrTestResult.ok ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                    color: lidarrTestResult.ok ? 'var(--success)' : 'var(--danger)',
+                    fontSize: '0.86rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                  }}>
+                    {lidarrTestResult.ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+                    <span>{lidarrTestResult.ok ? lidarrTestResult.message : `Connection test failed: ${lidarrTestResult.error}`}</span>
+                  </div>
+                )}
+              </div>
+            </form>
+          </div>
+
+          {/* Lidarr Wanted / Missing Albums Section */}
+          <div className="card" style={{ maxWidth: 840 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Search size={18} color="var(--accent)" />
+                <h3 style={{ fontSize: '1.05rem', margin: 0 }}>Wanted / Missing Albums in Lidarr</h3>
+                {lidarrWanted.totalRecords > 0 && (
+                  <span className="badge" style={{ fontSize: '0.75rem' }}>
+                    {lidarrWanted.totalRecords} Wanted
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={loadLidarrWanted}
+                  disabled={lidarrWanted.loading || !lidarrConfig.url || !lidarrConfig.apiKey}
+                >
+                  <RefreshCw size={14} className={lidarrWanted.loading ? 'spin' : ''} />
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {(!lidarrConfig.url || !lidarrConfig.apiKey) ? (
+              <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '0.88rem' }}>
+                Enter your Lidarr Server URL and API Key above and save settings to browse wanted albums.
+              </div>
+            ) : lidarrWanted.loading ? (
+              <div style={{ textAlign: 'center', padding: 30, color: 'var(--text-tertiary)' }}>
+                <RefreshCw size={24} className="spin" style={{ margin: '0 auto 10px auto' }} />
+                <div>Fetching wanted albums from Lidarr...</div>
+              </div>
+            ) : lidarrWanted.records.length === 0 ? (
+              <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
+                🎉 No missing albums currently wanted in Lidarr! All monitored albums are downloaded.
+              </div>
+            ) : (
+              <div>
+                <div style={{ marginBottom: 12 }}>
+                  <input
+                    type="text"
+                    className="input"
+                    style={{ width: '100%', fontSize: '0.85rem' }}
+                    placeholder="Filter wanted albums by artist or title..."
+                    value={lidarrWantedFilter}
+                    onChange={(e) => setLidarrWantedFilter(e.target.value)}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 420, overflowY: 'auto' }}>
+                  {lidarrWanted.records
+                    .filter((item) => {
+                      if (!lidarrWantedFilter.trim()) return true;
+                      const q = lidarrWantedFilter.toLowerCase();
+                      const artist = (item.artist?.artistName || item.artistName || '').toLowerCase();
+                      const title = (item.title || '').toLowerCase();
+                      return artist.includes(q) || title.includes(q);
+                    })
+                    .slice(0, 30)
+                    .map((item) => {
+                      const artistName = item.artist?.artistName || item.artistName || 'Unknown Artist';
+                      const albumTitle = item.title;
+                      const releaseDate = item.releaseDate ? item.releaseDate.slice(0, 4) : '';
+                      const isDownloading = downloadingWantedId === item.id;
+
+                      return (
+                        <div
+                          key={item.id}
+                          style={{
+                            padding: '10px 14px',
+                            borderRadius: 8,
+                            background: 'var(--surface-hover)',
+                            border: '1px solid var(--border)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 12,
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
+                            <div style={{
+                              width: 40,
+                              height: 40,
+                              borderRadius: 6,
+                              background: 'var(--bg-subtle, rgba(255,255,255,0.05))',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: 'var(--accent)',
+                              flexShrink: 0,
+                            }}>
+                              <Disc3 size={20} />
+                            </div>
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <div style={{ fontWeight: 600, fontSize: '0.88rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {albumTitle}
+                              </div>
+                              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: 2 }}>
+                                {artistName} {releaseDate ? `• ${releaseDate}` : ''}
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-primary"
+                            style={{ flexShrink: 0, padding: '4px 10px', fontSize: '0.8rem' }}
+                            disabled={isDownloading}
+                            onClick={() => handleDownloadWanted(item)}
+                          >
+                            <Download size={13} />
+                            {isDownloading ? 'Searching…' : 'Download via yt-dlp'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Active Dispatched Lidarr Downloads */}
+          {lidarrStatus && (lidarrStatus.activeTasks?.length > 0 || lidarrStatus.completedTasks?.length > 0) && (
+            <div className="card" style={{ maxWidth: 840 }}>
+              <h3 style={{ fontSize: '1.05rem', margin: '0 0 14px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Clock size={18} color="var(--accent)" /> Lidarr Dispatched Queue & History
+              </h3>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {[...(lidarrStatus.activeTasks || []), ...(lidarrStatus.completedTasks || [])].map((task) => (
+                  <div
+                    key={task.hash}
+                    style={{
+                      padding: '10px 14px',
+                      borderRadius: 8,
+                      background: 'var(--surface-hover)',
+                      border: '1px solid var(--border)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                      <span style={{ fontWeight: 600, fontSize: '0.88rem' }}>{task.name}</span>
+                      <span className="badge" style={{
+                        fontSize: '0.72rem',
+                        background: task.state === 'uploading' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(91, 109, 248, 0.15)',
+                        color: task.state === 'uploading' ? 'var(--success)' : 'var(--accent)',
+                      }}>
+                        {task.state === 'uploading' ? 'Ready for Lidarr Import' : `${Math.round(task.progress * 100)}% Downloading`}
+                      </span>
+                    </div>
+
+                    <div style={{ width: '100%', height: 4, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          width: `${Math.round(task.progress * 100)}%`,
+                          height: '100%',
+                          background: task.state === 'uploading' ? 'var(--success)' : 'var(--accent)',
+                          transition: 'width 0.3s ease',
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {/* Match Inspection & Custom Source Modal */}

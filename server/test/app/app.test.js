@@ -56,6 +56,7 @@ const READ_ENDPOINTS = [
   '/api/settings', '/api/settings/output-template', '/api/twitch/settings', '/api/twitch/jobs',
   '/api/cleanup/settings', '/api/jellyfin/settings', '/api/plex/settings', '/api/music/settings',
   '/api/music/watches', '/api/sites/guide', '/api/library', '/api/notifications/settings',
+  '/api/lidarr/settings',
 ];
 
 test('health answers without a session and is not cached', async (t) => {

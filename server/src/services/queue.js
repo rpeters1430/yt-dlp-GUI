@@ -566,6 +566,16 @@ async function runJob(job) {
     } catch (e) {
       console.error(`[queue] [job:${job.id}] Plex scan/sync schedule failed: ${e.message}`);
     }
+
+    // Trigger Lidarr auto-import scan for completed music downloads
+    if (extraOptions.isMusicDownload && result.filepath) {
+      try {
+        const lidarr = require('./lidarr');
+        lidarr.notifyDownloadComplete(job, result);
+      } catch (e) {
+        console.error(`[queue] [job:${job.id}] Lidarr notification failed: ${e.message}`);
+      }
+    }
   } catch (err) {
     if (!getJob(job.id)) {
       console.log(`[queue] [job:${job.id}] Removed during download (${err.message})`);

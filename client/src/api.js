@@ -135,6 +135,16 @@ export const api = {
   // Filename templates
   getOutputTemplate: () => request('/settings/output-template'),
 
+  // Lidarr Integration
+  getLidarrSettings: () => request('/lidarr/settings'),
+  updateLidarrSettings: (payload) => request('/lidarr/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  testLidarrConnection: (payload) => request('/lidarr/test', { method: 'POST', body: JSON.stringify(payload || {}) }),
+  getLidarrStatus: () => request('/lidarr/status'),
+  getLidarrWanted: ({ page = 1, pageSize = 30 } = {}) => request(`/lidarr/wanted?page=${page}&pageSize=${pageSize}`),
+  getLidarrArtists: () => request('/lidarr/artists'),
+  scanLidarr: (targetPath) => request('/lidarr/scan', { method: 'POST', body: JSON.stringify({ path: targetPath }) }),
+  downloadLidarrWanted: (payload) => request('/lidarr/download-wanted', { method: 'POST', body: JSON.stringify(payload) }),
+
   // Supported Sites & Extractors
   getSiteGuide: () => request('/sites/guide'),
   listExtractors: (q = '') => request(`/sites/extractors${q ? `?q=${encodeURIComponent(q)}` : ''}`),
