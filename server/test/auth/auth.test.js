@@ -1,11 +1,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('crypto');
 const path = require('path');
 const express = require('express');
 const session = require('express-session');
 const { openFreshDb } = require('../helpers/queueHarness');
 
 const SRC = path.join(__dirname, '..', '..', 'src');
+// Generated per run rather than written out, so no credential-looking literals live in the repo.
+const ADMIN_PASSWORD = crypto.randomBytes(12).toString('hex');
+const NEW_PASSWORD = crypto.randomBytes(12).toString('hex');
+const OTHER_PASSWORD = crypto.randomBytes(12).toString('hex');
 
 // Runs the bootstrap with the given env, restoring it afterwards.
 function bootstrap(env) {
@@ -33,7 +38,7 @@ function bootstrap(env) {
 // The real auth router plus one auth-gated route, behind a real (in-memory) session store.
 async function startApp(t) {
   const { db } = openFreshDb(t);
-  bootstrap({ ADMIN_USER: 'admin', ADMIN_PASSWORD: 'correct-horse' });
+  bootstrap({ ADMIN_USER: 'admin', ADMIN_PASSWORD: ADMIN_PASSWORD });
   const auth = require(path.join(SRC, 'auth'));
 
   const app = express();
@@ -70,7 +75,7 @@ test('bootstrap creates the admin once, with a generated password when none is s
   const auth = require(path.join(SRC, 'auth'));
   assert.equal(auth.login('boss', generated[1]).username, 'boss');
 
-  bootstrap({ ADMIN_USER: 'second', ADMIN_PASSWORD: 'whatever123' });
+  bootstrap({ ADMIN_USER: 'second', ADMIN_PASSWORD: OTHER_PASSWORD });
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM users').get().c, 1, 'no second admin once one exists');
 });
 
@@ -81,10 +86,10 @@ test('login checks credentials and sets a session that /me and protected routes 
   assert.equal((await call('GET', '/auth/me')).status, 401);
   assert.equal((await call('GET', '/private')).status, 401);
   assert.equal((await call('POST', '/auth/login', { username: 'admin' })).status, 400);
-  assert.equal((await call('POST', '/auth/login', { username: 'admin', password: 'wrong' })).status, 401);
-  assert.equal((await call('POST', '/auth/login', { username: 'nobody', password: 'correct-horse' })).status, 401);
+  assert.equal((await call('POST', '/auth/login', { username: 'admin', password: `${ADMIN_PASSWORD}-wrong` })).status, 401);
+  assert.equal((await call('POST', '/auth/login', { username: 'nobody', password: ADMIN_PASSWORD })).status, 401);
 
-  const ok = await call('POST', '/auth/login', { username: 'admin', password: 'correct-horse' });
+  const ok = await call('POST', '/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
   assert.deepEqual(ok, { status: 200, body: { username: 'admin' } });
   assert.deepEqual((await call('GET', '/auth/me')).body, { username: 'admin' });
   assert.deepEqual((await call('GET', '/private')).body, { user: 'admin' });
@@ -97,23 +102,23 @@ test('changing the password signs out other sessions but keeps the current one',
   const { client } = await startApp(t);
   const phone = client();
   const laptop = client();
-  await phone('POST', '/auth/login', { username: 'admin', password: 'correct-horse' });
-  await laptop('POST', '/auth/login', { username: 'admin', password: 'correct-horse' });
+  await phone('POST', '/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
+  await laptop('POST', '/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
 
   assert.equal((await laptop('POST', '/auth/change-password', { newPassword: 'short' })).status, 400);
-  assert.equal((await laptop('POST', '/auth/change-password', { newPassword: 'battery-staple' })).status, 200);
+  assert.equal((await laptop('POST', '/auth/change-password', { newPassword: NEW_PASSWORD })).status, 200);
 
   assert.equal((await laptop('GET', '/private')).status, 200, 'the session that changed it stays signed in');
   assert.equal((await phone('GET', '/private')).status, 401, 'other sessions are signed out');
 
   const fresh = client();
-  assert.equal((await fresh('POST', '/auth/login', { username: 'admin', password: 'correct-horse' })).status, 401);
-  assert.equal((await fresh('POST', '/auth/login', { username: 'admin', password: 'battery-staple' })).status, 200);
+  assert.equal((await fresh('POST', '/auth/login', { username: 'admin', password: ADMIN_PASSWORD })).status, 401);
+  assert.equal((await fresh('POST', '/auth/login', { username: 'admin', password: NEW_PASSWORD })).status, 200);
 });
 
 test('change-password requires a session', async (t) => {
   const { client } = await startApp(t);
-  assert.equal((await client()('POST', '/auth/change-password', { newPassword: 'battery-staple' })).status, 401);
+  assert.equal((await client()('POST', '/auth/change-password', { newPassword: NEW_PASSWORD })).status, 401);
 });
 
 test('repeated failed logins are rate limited', async (t) => {
@@ -122,7 +127,7 @@ test('repeated failed logins are rate limited', async (t) => {
   for (let i = 0; i < 10; i++) {
     assert.equal((await call('POST', '/auth/login', { username: 'admin', password: `bad${i}` })).status, 401);
   }
-  const limited = await call('POST', '/auth/login', { username: 'admin', password: 'correct-horse' });
+  const limited = await call('POST', '/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
   assert.equal(limited.status, 429);
   assert.match(limited.body.error, /Too many login attempts/);
 });

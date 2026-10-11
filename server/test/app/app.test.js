@@ -1,16 +1,19 @@
 // The real app from src/app.js (session, auth and every router), as index.js wires it.
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('crypto');
 const path = require('path');
 const { openFreshDb } = require('../helpers/queueHarness');
 
 const SRC = path.join(__dirname, '..', '..', 'src');
+// Generated per run rather than written out, so no credential-looking literals live in the repo.
+const ADMIN_PASSWORD = crypto.randomBytes(12).toString('hex');
 
 async function startApp(t) {
   const { db } = openFreshDb(t);
   const auth = require(path.join(SRC, 'auth'));
   const savedPassword = process.env.ADMIN_PASSWORD;
-  process.env.ADMIN_PASSWORD = 'correct-horse';
+  process.env.ADMIN_PASSWORD = ADMIN_PASSWORD;
   const log = console.log;
   console.log = () => {};
   try {
@@ -80,7 +83,7 @@ test('every API router refuses requests without a session', async (t) => {
 
 test('signed in, every router answers its read endpoint without a server error', async (t) => {
   const { call } = await startApp(t);
-  assert.equal((await call('POST', '/api/auth/login', { username: 'admin', password: 'correct-horse' })).status, 200);
+  assert.equal((await call('POST', '/api/auth/login', { username: 'admin', password: ADMIN_PASSWORD })).status, 200);
   for (const p of READ_ENDPOINTS) {
     const res = await call('GET', p);
     assert.equal(res.status, 200, `${p} -> ${res.status} ${JSON.stringify(res.body)}`);
@@ -89,7 +92,7 @@ test('signed in, every router answers its read endpoint without a server error',
 
 test('sessions are stored in the database and survive across requests', async (t) => {
   const { db, call } = await startApp(t);
-  await call('POST', '/api/auth/login', { username: 'admin', password: 'correct-horse' });
+  await call('POST', '/api/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions').get().c, 1);
   assert.deepEqual((await call('GET', '/api/auth/me')).body, { username: 'admin' });
 });
