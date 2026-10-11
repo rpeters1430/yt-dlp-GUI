@@ -643,6 +643,11 @@ function buildDownloadArgs(url, rawOptions = {}) {
     '--progress-template', 'postprocess:YTDLP_POSTPROCESS %(progress._percent_str)s',
     '-o', targetOutput,
     '--print', 'after_move:FILEPATH %(filepath)s',
+    // The planned output path, printed before downloading starts. --print implies --quiet, so
+    // there are no "[download] Destination:" lines; without this a recording the user stops
+    // (or one killed mid-post-processing) never reports where it was saved, and post-steps
+    // like live chunk splitting are silently skipped.
+    '--print', 'before_dl:DESTFILE %(filename)s',
     // --print implies --quiet, and in quiet mode yt-dlp starts its ffmpeg downloader (live
     // HLS/FLV captures, --download-sections, ...) with "-loglevel quiet", so a failure surfaces
     // only as "ffmpeg exited with code N" with no reason. Raising ffmpeg back to "error" keeps
@@ -839,17 +844,36 @@ function stopDownload(jobId) {
     console.error(`[ytdlp] Failed to send SIGINT to job ${jobId}: ${err.message}`);
     return false;
   }
-  active.stopTimers = [setTimeout(() => {
-    if (activeProcesses.has(jobId)) {
-      console.log(`[ytdlp] Graceful stop still pending for job ${jobId}; terminating process group via SIGTERM`);
-      killProcessTree(proc, 'SIGTERM');
+  const stopRequestedAt = Date.now();
+  let cpuBaseline = null;
+  let busyNoted = false;
+  const escalate = () => {
+    if (!activeProcesses.has(jobId)) return;
+    // Merging and SponsorBlock-cutting a multi-hour capture (a full re-encode with
+    // --force-keyframes-at-cuts) can outlast the grace period. Killing it then throws away
+    // the finished file, so keep waiting while the process group is still using CPU.
+    const cpu = readProcessGroupCpuTicks(proc.pid);
+    if (cpu != null && Date.now() - stopRequestedAt < STOP_MAX_WAIT_MS) {
+      if (cpuBaseline == null || isBusyCpuDelta(cpu - cpuBaseline.ticks, Date.now() - cpuBaseline.at)) {
+        if (cpuBaseline != null && !busyNoted) {
+          busyNoted = true;
+          onLog && onLog('Still finalizing the recording (yt-dlp/FFmpeg busy) — waiting for it to finish');
+        }
+        cpuBaseline = { ticks: cpu, at: Date.now() };
+        active.stopTimers.push(setTimeout(escalate, BUSY_SAMPLE_WINDOW_MS));
+        return;
+      }
     }
-  }, 30 * 60 * 1000), setTimeout(() => {
-    if (activeProcesses.has(jobId)) {
-      console.log(`[ytdlp] Job ${jobId} still alive after SIGTERM, sending SIGKILL`);
-      killProcessTree(proc, 'SIGKILL');
-    }
-  }, 35 * 60 * 1000)];
+    console.log(`[ytdlp] Graceful stop still pending for job ${jobId}; terminating process group via SIGTERM`);
+    killProcessTree(proc, 'SIGTERM');
+    active.stopTimers.push(setTimeout(() => {
+      if (activeProcesses.has(jobId)) {
+        console.log(`[ytdlp] Job ${jobId} still alive after SIGTERM, sending SIGKILL`);
+        killProcessTree(proc, 'SIGKILL');
+      }
+    }, 5 * 60 * 1000));
+  };
+  active.stopTimers = [setTimeout(escalate, STOP_GRACE_MS)];
   return true;
 }
 
@@ -876,6 +900,10 @@ const BUSY_SAMPLE_WINDOW_MS = 60 * 1000;
 // count as working. Linux reports CPU time in USER_HZ ticks, which is 100/s in practice.
 const BUSY_MIN_CPU_SHARE = 0.005;
 const CLOCK_TICKS_PER_SEC = 100;
+// After a stop request, how long yt-dlp gets to finalize before the process group is
+// terminated, and the hard cap on waiting while it is still visibly busy post-processing.
+const STOP_GRACE_MS = 30 * 60 * 1000;
+const STOP_MAX_WAIT_MS = parseInt(process.env.STOP_MAX_WAIT_MS || String(4 * 60 * 60 * 1000), 10);
 
 // Total CPU ticks (including reaped children) used by every process in a process group,
 // or null where /proc isn't available (non-Linux) so callers fall back to plain idle kills.
@@ -1161,6 +1189,11 @@ function download(url, options = {}, onProgress, onLog) {
           continue;
         }
 
+        if (trimmed.startsWith('DESTFILE ')) {
+          filepath = trimmed.slice('DESTFILE '.length).trim();
+          continue;
+        }
+
         if (trimmed.includes('[download] Destination: ')) {
           const dest = trimmed.split('[download] Destination: ')[1]?.trim();
           if (dest) filepath = dest.replace(/\.part$/, '');
@@ -1249,6 +1282,10 @@ function download(url, options = {}, onProgress, onLog) {
       if (completedWithErrors) {
         console.warn(`[${jobId}] Exit code ${code} but output was saved -> ${finalFilepath}`);
         onLog && onLog(`[warning] yt-dlp exited with code ${code} but saved the file; it may have gaps:\n${errSummary}`);
+      }
+      if (stoppedByUser && !finalFilepath && filepath && !fs.existsSync(filepath)) {
+        onLog && onLog(`[warning] Stopped before yt-dlp finished writing ${filepath}; any partial files were left next to it`);
+        filepath = null;
       }
       if (stoppedByUser) {
         console.log(`[${jobId}] Recording stopped by user -> ${filepath || 'saved stream'}`);

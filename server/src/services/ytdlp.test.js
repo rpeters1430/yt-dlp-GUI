@@ -83,6 +83,16 @@ test('isYouTube correctly identifies YouTube and non-YouTube sources', () => {
   assert.equal(isYouTube('https://example.com/video', 'twitch:vod'), false);
 });
 
+test('buildDownloadArgs prints the planned output path before downloading', () => {
+  const { buildDownloadArgs } = require('./ytdlp');
+  const args = buildDownloadArgs('https://www.youtube.com/watch?v=abc123', { isLive: true });
+  // A stopped live recording never reaches after_move, so the queue relies on this path to
+  // find the file for chunk splitting.
+  const i = args.indexOf('before_dl:DESTFILE %(filename)s');
+  assert.ok(i > 0);
+  assert.equal(args[i - 1], '--print');
+});
+
 test('buildDownloadArgs includes YouTube-specific args only for YouTube URLs', () => {
   const { buildDownloadArgs } = require('./ytdlp');
 
