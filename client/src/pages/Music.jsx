@@ -3072,6 +3072,22 @@ export default function MusicPage() {
                   <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 4 }}>
                     Username & Password can be left blank (or dummy text). Category: <code>music</code>
                   </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 2 }}>
+                    Reported download path: <code>/downloads/Music</code>
+                  </div>
+
+                  <div style={{
+                    marginTop: 8,
+                    padding: '8px 10px',
+                    borderRadius: 6,
+                    background: 'rgba(234, 179, 8, 0.08)',
+                    border: '1px solid rgba(234, 179, 8, 0.25)',
+                    fontSize: '0.74rem',
+                    color: 'var(--text-secondary)',
+                    lineHeight: 1.4,
+                  }}>
+                    <strong style={{ color: 'var(--warning)' }}>⚠️ Remote Path Mapping tip:</strong> If Lidarr is in Docker and you configure a Remote Path Mapping, set <strong>Remote Path</strong> to <code>/downloads/Music</code> and <strong>Local Path</strong> to your downloads directory (e.g. <code>/downloads</code> or <code>/music/Downloads</code>). Do <em>not</em> set Local Path to your Lidarr library Root Folder (<code>/music</code>).
+                  </div>
                 </div>
               </div>
             </div>

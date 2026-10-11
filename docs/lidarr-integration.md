@@ -75,7 +75,8 @@ The download client reports the download save path as an absolute Linux path (`/
 3. Set:
    - **Host**: `<your-server-ip>` (e.g. `192.168.50.114`, matching the Host entered in your Download Client)
    - **Remote Path**: `/downloads/Music`
-   - **Local Path**: The path inside Lidarr's container where the downloaded music files appear (e.g. `/music` or `/data/downloads`)
+   - **Local Path**: The path inside Lidarr's container where incoming downloads appear (e.g. `/downloads` or `/downloads/Music`).
+   > **Note**: Do **not** point Local Path to your Lidarr library Root Folder (e.g. `/music` or `/media/music`). Lidarr requires incoming downloads to be in a separate directory so it can import, rename, and move them into your library. If Lidarr only has your music folder mounted, point Local Path to a subfolder like `/music/Downloads`.
 4. Click **Save**.
 
 *(Optional: If you prefer SABnzbd, choose SABnzbd in Lidarr, set Host and Port to your server, URL Base to `/api/lidarr/sab`, and API Key to your Torznab API Key).*
