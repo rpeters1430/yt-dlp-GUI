@@ -18,12 +18,24 @@ function mergeList(prev, list) {
   return list.map((job) => keepLog(job, byId.get(job.id)));
 }
 
+// Matches the server's list size: every active job plus the newest finished ones.
+const RECENT_FINISHED_LIMIT = 200;
+const isActive = (j) => j.status === 'queued' || j.status === 'downloading';
+
+// Drops finished jobs past the limit (the list is newest first), so a dashboard left open
+// for days doesn't grow back to the whole history one update at a time.
+function pruneFinished(list, limit = RECENT_FINISHED_LIMIT) {
+  let finished = 0;
+  const kept = list.filter((j) => isActive(j) || ++finished <= limit);
+  return kept.length === list.length ? list : kept;
+}
+
 function applyUpdate(prev, job) {
   const index = prev.findIndex((j) => j.id === job.id);
-  if (index === -1) return [job, ...prev];
+  if (index === -1) return pruneFinished([job, ...prev]);
   const next = prev.slice();
   next[index] = keepLog({ ...prev[index], ...job }, prev[index]);
-  return next;
+  return pruneFinished(next);
 }
 
 function countStatuses(jobs) {

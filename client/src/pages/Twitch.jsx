@@ -109,18 +109,36 @@ export default function Twitch() {
 
   const trimModalRef = useModalA11y(!!selectedVod, () => setSelectedVod(null));
 
+  // The shared list only holds the newest finished jobs across every site, so Twitch
+  // captures could fall out of it; this page loads its own recent Twitch history.
+  const [twitchHistory, setTwitchHistory] = useState([]);
+  const [removedIds, setRemovedIds] = useState(() => new Set());
+
   useEffect(() => {
     api.getTwitchSettings().then((s) => {
       setAuthTokenMasked(s.authTokenMasked || '');
       setClientId(s.clientId || '');
     }).catch(() => {});
+    api.listTwitchJobs().then(setTwitchHistory).catch(() => {});
   }, []);
 
-  // Filter jobs for Twitch
-  const twitchJobs = useMemo(
-    () => jobs.filter((j) => j.is_live === 1 || (j.url && j.url.includes('twitch.tv'))),
-    [jobs]
-  );
+  // Live rows from the shared socket win over the history snapshot for the same job. Only
+  // finished rows come from the snapshot: the shared list always holds every active job, and
+  // its copy disappears when the job is removed (from any tab).
+  const twitchJobs = useMemo(() => {
+    const isTwitch = (j) => j.is_live === 1 || (j.url && j.url.includes('twitch.tv'));
+    const finished = twitchHistory.filter((j) => j.status !== 'queued' && j.status !== 'downloading');
+    const byId = new Map(finished.map((j) => [j.id, j]));
+    for (const j of jobs) if (isTwitch(j)) byId.set(j.id, j);
+    return [...byId.values()]
+      .filter((j) => !removedIds.has(j.id))
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
+  }, [jobs, twitchHistory, removedIds]);
+
+  function handleTwitchJobDeleted(id) {
+    setRemovedIds((prev) => new Set(prev).add(id));
+    setJobs((prev) => prev.filter((j) => j.id !== id));
+  }
 
   const activeLiveJobs = useMemo(
     () => twitchJobs.filter((j) => j.status === 'downloading' || j.status === 'queued'),
@@ -969,7 +987,7 @@ export default function Twitch() {
         ) : (
           <div className="queue-list">
             {finishedTwitchJobs.slice(0, 15).map((job) => (
-              <QueueItem key={job.id} job={job} onDeleted={(id) => setJobs((prev) => prev.filter((j) => j.id !== id))} />
+              <QueueItem key={job.id} job={job} onDeleted={handleTwitchJobDeleted} />
             ))}
           </div>
         )}

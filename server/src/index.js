@@ -1,8 +1,8 @@
 const http = require('http');
-const { Server } = require('socket.io');
 
 const db = require('./db');
 const { createApp } = require('./app');
+const { createSocketServer } = require('./socket');
 const auth = require('./auth');
 const queue = require('./services/queue');
 const scheduler = require('./services/scheduler');
@@ -43,22 +43,12 @@ queue.setWatchItemListener((itemId, status, info) => {
 const { app, sessionMiddleware } = createApp({ watchRepository, watchService, checkAllWatches: scheduler.checkAllWatches });
 
 const server = http.createServer(app);
-io = new Server(server);
-
-// Run the same session middleware over the socket.io handshake so an unauthenticated
-// client can't connect and read the full job list (URLs, titles, file paths) over the
-// socket without ever hitting an auth-gated HTTP route.
-io.use((socket, next) => sessionMiddleware(socket.request, {}, next));
-// validateSession (not just a userId check) so a session signed out by a password change
-// can't keep receiving job updates over the socket either.
-io.use((socket, next) => {
-  if (auth.validateSession(socket.request)) return next();
-  next(new Error('unauthorized'));
-});
-
-io.on('connection', (socket) => {
-  socket.emit('jobs:init', queue.listJobs());
-  socket.emit('jobs:counts', queue.getStatusCounts());
+io = createSocketServer(server, {
+  sessionMiddleware,
+  onConnection(socket) {
+    socket.emit('jobs:init', queue.listJobs());
+    socket.emit('jobs:counts', queue.getStatusCounts());
+  },
 });
 
 queue.init(io);

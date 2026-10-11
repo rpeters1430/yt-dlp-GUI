@@ -1,5 +1,6 @@
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const { EventEmitter } = require('events');
 const db = require('./db');
 
 function ensureBootstrapAdmin() {
@@ -62,10 +63,14 @@ function login(username, password) {
   return user;
 }
 
+// Emits 'changed' whenever sessions may have been signed out (password change, logout), so
+// open socket.io connections can re-check theirs (see socket.js).
+const sessionEvents = new EventEmitter();
+
 function changePassword(userId, newPassword) {
   const hash = bcrypt.hashSync(newPassword, 10);
   db.prepare('UPDATE users SET password_hash = ?, session_version = session_version + 1 WHERE id = ?').run(hash, userId);
   return db.prepare('SELECT session_version FROM users WHERE id = ?').get(userId).session_version;
 }
 
-module.exports = { ensureBootstrapAdmin, requireAuth, validateSession, login, changePassword };
+module.exports = { ensureBootstrapAdmin, requireAuth, validateSession, login, changePassword, sessionEvents };

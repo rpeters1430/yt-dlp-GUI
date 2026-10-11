@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Search, Film, X, Archive, Terminal, Copy, Check, Shield, ShieldOff } from 'lucide-react';
 import { api } from '../api.js';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
@@ -28,9 +28,14 @@ export default function History() {
     return () => clearTimeout(timer);
   }, [query]);
 
+  // Bumped whenever the search criteria change, so a "Load more" still in flight for the
+  // previous criteria is ignored instead of appending the wrong rows.
+  const searchGeneration = useRef(0);
+
   // Search and filtering run on the server, a page at a time, so a long history stays fast.
   useEffect(() => {
     let cancelled = false;
+    searchGeneration.current += 1;
     setLoading(true);
     setLoadError('');
     api.searchDownloads({ status: statusFilter, q: debouncedQuery, limit: PAGE_SIZE, offset: 0 })
@@ -46,16 +51,20 @@ export default function History() {
   }, [statusFilter, debouncedQuery]);
 
   async function handleLoadMore() {
+    const generation = searchGeneration.current;
     setLoadingMore(true);
     try {
       const res = await api.searchDownloads({ status: statusFilter, q: debouncedQuery, limit: PAGE_SIZE, offset: jobs.length });
-      const seen = new Set(jobs.map((j) => j.id));
-      setJobs((prev) => prev.concat(res.jobs.filter((j) => !seen.has(j.id))));
+      if (generation !== searchGeneration.current) return;
+      setJobs((prev) => {
+        const seen = new Set(prev.map((j) => j.id));
+        return prev.concat(res.jobs.filter((j) => !seen.has(j.id)));
+      });
       setTotal(res.total);
     } catch (err) {
-      setLoadError(err.message || 'Failed to load more.');
+      if (generation === searchGeneration.current) setLoadError(err.message || 'Failed to load more.');
     } finally {
-      setLoadingMore(false);
+      if (generation === searchGeneration.current) setLoadingMore(false);
     }
   }
 
