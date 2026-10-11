@@ -1049,14 +1049,14 @@ export default function MusicPage() {
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                 {activeMusicJobs[0]?.title || 'Processing audio track...'}
-                {activeMusicJobs[0]?.progress ? ` • ${activeMusicJobs[0].progress}` : ''}
+                {typeof activeMusicJobs[0]?.percent === 'number' && activeMusicJobs[0].status === 'downloading' ? ` • ${Math.round(activeMusicJobs[0].percent)}%` : ''}
                 {activeMusicJobs[0]?.speed ? ` • ${activeMusicJobs[0].speed}` : ''}
                 {activeMusicJobs[0]?.eta ? ` • ETA ${activeMusicJobs[0].eta}` : ''}
               </div>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <Link to="/dashboard" className="btn btn-sm btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Link to="/" className="btn btn-sm btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               View Queue
             </Link>
             <Link to={`/library?folder=${encodeURIComponent(settings.musicFolder || 'Music')}`} className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
