@@ -368,3 +368,27 @@ test('audio downloads prefer a source stream that avoids a lossy re-encode', () 
   const args = buildDownloadArgs('https://www.youtube.com/watch?v=abc123', { audioOnly: true, container: 'opus', audioQuality: '0' });
   assert.equal(args[args.indexOf('-f') + 1].startsWith('bestaudio[acodec^=opus]'), true);
 });
+
+test('MP4 video downloads prefer AAC audio so the merged file stays in sync', () => {
+  const { buildFormatSelector, buildDownloadArgs } = require('./ytdlp');
+  assert.equal(buildFormatSelector({ container: 'mp4' }), 'bestvideo*+bestaudio[ext=m4a]/bestvideo*+bestaudio/best');
+  assert.equal(
+    buildFormatSelector({ quality: '1080', container: 'mp4' }),
+    'bestvideo*[height<=1080]+bestaudio[ext=m4a]/bestvideo*[height<=1080]+bestaudio/best[height<=1080]',
+  );
+  // MKV handles Opus fine, so it keeps the best audio stream whatever its codec.
+  assert.equal(buildFormatSelector({ container: 'mkv' }), 'bestvideo*+bestaudio/best');
+  // A format the user picked by hand is passed through untouched.
+  assert.equal(buildFormatSelector({ formatSelector: '137+251', container: 'mp4' }), '137+251');
+
+  const args = buildDownloadArgs('https://www.youtube.com/watch?v=abc123', { container: 'mp4' });
+  assert.equal(args[args.indexOf('-f') + 1], 'bestvideo*+bestaudio[ext=m4a]/bestvideo*+bestaudio/best');
+});
+
+test('cutting the file (SponsorBlock, sections) forces keyframes so audio stays in sync', () => {
+  const { buildDownloadArgs } = require('./ytdlp');
+  const url = 'https://www.youtube.com/watch?v=abc123';
+  assert.ok(buildDownloadArgs(url, { sponsorblockRemove: 'sponsor' }).includes('--force-keyframes-at-cuts'));
+  assert.ok(buildDownloadArgs(url, { downloadSections: '*0-60' }).includes('--force-keyframes-at-cuts'));
+  assert.equal(buildDownloadArgs(url, {}).includes('--force-keyframes-at-cuts'), false);
+});
