@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node src/index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "lint": "eslint . --max-warnings 0",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-exclude='test/**' --test-coverage-exclude='**/*.test.js'"
   },
   "dependencies": {
     "bcryptjs": "^3.0.0",
@@ -24,5 +26,11 @@
   "allowScripts": {
     "better-sqlite3@13.0.3": true,
     "sqlite3@5.1.7": true
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
+    "socket.io-client": "^4.8.3"
   }
 }

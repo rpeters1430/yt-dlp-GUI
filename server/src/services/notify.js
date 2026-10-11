@@ -3,6 +3,8 @@
 // n8n, Node-RED, …). Delivery is best-effort — a failed notification is logged and never
 // affects the download or watch check that triggered it.
 
+const path = require('path');
+
 const FORMATS = ['discord', 'slack', 'ntfy', 'gotify', 'json'];
 
 const EVENTS = {
@@ -117,7 +119,7 @@ async function deliver(config, message) {
   } catch (err) {
     // undici reports every network failure as "fetch failed"; the cause says why.
     const reason = err.name === 'TimeoutError' ? `no response within ${REQUEST_TIMEOUT_MS / 1000}s` : (err.cause && (err.cause.code || err.cause.message)) || err.message;
-    throw new Error(`Could not reach the webhook: ${reason}`);
+    throw new Error(`Could not reach the webhook: ${reason}`, { cause: err });
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');

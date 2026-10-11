@@ -37,7 +37,10 @@ router.post('/login', loginLimiter, (req, res) => {
 });
 
 router.post('/logout', (req, res) => {
-  req.session.destroy(() => res.json({ ok: true }));
+  req.session.destroy(() => {
+    auth.sessionEvents.emit('changed');
+    res.json({ ok: true });
+  });
 });
 
 router.get('/me', (req, res) => {
@@ -55,7 +58,11 @@ router.post('/change-password', auth.requireAuth, (req, res) => {
   // Keep the session that made the change itself alive — only *other* sessions (issued
   // before this change) fail validateSession() on their next request.
   req.session.sessionVersion = newVersion;
-  res.json({ ok: true });
+  // Saved before the event, so this session's own sockets reload the new version and stay.
+  req.session.save(() => {
+    auth.sessionEvents.emit('changed');
+    res.json({ ok: true });
+  });
 });
 
 module.exports = router;

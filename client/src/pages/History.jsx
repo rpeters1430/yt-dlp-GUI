@@ -1,15 +1,21 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Search, Film, X, Archive, Terminal, Copy, Check, Shield, ShieldOff } from 'lucide-react';
 import { api } from '../api.js';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 
 const STATUS_FILTERS = ['all', 'completed', 'downloading', 'queued', 'failed', 'deleted'];
+const PAGE_SIZE = 50;
 
 export default function History() {
   const [jobs, setJobs] = useState([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [hasAny, setHasAny] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
@@ -18,8 +24,49 @@ export default function History() {
   const [logRetry, setLogRetry] = useState(0);
 
   useEffect(() => {
-    api.listDownloads().then(setJobs).finally(() => setLoading(false));
-  }, []);
+    const timer = setTimeout(() => setDebouncedQuery(query.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  // Bumped whenever the search criteria change, so a "Load more" still in flight for the
+  // previous criteria is ignored instead of appending the wrong rows.
+  const searchGeneration = useRef(0);
+
+  // Search and filtering run on the server, a page at a time, so a long history stays fast.
+  useEffect(() => {
+    let cancelled = false;
+    searchGeneration.current += 1;
+    setLoading(true);
+    setLoadError('');
+    api.searchDownloads({ status: statusFilter, q: debouncedQuery, limit: PAGE_SIZE, offset: 0 })
+      .then((res) => {
+        if (cancelled) return;
+        setJobs(res.jobs);
+        setTotal(res.total);
+        if (statusFilter === 'all' && !debouncedQuery) setHasAny(res.total > 0);
+      })
+      .catch((err) => { if (!cancelled) setLoadError(err.message || 'Failed to load history.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [statusFilter, debouncedQuery]);
+
+  async function handleLoadMore() {
+    const generation = searchGeneration.current;
+    setLoadingMore(true);
+    try {
+      const res = await api.searchDownloads({ status: statusFilter, q: debouncedQuery, limit: PAGE_SIZE, offset: jobs.length });
+      if (generation !== searchGeneration.current) return;
+      setJobs((prev) => {
+        const seen = new Set(prev.map((j) => j.id));
+        return prev.concat(res.jobs.filter((j) => !seen.has(j.id)));
+      });
+      setTotal(res.total);
+    } catch (err) {
+      if (generation === searchGeneration.current) setLoadError(err.message || 'Failed to load more.');
+    } finally {
+      if (generation === searchGeneration.current) setLoadingMore(false);
+    }
+  }
 
   useEffect(() => {
     if (!expandedId) return undefined;
@@ -42,6 +89,7 @@ export default function History() {
     setPendingDelete(null);
     await api.deleteDownload(id);
     setJobs((prev) => prev.filter((j) => j.id !== id));
+    setTotal((t) => Math.max(0, t - 1));
   }
 
   async function handleToggleProtect(job) {
@@ -61,14 +109,6 @@ export default function History() {
     );
   }
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return jobs.filter((job) => {
-      if (statusFilter !== 'all' && job.status !== statusFilter) return false;
-      if (!q) return true;
-      return (job.title || job.url || '').toLowerCase().includes(q) || (job.extractor || '').toLowerCase().includes(q);
-    });
-  }, [jobs, query, statusFilter]);
 
   return (
     <>
@@ -92,14 +132,15 @@ export default function History() {
           </select>
         </div>
 
+        {loadError && <div className="alert alert-error" style={{ marginBottom: 12 }}>{loadError}</div>}
         {loading ? (
           <div className="empty-state"><div className="spinner" /></div>
-        ) : filtered.length === 0 ? (
+        ) : jobs.length === 0 ? (
           <div className="empty-state">
             <Archive size={30} />
-            <span className="empty-title">{jobs.length === 0 ? 'No downloads yet' : 'No matches'}</span>
+            <span className="empty-title">{hasAny ? 'No matches' : 'No downloads yet'}</span>
             <span className="empty-subtitle">
-              {jobs.length === 0 ? 'Downloads you queue will show up here.' : 'Try a different search or filter.'}
+              {hasAny ? 'Try a different search or filter.' : 'Downloads you queue will show up here.'}
             </span>
           </div>
         ) : (
@@ -116,7 +157,7 @@ export default function History() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((job) => (
+                {jobs.map((job) => (
                   <React.Fragment key={job.id}>
                     <tr>
                       <td>
@@ -201,6 +242,14 @@ export default function History() {
                 ))}
               </tbody>
             </table>
+            <div className="history-footer muted small">
+              <span>Showing {jobs.length} of {total}</span>
+              {jobs.length < total && (
+                <button type="button" className="btn-secondary btn-sm" onClick={handleLoadMore} disabled={loadingMore}>
+                  {loadingMore ? 'Loading…' : 'Load more'}
+                </button>
+              )}
+            </div>
           </div>
         )}
       </section>

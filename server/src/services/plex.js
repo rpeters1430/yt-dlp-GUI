@@ -21,7 +21,7 @@ async function plexRequest(baseUrl, token, requestPath, { method = 'GET' } = {})
   try {
     res = await fetch(url, { method, headers: getHeaders(token) });
   } catch (err) {
-    throw new Error(`Could not reach Plex at ${normBase}: ${err.message}`);
+    throw new Error(`Could not reach Plex at ${normBase}: ${err.message}`, { cause: err });
   }
   if (!res.ok) {
     if (res.status === 401) throw new Error('Plex rejected the token (401 Unauthorized)');

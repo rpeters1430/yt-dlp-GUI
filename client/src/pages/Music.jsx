@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Music,
@@ -37,6 +37,14 @@ import { api } from '../api.js';
 import { useDownloads } from '../context/DownloadsContext.jsx';
 
 // Key for looking up a song in the Jellyfin library check results.
+function parseJobOptions(json) {
+  try {
+    return (json && JSON.parse(json)) || {};
+  } catch (_) {
+    return {};
+  }
+}
+
 function libraryTrackKey(t) {
   return `${t.artist || ''}|${t.title || ''}`;
 }
@@ -113,7 +121,8 @@ export default function MusicPage() {
 
   // Selected album details
   const [selectedAlbum, setSelectedAlbum] = useState(null);
-  const [albumLoading, setAlbumLoading] = useState(false);
+  // Id of the album whose tracklist is being fetched, so its card can show it's working.
+  const [loadingAlbumId, setLoadingAlbumId] = useState(null);
   const [selectedTracks, setSelectedTracks] = useState(new Set());
   const [downloadingAlbum, setDownloadingAlbum] = useState(false);
   const [downloadingAlbumId, setDownloadingAlbumId] = useState(null);
@@ -148,9 +157,11 @@ export default function MusicPage() {
   const [addingWatch, setAddingWatch] = useState(false);
 
   // Live downloads from context
-  const { jobs } = useDownloads() || { jobs: [] };
-  const activeMusicJobs = (jobs || []).filter(
-    (j) => (j.status === 'queued' || j.status === 'downloading') && (j.optionsJson?.isMusicDownload || j.optionsJson?.audioOnly || j.audio_only)
+  const { jobs: rawJobs } = useDownloads() || { jobs: [] };
+  // Rows carry their extra options as a JSON string column (options_json).
+  const jobs = useMemo(() => (rawJobs || []).map((j) => ({ ...j, options: parseJobOptions(j.options_json) })), [rawJobs]);
+  const activeMusicJobs = jobs.filter(
+    (j) => (j.status === 'queued' || j.status === 'downloading') && (j.options.isMusicDownload || j.options.audioOnly || j.audio_only)
   );
 
   // Match inspection modal state
@@ -183,7 +194,7 @@ export default function MusicPage() {
     if (!trackTitle || !jobs) return null;
     const titLower = trackTitle.toLowerCase().trim();
     return jobs.find((j) => {
-      const metaTitle = j.optionsJson?.musicMetadata?.title;
+      const metaTitle = j.options.musicMetadata?.title;
       if (metaTitle && metaTitle.toLowerCase().trim() === titLower) return true;
       if (j.title && j.title.toLowerCase().includes(titLower)) return true;
       return false;
@@ -315,6 +326,9 @@ export default function MusicPage() {
         if (checkingAlbum && !cancelled) setJellyfinCheckingAlbum(false);
       });
     return () => { cancelled = true; };
+    // libraryAlbums/libraryTracks are only read to skip already-checked items; this effect
+    // writes them, so depending on them would re-run it after every answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jellyfinStatus, searchType, searchResults, matchedArtist, selectedArtist, selectedAlbum]);
 
   async function handleTriggerJellyfinScan() {
@@ -347,7 +361,7 @@ export default function MusicPage() {
     if (!availableQualities.some((q) => q.value === downloadQuality)) {
       setDownloadQuality(availableQualities[0]?.value || '320k');
     }
-  }, [downloadFormat]);
+  }, [availableQualities, downloadQuality]);
 
   // Load music watches when tab opens
   useEffect(() => {
@@ -463,7 +477,7 @@ export default function MusicPage() {
   // Sorted releases for dedicated artist discography view
   function getSortedArtistReleases() {
     if (!selectedArtist) return [];
-    let list = [];
+    let list;
     if (artistTab === 'albums') list = selectedArtist.albums || [];
     else if (artistTab === 'singles') list = selectedArtist.singles || [];
     else list = selectedArtist.all || [];
@@ -531,6 +545,7 @@ export default function MusicPage() {
   // Shared release card renderer
   function renderReleaseCard(item) {
     const isDownloadingThis = downloadingAlbumId === item.id;
+    const isLoadingThis = loadingAlbumId === item.id;
     const libraryStatus = libraryAlbums[item.id];
     return (
       <div
@@ -538,10 +553,12 @@ export default function MusicPage() {
         className="card music-release-card"
         style={{
           padding: 12,
-          cursor: 'pointer',
+          cursor: isLoadingThis ? 'progress' : 'pointer',
+          opacity: isLoadingThis ? 0.6 : 1,
           display: 'flex',
           flexDirection: 'column',
         }}
+        aria-busy={isLoadingThis}
         onClick={() => handleSelectAlbum(item)}
       >
         <div style={{ position: 'relative', width: '100%', aspectRatio: '1/1', borderRadius: 8, overflow: 'hidden', backgroundColor: 'var(--surface-hover)', marginBottom: 10 }}>
@@ -611,8 +628,9 @@ export default function MusicPage() {
                 handleSelectAlbum(item);
               }}
               title="View tracklist & customize download"
+              disabled={isLoadingThis}
             >
-              Tracks
+              {isLoadingThis ? 'Loading…' : 'Tracks'}
             </button>
             <button
               type="button"
@@ -639,7 +657,8 @@ export default function MusicPage() {
 
   // View album details
   async function handleSelectAlbum(album) {
-    setAlbumLoading(true);
+    if (loadingAlbumId) return;
+    setLoadingAlbumId(album.id);
     setAlbumDownloadMessage(null);
     try {
       const data = await api.getMusicAlbum(album.id);
@@ -653,7 +672,7 @@ export default function MusicPage() {
     } catch (err) {
       showToast(`Could not load album details: ${err.message}`, 'error');
     } finally {
-      setAlbumLoading(false);
+      setLoadingAlbumId(null);
     }
   }
 
@@ -1030,14 +1049,14 @@ export default function MusicPage() {
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                 {activeMusicJobs[0]?.title || 'Processing audio track...'}
-                {activeMusicJobs[0]?.progress ? ` • ${activeMusicJobs[0].progress}` : ''}
+                {typeof activeMusicJobs[0]?.percent === 'number' && activeMusicJobs[0].status === 'downloading' ? ` • ${Math.round(activeMusicJobs[0].percent)}%` : ''}
                 {activeMusicJobs[0]?.speed ? ` • ${activeMusicJobs[0].speed}` : ''}
                 {activeMusicJobs[0]?.eta ? ` • ETA ${activeMusicJobs[0].eta}` : ''}
               </div>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <Link to="/dashboard" className="btn btn-sm btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Link to="/" className="btn btn-sm btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               View Queue
             </Link>
             <Link to={`/library?folder=${encodeURIComponent(settings.musicFolder || 'Music')}`} className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>

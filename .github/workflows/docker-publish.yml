@@ -41,14 +41,20 @@ jobs:
       - name: Install server dependencies
         working-directory: server
         run: npm ci --omit=optional --no-audit --no-fund
+      - name: Lint server
+        working-directory: server
+        run: npm run lint
       - name: Install FFmpeg
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y ffmpeg
-      - name: Test server
+      - name: Test server (with coverage report)
         working-directory: server
-        run: npm test
+        run: npm run test:coverage
       - name: Install client dependencies
         working-directory: client
         run: npm ci --no-audit --no-fund
+      - name: Lint client
+        working-directory: client
+        run: npm run lint
       - name: Build client
         working-directory: client
         run: npm run build

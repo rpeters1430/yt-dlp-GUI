@@ -37,7 +37,7 @@ router.get('/channel/:channel', async (req, res) => {
   if (!channel) return res.status(400).json({ error: 'Channel name is required' });
 
   const channelUrl = `https://www.twitch.tv/${channel}`;
-  let live = false;
+  let live;
   let streamInfo = null;
 
   try {
@@ -64,7 +64,7 @@ router.get('/channel/:channel', async (req, res) => {
   }
 
   // Fetch recent VODs
-  let vods = [];
+  let vods;
   try {
     const vodsPlaylist = await ytdlp.getInfo(`https://www.twitch.tv/${channel}/videos`, { flatPlaylist: true });
     vods = (vodsPlaylist.entries || []).slice(0, 24).map((v) => {
@@ -204,11 +204,13 @@ router.post('/settings', (req, res) => {
 
 // List active Twitch recordings and all Twitch jobs
 router.get('/jobs', (req, res) => {
+  // Newest 200, without the per-job log and command line (fetched per job via /downloads/:id/log).
   const jobs = db
     .prepare(
-      "SELECT * FROM downloads WHERE is_live = 1 OR url LIKE '%twitch.tv%' ORDER BY created_at DESC"
+      "SELECT * FROM downloads WHERE is_live = 1 OR url LIKE '%twitch.tv%' ORDER BY created_at DESC LIMIT 200"
     )
-    .all();
+    .all()
+    .map(({ log: _log, command_args: _args, ...job }) => job);
   res.json(jobs);
 });
 

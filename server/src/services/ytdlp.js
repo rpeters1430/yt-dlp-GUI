@@ -1,218 +1,19 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { spawn } = require('child_process');
-const { pipeline } = require('stream/promises');
-const { Readable } = require('stream');
 const siteProfiles = require('./siteProfiles');
 const { DEFAULT_TEMPLATE: DEFAULT_OUTPUT_TEMPLATE } = require('./outputTemplate');
 
-const YTDLP_BIN = process.env.YTDLP_BIN || 'yt-dlp';
-const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(__dirname, '..', '..', 'downloads');
-const CONFIG_DIR = process.env.CONFIG_DIR || path.join(__dirname, '..', '..', 'config');
-const COOKIES_FILE = path.join(CONFIG_DIR, 'cookies.txt');
-const YTDLP_CACHE_DIR = path.join(CONFIG_DIR, 'yt-dlp-cache');
-const CUSTOM_BIN_DIR = path.join(CONFIG_DIR, 'bin');
-const FFMPEG_BUILD_MARKER = path.join(CONFIG_DIR, 'ffmpeg-build-id');
-const DENO_BUILD_MARKER = path.join(CONFIG_DIR, 'deno-build-id');
-
-// Ensure custom/persisted bin dir is in process.env.PATH if it exists
-if (fs.existsSync(CUSTOM_BIN_DIR)) {
-  const paths = (process.env.PATH || '').split(path.delimiter);
-  if (!paths.includes(CUSTOM_BIN_DIR)) {
-    process.env.PATH = `${CUSTOM_BIN_DIR}${path.delimiter}${process.env.PATH}`;
-  }
-}
-
-function getDenoBin() {
-  const binName = process.platform === 'win32' ? 'deno.exe' : 'deno';
-  if (fs.existsSync(path.join(CUSTOM_BIN_DIR, binName))) {
-    return path.join(CUSTOM_BIN_DIR, binName);
-  }
-  return 'deno';
-}
-
-function getFfmpegDir() {
-  if (process.env.FFMPEG_DIR) return process.env.FFMPEG_DIR;
-  const binName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-  if (fs.existsSync(path.join(CUSTOM_BIN_DIR, binName))) {
-    return CUSTOM_BIN_DIR;
-  }
-  return null;
-}
-
-function getFfmpegBin() {
-  const dir = getFfmpegDir();
-  if (dir) {
-    const binName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-    return path.join(dir, binName);
-  }
-  return 'ffmpeg';
-}
-
-// If a cookies.txt (Netscape format) has been saved via Settings, pass it to yt-dlp so
-// age-restricted/members-only/private videos work. Absent by default.
-function cookieArgs() {
-  return fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
-}
-
-// The Twitch auth-token is stored as a real cookie in the shared cookies.txt rather than
-// injected via --add-header, because yt-dlp's own Twitch extractor authenticates by reading
-// self._get_cookies('https://gql.twitch.tv').get('auth-token') — confirmed by reading
-// yt-dlp's installed twitch.py source. A header only happened to work before because of an
-// incidental header-merge order, not because it's what the extractor actually reads. Storing
-// it as a cookie also means it rides the same --cookies file every other site's cookies use,
-// so cookieArgs()/commonArgs() cover it automatically with no Twitch-specific args needed.
-const TWITCH_AUTH_COOKIE_DOMAIN = '.twitch.tv';
-const TWITCH_AUTH_COOKIE_NAME = 'auth-token';
-
-function readCookieLines() {
-  if (!fs.existsSync(COOKIES_FILE)) return [];
-  return fs.readFileSync(COOKIES_FILE, 'utf8').split('\n');
-}
-
-// Netscape cookie file fields are tab-separated: domain, includeSubdomains, path, secure,
-// expiry, name, value. Returns null for comments/blank lines/malformed rows. A "#HttpOnly_"
-// domain prefix marks a real (HttpOnly) cookie, not a comment — most YouTube auth cookies
-// are exported that way.
-function parseCookieLine(line) {
-  if (!line) return null;
-  line = line.replace(/\r$/, '');
-  if (line.startsWith('#HttpOnly_')) line = line.slice('#HttpOnly_'.length);
-  else if (line.trim().startsWith('#')) return null;
-  const parts = line.split('\t');
-  if (parts.length < 7) return null;
-  return { domain: parts[0], name: parts[5], value: parts.slice(6).join('\t') };
-}
-
-function isTwitchAuthCookieLine(line) {
-  const c = parseCookieLine(line);
-  return !!c && c.name === TWITCH_AUTH_COOKIE_NAME && /(^|\.)twitch\.tv$/i.test(c.domain.replace(/^\./, ''));
-}
-
-// Replaces (or removes, if token is falsy) the auth-token cookie line for twitch.tv in the
-// shared cookies.txt, leaving every other cookie (YouTube, etc.) untouched. Deletes the file
-// entirely if that leaves it with no real cookie rows, so the YouTube cookies status check
-// (which just does fs.existsSync) doesn't report "configured" for an empty file.
-function setTwitchAuthCookie(token) {
-  const kept = readCookieLines().filter((line) => line.trim() !== '' && !isTwitchAuthCookieLine(line));
-  const hasOtherCookies = kept.some((line) => parseCookieLine(line));
-
-  if (token) {
-    if (!kept.some((line) => line.startsWith('# Netscape'))) {
-      kept.unshift('# Netscape HTTP Cookie File');
-    }
-    const expiry = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365 * 5; // 5 years out
-    kept.push([TWITCH_AUTH_COOKIE_DOMAIN, 'TRUE', '/', 'TRUE', String(expiry), TWITCH_AUTH_COOKIE_NAME, token].join('\t'));
-    fs.writeFileSync(COOKIES_FILE, kept.join('\n') + '\n', { mode: 0o600 });
-    fs.chmodSync(COOKIES_FILE, 0o600);
-  } else if (hasOtherCookies) {
-    fs.writeFileSync(COOKIES_FILE, kept.join('\n') + '\n', { mode: 0o600 });
-    fs.chmodSync(COOKIES_FILE, 0o600);
-  } else if (fs.existsSync(COOKIES_FILE)) {
-    fs.unlinkSync(COOKIES_FILE);
-  }
-}
-
-function hasTwitchAuthCookie() {
-  return readCookieLines().some(isTwitchAuthCookieLine);
-}
-
-function getTwitchAuthTokenRaw() {
-  for (const line of readCookieLines()) {
-    if (isTwitchAuthCookieLine(line)) return parseCookieLine(line).value;
-  }
-  return '';
-}
-
-// The Settings page lets a user paste/upload a fresh cookies.txt (for YouTube, typically),
-// which replaces the file outright. Without this, that upload would silently wipe out a
-// separately-configured Twitch auth-token cookie merged into the same file. Re-merges it
-// back in afterward so the two features don't clobber each other.
-function writeCookiesFilePreservingTwitchAuth(content) {
-  const existingToken = getTwitchAuthTokenRaw();
-  fs.writeFileSync(COOKIES_FILE, content, { mode: 0o600 });
-  fs.chmodSync(COOKIES_FILE, 0o600);
-  if (existingToken) setTwitchAuthCookie(existingToken);
-}
-
-function getTwitchAuthTokenMasked() {
-  for (const line of readCookieLines()) {
-    const c = parseCookieLine(line);
-    if (c && isTwitchAuthCookieLine(line)) {
-      return c.value.length > 4 ? `••••${c.value.slice(-4)}` : '••••';
-    }
-  }
-  return '';
-}
-
-// yt-dlp saves its cookie jar back to the --cookies file when it exits, and YouTube rotates
-// session cookies (__Secure-*PSIDTS, SIDCC, ...) on nearly every response. With several
-// yt-dlp processes sharing one cookies.txt (metadata probe + concurrent downloads + watch
-// checks) each one writes back its own rotated copy, last writer wins, and the stored session
-// ends up desynced/invalidated — YouTube then answers every request with "Sign in to confirm
-// you're not a bot" even though cookies are configured. So the uploaded cookies.txt is treated
-// as read-only: each process gets a private temp copy that it can rewrite freely and that is
-// deleted when the process exits. The displayed command still shows the real cookies path.
-// All copies live under one dedicated dir so anything a crash/SIGKILL left behind (the exit
-// handlers never ran) can be swept at startup — see sweepPrivateCookieDirs below.
-const PRIVATE_COOKIES_ROOT = path.join(os.tmpdir(), 'ytdlp-gui-cookies');
-
-function removePrivateCookieDir(dir) {
-  fs.rm(dir, { recursive: true, force: true, maxRetries: 3 }, (err) => {
-    if (err) console.error(`[ytdlp] Failed to remove private cookies copy ${dir}: ${err.message}`);
-  });
-}
-
-// Runs once at module load, i.e. at server startup, before the queue resumes any job. Any
-// yt-dlp process from a previous run is orphaned at that point (queue.init kills them by
-// pid), so every leftover copy is stale and holds a live login session — remove them all.
-function sweepPrivateCookieDirs() {
-  let entries;
-  try {
-    entries = fs.readdirSync(PRIVATE_COOKIES_ROOT);
-  } catch (_) {
-    return; // nothing to sweep
-  }
-  for (const name of entries) {
-    try {
-      fs.rmSync(path.join(PRIVATE_COOKIES_ROOT, name), { recursive: true, force: true, maxRetries: 3 });
-    } catch (e) {
-      console.error(`[ytdlp] Failed to remove stale private cookies copy ${name}: ${e.message}`);
-    }
-  }
-}
-sweepPrivateCookieDirs();
-
-function withPrivateCookies(args) {
-  const idx = args.indexOf('--cookies');
-  if (idx === -1 || args[idx + 1] !== COOKIES_FILE || !fs.existsSync(COOKIES_FILE)) {
-    return { args, cleanup: () => {} };
-  }
-  let tmpDir;
-  try {
-    fs.mkdirSync(PRIVATE_COOKIES_ROOT, { recursive: true, mode: 0o700 });
-    tmpDir = fs.mkdtempSync(path.join(PRIVATE_COOKIES_ROOT, 'job-'));
-    const tmpFile = path.join(tmpDir, 'cookies.txt');
-    fs.copyFileSync(COOKIES_FILE, tmpFile);
-    fs.chmodSync(tmpFile, 0o600);
-    const copy = args.slice();
-    copy[idx + 1] = tmpFile;
-    let cleaned = false;
-    return {
-      args: copy,
-      cleanup: () => {
-        if (cleaned) return;
-        cleaned = true;
-        removePrivateCookieDir(tmpDir);
-      },
-    };
-  } catch (e) {
-    console.error(`[ytdlp] Couldn't create private cookies copy, using shared file: ${e.message}`);
-    if (tmpDir) removePrivateCookieDir(tmpDir);
-    return { args, cleanup: () => {} };
-  }
-}
+const {
+  YTDLP_BIN, DOWNLOAD_DIR, COOKIES_FILE, YTDLP_CACHE_DIR, getDenoBin, getFfmpegDir, getFfmpegBin,
+} = require('./ytdlpPaths');
+const {
+  cookieArgs, setTwitchAuthCookie, hasTwitchAuthCookie, getTwitchAuthTokenMasked,
+  writeCookiesFilePreservingTwitchAuth, withPrivateCookies, sweepPrivateCookieDirs, PRIVATE_COOKIES_ROOT,
+} = require('./ytdlpCookies');
+const {
+  getVersions, updateYtdlp, updateFfmpeg, updateFfmpegIfAvailable, updateDeno, updateDenoIfAvailable,
+} = require('./ytdlpTools');
 
 function spawnYtdlp(args, options) {
   const { args: spawnArgs, cleanup } = withPrivateCookies(args);
@@ -325,8 +126,8 @@ function assertPublicUrl(url) {
   let parsed;
   try {
     parsed = new URL(url);
-  } catch (_) {
-    throw new Error('Invalid URL');
+  } catch (err) {
+    throw new Error('Invalid URL', { cause: err });
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error(`Unsupported URL scheme: ${parsed.protocol}`);
@@ -550,7 +351,7 @@ function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, play
 
 // Progress-template gives us a stable, parseable line for every progress tick instead of
 // scraping the human-readable percentage string, which varies by yt-dlp version/locale.
-const PROGRESS_TEMPLATE = 'YTDLP_PROGRESS %(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s';
+const PROGRESS_TEMPLATE = 'download:YTDLP_PROGRESS %(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s';
 
 // User-facing quality caps ("4K", "1080p", ...) map to a max height. yt-dlp's `<=` selector
 // plus the `/best[height<=N]` fallback means asking for 4K on a 1080p-only video just gets
@@ -827,7 +628,7 @@ function buildDownloadArgs(url, rawOptions = {}) {
     '--newline',
     '--progress',
     ...commonArgs(),
-    '--progress-template', 'download:YTDLP_PROGRESS %(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s',
+    '--progress-template', PROGRESS_TEMPLATE,
     '--progress-template', 'postprocess:YTDLP_POSTPROCESS %(progress._percent_str)s',
     '-o', targetOutput,
     '--print', 'after_move:FILEPATH %(filepath)s',
@@ -1235,13 +1036,6 @@ function download(url, options = {}, onProgress, onLog) {
     const isMultiFormat = !options.audioOnly && (!options.formatSelector || options.formatSelector.includes('+'));
     let currentPass = 1;
     let highestPassPercent = 0;
-    // Previously assigned without a declaration, which made these accidental globals shared
-    // across every concurrent download() call (a race under MAX_CONCURRENT_DOWNLOADS > 1) and
-    // risked a ReferenceError if a "[download] Destination:" line arrived before any
-    // "Downloading N format(s):" line had ever been seen process-wide.
-    let totalFormats = 1;
-    let formatIndex = 0;
-    let currentStage = null;
     let postprocessSample = null;
 
     function estimatePostprocessEta(percent) {
@@ -1341,15 +1135,6 @@ function download(url, options = {}, onProgress, onLog) {
           continue;
         }
 
-        // Detect number of formats to download, e.g. "Downloading 1 format(s): 395+251"
-        const formatMatch = trimmed.match(/Downloading \d+ format\(s\):\s*([^\s]+)/i);
-        if (formatMatch && formatMatch[1]) {
-          const formats = formatMatch[1].split('+');
-          totalFormats = formats.length;
-          formatIndex = 0;
-          currentStage = totalFormats > 1 ? 'Downloading video…' : 'Downloading…';
-        }
-
         if (trimmed.startsWith('FILEPATH ')) {
           filepath = trimmed.replace('FILEPATH ', '').trim();
           finalFilepath = filepath;
@@ -1359,19 +1144,13 @@ function download(url, options = {}, onProgress, onLog) {
         }
 
         if (trimmed.includes('[download] Destination: ')) {
-          formatIndex++;
           const dest = trimmed.split('[download] Destination: ')[1]?.trim();
           if (dest) filepath = dest.replace(/\.part$/, '');
-          if (totalFormats > 1) {
-            currentStage = formatIndex <= 1 ? 'Downloading video…' : 'Downloading audio…';
-          }
         }
 
         if (trimmed.includes('[Merger] Merging formats')) {
-          currentStage = 'Merging formats…';
           reportProgress(99, null, null, 'Merging formats…', true);
         } else if (trimmed.includes('[ExtractAudio]')) {
-          currentStage = 'Extracting audio…';
           reportProgress(99, null, null, 'Extracting audio…', true);
         } else if (
           trimmed.includes('[SponsorBlock]') &&
@@ -1379,7 +1158,6 @@ function download(url, options = {}, onProgress, onLog) {
           !trimmed.includes('unavailable') &&
           !trimmed.includes('SponsorBlock is not')
         ) {
-          currentStage = 'Applying SponsorBlock…';
           reportProgress(99, null, null, 'Applying SponsorBlock…', true);
         }
 
@@ -1476,466 +1254,6 @@ function download(url, options = {}, onProgress, onLog) {
       reject(err);
     });
   });
-}
-
-// Runs `cmd args` and resolves with stdout, or null if the binary is missing/errors —
-// used for version reporting where an optional tool (e.g. deno in local dev) may be absent.
-function runCommand(cmd, args) {
-  return new Promise((resolve) => {
-    const proc = spawn(cmd, args);
-    let stdout = '';
-    proc.stdout.on('data', (d) => (stdout += d));
-    proc.on('close', (code) => resolve(code === 0 ? stdout : null));
-    proc.on('error', () => resolve(null));
-  });
-}
-
-function firstLine(output) {
-  return output ? output.split('\n')[0].trim() : null;
-}
-
-async function getVersions() {
-  const ffmpegBin = getFfmpegBin();
-  const denoBin = getDenoBin();
-  const [ytdlpOut, ffmpegOut, denoOut] = await Promise.all([
-    runCommand(YTDLP_BIN, ['--version']),
-    runCommand(ffmpegBin, ['-version']),
-    runCommand(denoBin, ['--version']),
-  ]);
-  return {
-    ytdlp: firstLine(ytdlpOut),
-    ffmpeg: firstLine(ffmpegOut),
-    deno: firstLine(denoOut),
-    node: process.version,
-  };
-}
-
-// Upgrades yt-dlp in place via pip. yt-dlp publishes its nightly/master builds to PyPI as
-// pre-releases, so `--pre` is all that's needed to switch channels (see yt-dlp's own README
-// "Update" section) — no separate index or package name required.
-let isUpdatingYtdlp = false;
-
-function updateYtdlp(channel) {
-  if (isUpdatingYtdlp) {
-    return Promise.reject(new Error('yt-dlp update is already in progress'));
-  }
-  const args = ['install', '--no-cache-dir', '--break-system-packages', '-U'];
-  if (channel === 'nightly') args.push('--pre');
-  args.push('yt-dlp[default,curl-cffi]');
-
-  isUpdatingYtdlp = true;
-  return new Promise((resolve, reject) => {
-    const proc = spawn('pip3', args);
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => (stdout += d));
-    proc.stderr.on('data', (d) => (stderr += d));
-    proc.on('close', (code) => {
-      isUpdatingYtdlp = false;
-      if (code !== 0) return reject(new Error(stderr || `pip3 exited with code ${code}`));
-      // A new yt-dlp can change which sites support features like --live-from-start.
-      siteProfiles.refreshYtdlpFacts();
-      resolve(stdout);
-    });
-    proc.on('error', (err) => {
-      isUpdatingYtdlp = false;
-      reject(err);
-    });
-  });
-}
-
-function getFfmpegAssetInfo() {
-  const platform = process.platform;
-  const arch = process.arch;
-
-  if (platform === 'linux') {
-    if (arch === 'x64') {
-      return { filename: 'ffmpeg-master-latest-linux64-gpl.tar.xz' };
-    }
-    if (arch === 'arm64') {
-      return { filename: 'ffmpeg-master-latest-linuxarm64-gpl.tar.xz' };
-    }
-  } else if (platform === 'win32') {
-    if (arch === 'x64') {
-      return { filename: 'ffmpeg-master-latest-win64-gpl.zip' };
-    }
-    if (arch === 'arm64') {
-      return { filename: 'ffmpeg-master-latest-winarm64-gpl.zip' };
-    }
-    if (arch === 'ia32') {
-      return { filename: 'ffmpeg-master-latest-win32-gpl.zip' };
-    }
-  }
-
-  throw new Error(`yt-dlp FFmpeg builds are not available for platform '${platform}' (${arch}).`);
-}
-
-function extractArchive(archivePath, outDir) {
-  return new Promise((resolve, reject) => {
-    if (archivePath.endsWith('.zip')) {
-      if (process.platform === 'win32') {
-        const psProc = spawn('powershell.exe', [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          `Expand-Archive -LiteralPath "${archivePath}" -DestinationPath "${outDir}" -Force`,
-        ]);
-        let psStderr = '';
-        psProc.stderr.on('data', (d) => (psStderr += d));
-        psProc.on('close', (psCode) => {
-          if (psCode === 0) return resolve();
-          const tarProc = spawn('tar', ['-xf', archivePath, '-C', outDir]);
-          tarProc.on('close', (tCode) => (tCode === 0 ? resolve() : reject(new Error(`Extraction failed: ${psStderr || `code ${psCode}`}`))));
-          tarProc.on('error', () => reject(new Error(`Extraction failed: ${psStderr}`)));
-        });
-        psProc.on('error', () => {
-          const tarProc = spawn('tar', ['-xf', archivePath, '-C', outDir]);
-          tarProc.on('close', (tCode) => (tCode === 0 ? resolve() : reject(new Error(`Extraction failed for ${archivePath}`))));
-          tarProc.on('error', (err) => reject(err));
-        });
-        return;
-      }
-      // Linux/macOS: try unzip first (standard for .zip), fallback to tar
-      const unzipProc = spawn('unzip', ['-o', '-q', archivePath, '-d', outDir]);
-      let unzipStderr = '';
-      unzipProc.stderr.on('data', (d) => (unzipStderr += d));
-      unzipProc.on('close', (code) => {
-        if (code === 0) return resolve();
-        const tarProc = spawn('tar', ['-xf', archivePath, '-C', outDir]);
-        tarProc.on('close', (tCode) => (tCode === 0 ? resolve() : reject(new Error(unzipStderr || `unzip exited with code ${code}`))));
-        tarProc.on('error', () => reject(new Error(`unzip failed with code ${code}: ${unzipStderr}`)));
-      });
-      unzipProc.on('error', () => {
-        const tarProc = spawn('tar', ['-xf', archivePath, '-C', outDir]);
-        tarProc.on('close', (tCode) => (tCode === 0 ? resolve() : reject(new Error(`Extraction failed for ${archivePath}`))));
-        tarProc.on('error', (err) => reject(err));
-      });
-      return;
-    }
-
-    const tarProc = spawn('tar', ['-xf', archivePath, '-C', outDir]);
-    let stderr = '';
-    tarProc.stderr.on('data', (d) => (stderr += d));
-    tarProc.on('close', (code) => {
-      if (code === 0) return resolve();
-      reject(new Error(stderr || `tar exited with code ${code}`));
-    });
-    tarProc.on('error', (err) => reject(err));
-  });
-}
-
-function findBinary(dir, targetName) {
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      const found = findBinary(fullPath, targetName);
-      if (found) return found;
-    } else if (entry.isFile() && entry.name.toLowerCase() === targetName.toLowerCase()) {
-      return fullPath;
-    }
-  }
-  return null;
-}
-
-function installBinary(srcPath, destDir, binName) {
-  fs.mkdirSync(destDir, { recursive: true });
-  const destPath = path.join(destDir, binName);
-  const tempDest = path.join(destDir, `${binName}.tmp-${Date.now()}`);
-
-  fs.copyFileSync(srcPath, tempDest);
-  if (process.platform !== 'win32') {
-    try {
-      fs.chmodSync(tempDest, 0o755);
-    } catch {}
-  }
-
-  try {
-    fs.renameSync(tempDest, destPath);
-  } catch (err) {
-    if (process.platform === 'win32') {
-      try {
-        fs.unlinkSync(destPath);
-        fs.renameSync(tempDest, destPath);
-      } catch {
-        fs.copyFileSync(tempDest, destPath);
-        try { fs.unlinkSync(tempDest); } catch {}
-      }
-    } else {
-      throw err;
-    }
-  }
-
-  if (process.platform !== 'win32') {
-    try {
-      fs.chmodSync(destPath, 0o755);
-    } catch {}
-  }
-}
-
-let isUpdatingFfmpeg = false;
-
-function ffmpegDownloadUrl() {
-  const { filename } = getFfmpegAssetInfo();
-  return `https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/${filename}`;
-}
-
-function ffmpegResponseIdentity(res) {
-  const etag = res.headers.get('etag');
-  if (etag) return `etag:${etag}`;
-  const modified = res.headers.get('last-modified');
-  const length = res.headers.get('content-length');
-  if (modified || length) return `metadata:${modified || ''}:${length || ''}`;
-  try {
-    const finalUrl = new URL(res.url);
-    return `url:${finalUrl.origin}${finalUrl.pathname}`;
-  } catch (_) {
-    return `url:${res.url}`;
-  }
-}
-
-async function getLatestFfmpegBuildIdentity() {
-  const res = await fetch(ffmpegDownloadUrl(), {
-    method: 'HEAD',
-    headers: { 'User-Agent': 'yt-dlp-gui' },
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to check FFmpeg build (${res.status} ${res.statusText})`);
-  }
-  return ffmpegResponseIdentity(res);
-}
-
-function readInstalledFfmpegBuildIdentity() {
-  try {
-    return fs.readFileSync(FFMPEG_BUILD_MARKER, 'utf8').trim();
-  } catch (_) {
-    return '';
-  }
-}
-
-function writeInstalledFfmpegBuildIdentity(identity) {
-  if (!identity) return;
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  const tempPath = `${FFMPEG_BUILD_MARKER}.tmp-${process.pid}`;
-  fs.writeFileSync(tempPath, `${identity}\n`, { mode: 0o600 });
-  fs.renameSync(tempPath, FFMPEG_BUILD_MARKER);
-}
-
-async function updateFfmpeg(knownIdentity = null) {
-  if (isUpdatingFfmpeg) {
-    throw new Error('FFmpeg update is already in progress');
-  }
-
-  const { filename } = getFfmpegAssetInfo();
-  const downloadUrl = ffmpegDownloadUrl();
-
-  isUpdatingFfmpeg = true;
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-ffmpeg-'));
-  const archivePath = path.join(tempDir, filename);
-  const extractDir = path.join(tempDir, 'extracted');
-
-  try {
-    const res = await fetch(downloadUrl, {
-      headers: { 'User-Agent': 'yt-dlp-gui' },
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to download FFmpeg build (${res.status} ${res.statusText})`);
-    }
-    const downloadedIdentity = knownIdentity || ffmpegResponseIdentity(res);
-
-    await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(archivePath));
-
-    fs.mkdirSync(extractDir, { recursive: true });
-    await extractArchive(archivePath, extractDir);
-
-    const binExt = process.platform === 'win32' ? '.exe' : '';
-    const ffmpegTarget = `ffmpeg${binExt}`;
-    const ffprobeTarget = `ffprobe${binExt}`;
-
-    const ffmpegSrc = findBinary(extractDir, ffmpegTarget);
-    const ffprobeSrc = findBinary(extractDir, ffprobeTarget);
-
-    if (!ffmpegSrc) {
-      throw new Error(`Extracted archive did not contain ${ffmpegTarget}`);
-    }
-
-    // Always install to persistent CUSTOM_BIN_DIR (/config/bin)
-    installBinary(ffmpegSrc, CUSTOM_BIN_DIR, ffmpegTarget);
-    if (ffprobeSrc) {
-      installBinary(ffprobeSrc, CUSTOM_BIN_DIR, ffprobeTarget);
-    }
-
-    // Also update /usr/local/bin if running on Linux with write permissions (e.g. Docker)
-    if (process.platform === 'linux') {
-      try {
-        fs.accessSync('/usr/local/bin', fs.constants.W_OK);
-        installBinary(ffmpegSrc, '/usr/local/bin', ffmpegTarget);
-        if (ffprobeSrc) {
-          installBinary(ffprobeSrc, '/usr/local/bin', ffprobeTarget);
-        }
-      } catch {
-        // Not writable, persistent custom bin dir in /config/bin is sufficient
-      }
-    }
-
-    // Ensure CUSTOM_BIN_DIR is prepended to process.env.PATH
-    const paths = (process.env.PATH || '').split(path.delimiter);
-    if (!paths.includes(CUSTOM_BIN_DIR)) {
-      process.env.PATH = `${CUSTOM_BIN_DIR}${path.delimiter}${process.env.PATH}`;
-    }
-
-    writeInstalledFfmpegBuildIdentity(downloadedIdentity);
-    return { updated: true, ...(await getVersions()) };
-  } finally {
-    isUpdatingFfmpeg = false;
-    try {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch {}
-  }
-}
-
-async function updateFfmpegIfAvailable() {
-  const latestIdentity = await getLatestFfmpegBuildIdentity();
-  if (latestIdentity === readInstalledFfmpegBuildIdentity()) {
-    return { updated: false, ...(await getVersions()) };
-  }
-  return updateFfmpeg(latestIdentity);
-}
-
-function getDenoAssetInfo() {
-  const platform = process.platform;
-  const arch = process.arch;
-
-  if (platform === 'linux') {
-    if (arch === 'x64') return { filename: 'deno-x86_64-unknown-linux-gnu.zip' };
-    if (arch === 'arm64') return { filename: 'deno-aarch64-unknown-linux-gnu.zip' };
-  } else if (platform === 'win32') {
-    if (arch === 'x64') return { filename: 'deno-x86_64-pc-windows-msvc.zip' };
-    if (arch === 'arm64') return { filename: 'deno-aarch64-pc-windows-msvc.zip' };
-  } else if (platform === 'darwin') {
-    if (arch === 'x64') return { filename: 'deno-x86_64-apple-darwin.zip' };
-    if (arch === 'arm64') return { filename: 'deno-aarch64-apple-darwin.zip' };
-  }
-
-  throw new Error(`Deno builds are not available for platform '${platform}' (${arch}).`);
-}
-
-function denoDownloadUrl() {
-  const { filename } = getDenoAssetInfo();
-  return `https://github.com/denoland/deno/releases/latest/download/${filename}`;
-}
-
-let isUpdatingDeno = false;
-
-async function getLatestDenoBuildIdentity() {
-  const res = await fetch(denoDownloadUrl(), {
-    method: 'HEAD',
-    headers: { 'User-Agent': 'yt-dlp-gui' },
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to check Deno build (${res.status} ${res.statusText})`);
-  }
-  return ffmpegResponseIdentity(res);
-}
-
-function readInstalledDenoBuildIdentity() {
-  try {
-    return fs.readFileSync(DENO_BUILD_MARKER, 'utf8').trim();
-  } catch (_) {
-    return '';
-  }
-}
-
-function writeInstalledDenoBuildIdentity(identity) {
-  if (!identity) return;
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  const tempPath = `${DENO_BUILD_MARKER}.tmp-${process.pid}`;
-  fs.writeFileSync(tempPath, `${identity}\n`, { mode: 0o600 });
-  fs.renameSync(tempPath, DENO_BUILD_MARKER);
-}
-
-async function updateDeno(knownIdentity = null) {
-  if (isUpdatingDeno) {
-    throw new Error('Deno update is already in progress');
-  }
-
-  const { filename } = getDenoAssetInfo();
-  const downloadUrl = denoDownloadUrl();
-
-  isUpdatingDeno = true;
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-deno-'));
-  const archivePath = path.join(tempDir, filename);
-  const extractDir = path.join(tempDir, 'extracted');
-
-  try {
-    const res = await fetch(downloadUrl, {
-      headers: { 'User-Agent': 'yt-dlp-gui' },
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to download Deno build (${res.status} ${res.statusText})`);
-    }
-    const downloadedIdentity = knownIdentity || ffmpegResponseIdentity(res);
-
-    await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(archivePath));
-
-    fs.mkdirSync(extractDir, { recursive: true });
-    await extractArchive(archivePath, extractDir);
-
-    const binExt = process.platform === 'win32' ? '.exe' : '';
-    const denoTarget = `deno${binExt}`;
-
-    const denoSrc = findBinary(extractDir, denoTarget);
-    if (!denoSrc) {
-      throw new Error(`Extracted archive did not contain ${denoTarget}`);
-    }
-
-    // Always install to persistent CUSTOM_BIN_DIR (/config/bin)
-    installBinary(denoSrc, CUSTOM_BIN_DIR, denoTarget);
-
-    // Also update /usr/local/bin if running on Linux with write permissions (e.g. Docker)
-    if (process.platform === 'linux') {
-      try {
-        fs.accessSync('/usr/local/bin', fs.constants.W_OK);
-        installBinary(denoSrc, '/usr/local/bin', denoTarget);
-      } catch {
-        // Not writable, persistent custom bin dir in /config/bin is sufficient
-      }
-    }
-
-    // Ensure CUSTOM_BIN_DIR is prepended to process.env.PATH
-    const paths = (process.env.PATH || '').split(path.delimiter);
-    if (!paths.includes(CUSTOM_BIN_DIR)) {
-      process.env.PATH = `${CUSTOM_BIN_DIR}${path.delimiter}${process.env.PATH}`;
-    }
-
-    writeInstalledDenoBuildIdentity(downloadedIdentity);
-    return { updated: true, ...(await getVersions()) };
-  } finally {
-    isUpdatingDeno = false;
-    try {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch {}
-  }
-}
-
-async function updateDenoIfAvailable() {
-  const latestIdentity = await getLatestDenoBuildIdentity();
-  const installedMarker = readInstalledDenoBuildIdentity();
-  if (latestIdentity && latestIdentity === installedMarker) {
-    return { updated: false, ...(await getVersions()) };
-  }
-
-  // If no marker stored yet, check if currently installed deno matches the latest tag
-  if (!installedMarker) {
-    const currentVersion = firstLine(await runCommand(getDenoBin(), ['--version']));
-    const versionMatch = latestIdentity && latestIdentity.match(/\/download\/v([0-9.]+)\//);
-    if (versionMatch && currentVersion && currentVersion.includes(versionMatch[1])) {
-      writeInstalledDenoBuildIdentity(latestIdentity);
-      return { updated: false, ...(await getVersions()) };
-    }
-  }
-
-  return updateDeno(latestIdentity);
 }
 
 async function searchYouTube(query, limit = 1) {

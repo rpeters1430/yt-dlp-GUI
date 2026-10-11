@@ -48,8 +48,6 @@ export default function QueueStatusWidget() {
   }
 
   const percent = currentJob && typeof currentJob.percent === 'number' ? Math.round(currentJob.percent) : null;
-  const speed = currentJob && currentJob.speed ? currentJob.speed : null;
-  const eta = currentJob && currentJob.eta ? currentJob.eta : null;
 
   return (
     <div className="topbar-queue-widget" ref={containerRef}>

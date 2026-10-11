@@ -1,5 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Radio,
   Tv,
@@ -24,6 +23,7 @@ import {
   Video,
 } from 'lucide-react';
 import { api } from '../api.js';
+import { useDownloads } from '../context/DownloadsContext.jsx';
 import QueueItem from '../components/QueueItem.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import { useModalA11y } from '../hooks/useModalA11y.js';
@@ -63,7 +63,7 @@ export default function Twitch() {
   // Live recording options
   const [liveChannel, setLiveChannel] = useState('');
   const [waitForLive, setWaitForLive] = useState(false);
-  const [waitInterval, setWaitInterval] = useState(15);
+  const waitInterval = 15;
   const [quality, setQuality] = useState('');
   const [container, setContainer] = useState('mp4');
   const [hlsUseMpegts, setHlsUseMpegts] = useState(true);
@@ -91,7 +91,6 @@ export default function Twitch() {
   const [trimEnd, setTrimEnd] = useState('00:15:00');
   const [trimQuality, setTrimQuality] = useState('');
   const [trimContainer, setTrimContainer] = useState('mp4');
-  const [trimSubmitting, setTrimSubmitting] = useState(false);
 
   // Twitch Settings (OAuth token & Client ID). The server never sends the real token back —
   // only whether one's configured and a masked hint — so authToken here only ever holds a
@@ -103,42 +102,43 @@ export default function Twitch() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsStatus, setSettingsStatus] = useState('');
 
-  // Global jobs from socket
-  const [jobs, setJobs] = useState([]);
-  const socketRef = useRef(null);
+  // Live job list, shared with the rest of the app through one socket connection.
+  const { jobs, setJobs } = useDownloads();
 
   const [vodMessage, setVodMessage] = useState(null); // { type: 'success' | 'error', text }
 
   const trimModalRef = useModalA11y(!!selectedVod, () => setSelectedVod(null));
 
+  // The shared list only holds the newest finished jobs across every site, so Twitch
+  // captures could fall out of it; this page loads its own recent Twitch history.
+  const [twitchHistory, setTwitchHistory] = useState([]);
+  const [removedIds, setRemovedIds] = useState(() => new Set());
+
   useEffect(() => {
-    // Initial fetch of jobs & settings
-    api.listDownloads().then(setJobs).catch(() => {});
     api.getTwitchSettings().then((s) => {
       setAuthTokenMasked(s.authTokenMasked || '');
       setClientId(s.clientId || '');
     }).catch(() => {});
-
-    const socket = io({ path: '/socket.io' });
-    socketRef.current = socket;
-
-    socket.on('jobs:init', (initialJobs) => setJobs(initialJobs));
-    socket.on('job:update', (job) => {
-      setJobs((prev) => {
-        const exists = prev.some((j) => j.id === job.id);
-        if (exists) return prev.map((j) => (j.id === job.id ? job : j));
-        return [job, ...prev];
-      });
-    });
-
-    return () => socket.disconnect();
+    api.listTwitchJobs().then(setTwitchHistory).catch(() => {});
   }, []);
 
-  // Filter jobs for Twitch
-  const twitchJobs = useMemo(
-    () => jobs.filter((j) => j.is_live === 1 || (j.url && j.url.includes('twitch.tv'))),
-    [jobs]
-  );
+  // Live rows from the shared socket win over the history snapshot for the same job. Only
+  // finished rows come from the snapshot: the shared list always holds every active job, and
+  // its copy disappears when the job is removed (from any tab).
+  const twitchJobs = useMemo(() => {
+    const isTwitch = (j) => j.is_live === 1 || (j.url && j.url.includes('twitch.tv'));
+    const finished = twitchHistory.filter((j) => j.status !== 'queued' && j.status !== 'downloading');
+    const byId = new Map(finished.map((j) => [j.id, j]));
+    for (const j of jobs) if (isTwitch(j)) byId.set(j.id, j);
+    return [...byId.values()]
+      .filter((j) => !removedIds.has(j.id))
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
+  }, [jobs, twitchHistory, removedIds]);
+
+  function handleTwitchJobDeleted(id) {
+    setRemovedIds((prev) => new Set(prev).add(id));
+    setJobs((prev) => prev.filter((j) => j.id !== id));
+  }
 
   const activeLiveJobs = useMemo(
     () => twitchJobs.filter((j) => j.status === 'downloading' || j.status === 'queued'),
@@ -987,7 +987,7 @@ export default function Twitch() {
         ) : (
           <div className="queue-list">
             {finishedTwitchJobs.slice(0, 15).map((job) => (
-              <QueueItem key={job.id} job={job} onDeleted={(id) => setJobs((prev) => prev.filter((j) => j.id !== id))} />
+              <QueueItem key={job.id} job={job} onDeleted={handleTwitchJobDeleted} />
             ))}
           </div>
         )}

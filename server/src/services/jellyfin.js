@@ -36,7 +36,7 @@ async function jellyfinRequest(baseUrl, apiKey, requestPath, { method = 'GET', b
   try {
     res = await fetch(url, init);
   } catch (err) {
-    throw new Error(`Could not reach Jellyfin at ${normBase}: ${err.message}`);
+    throw new Error(`Could not reach Jellyfin at ${normBase}: ${err.message}`, { cause: err });
   }
   if (!res.ok) {
     if (res.status === 401) throw new Error('Jellyfin rejected the API key (401 Unauthorized)');
@@ -108,12 +108,9 @@ async function fetchPlayedBasenames(baseUrl, apiKey, userId) {
 // Aggregates "played" filenames across every configured user (or just one, if userId is set)
 // since Jellyfin's watched status is tracked per-user, and there's no server-wide concept of it.
 async function getPlayedBasenames(baseUrl, apiKey, userId) {
-  let targetUserIds = [];
-  if (userId) {
-    targetUserIds = [await resolveUserId(baseUrl, apiKey, userId)];
-  } else {
-    targetUserIds = (await getUsers(baseUrl, apiKey)).map((u) => u.Id).filter(Boolean);
-  }
+  const targetUserIds = userId
+    ? [await resolveUserId(baseUrl, apiKey, userId)]
+    : (await getUsers(baseUrl, apiKey)).map((u) => u.Id).filter(Boolean);
 
   const combined = new Set();
   for (const uid of targetUserIds) {
