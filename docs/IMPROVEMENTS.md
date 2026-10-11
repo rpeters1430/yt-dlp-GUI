@@ -5,68 +5,83 @@ delete them) as they land.
 
 ## Fixed
 
-- [x] **Add downloads header overflowed on phones.** The title, "N links ready" badge,
-  Paste, Clear and Sites Guide buttons sat in one non-wrapping flex row, so on a narrow
-  screen the buttons were pushed past the card edge. The header now wraps the actions onto
-  their own row (`client/src/pages/Dashboard.jsx`, `.intake-*` rules in `styles.css`).
-- [x] **"Sites Guide" rendered as a blue underlined link** instead of a ghost button,
-  because the `.btn-ghost` styles only target `<button>`, not the `<Link>` (`<a>`).
-- [x] **Live recordings with chunk splitting were marked Failed after finishing.**
-  `server/src/services/queue.js` called `fs.existsSync()` without importing `fs`, so the
-  `ReferenceError` was caught by the job's error handler after the download had already
-  completed. The file was kept but never split, and the job showed as failed.
+### Bugs
+- [x] **Add downloads header overflowed on phones.** The action buttons were pushed past the
+  card edge; the header now wraps them onto their own row.
+- [x] **Live recordings with chunk splitting were marked Failed after finishing**, for two
+  separate reasons: `queue.js` used `fs` and `notify.js` used `path` without importing them.
+  Both threw after the download had completed. Covered by queue tests now.
+- [x] **Signed-out sessions could still receive job updates over the socket.** The socket
+  handshake only checked `session.userId`, so a session invalidated by a password change
+  kept streaming the job list. It now uses `validateSession` like the HTTP API.
+- [x] **Music page never matched jobs by track metadata**: it read `job.optionsJson`, which
+  doesn't exist (the column is `options_json`). It also showed `job.progress` (doesn't exist,
+  so no percentage was ever shown) and linked "View Queue" to a non-existent `/dashboard`.
+- [x] **Badges outside panel headers were unstyled** (the cramped "Default options 3"), and
+  router `<Link>`s with `btn-*` classes rendered as plain underlined links.
+- [x] **No feedback when opening an album's tracklist** or while the Sites guide loads.
 
-## Bugs
+### Performance
+- [x] **The full download history was sent everywhere.** The job list (socket `jobs:init`
+  and `GET /api/downloads`) is now every active job plus the newest 200 finished ones.
+  Dashboard totals come from `GET /api/downloads/stats` / the `jobs:counts` socket event,
+  so they stay exact.
+- [x] **Every progress tick sent the full 500-line log** over the socket (up to 5×/second
+  per job). Updates now carry the log only when it changed (≤1×/second).
+- [x] **The client re-fetched the full history every 2s** while anything was downloading.
+  It now polls only while the socket is disconnected (the socket resyncs on reconnect).
+- [x] **The Twitch page opened its own second socket** and loaded the full history; it now
+  shares the app's connection.
+- [x] **History filtered thousands of rows in the browser.** Search, status filter and
+  paging ("Load more") now run on the server (`GET /api/downloads/history`).
+- [x] **`processNext()` read every queued row on every finished download.** It now reads only
+  as many as there are free slots, backed by an index on `(status, created_at)`.
+- [x] **Client bundle was 614 kB.** Pages other than the dashboard load on first visit; the
+  main bundle is 393 kB.
 
-- [ ] **Other `<Link className="btn-ghost">` / `btn-*` links have the same styling gap.**
-  Button classes are written as `button.btn-*`. Either broaden them to `.btn-*` or audit
-  pages for `<Link>`/`<a>` elements that use button classes.
-- [ ] **"Default options" count badge looks clipped.** On mobile the accent badge next to
-  "Default options" renders as a cramped highlight box with no horizontal padding
-  (`.advanced-toggle .count-badge`). Give it padding and a pill radius like the other badges.
-- [ ] **Job list is unbounded.** `queue.listJobs()` returns every download ever made, and
-  it's sent in full over the socket on every connect (`jobs:init`) and from
-  `GET /api/downloads`. With a long history this slows the first load and every reconnect.
-  Paginate or cap it (e.g. active + the latest N finished), and load more on the History page.
-- [ ] **`processNext()` runs `SELECT *` over all queued rows on every job finish**, including
-  the parsed `options_json` for each. Fine for small queues, but a large playlist enqueue
-  makes it quadratic-ish. Select only the columns needed and stop once slots are full.
+### Code quality & testing
+- [x] **ESLint** for server and client (`npm run lint`, zero warnings), run in CI.
+- [x] **`ytdlp.js` split** into `ytdlpPaths.js`, `ytdlpCookies.js` and `ytdlpTools.js`
+  (2,000 → 1,300 lines); `ytdlp.js` re-exports everything, so callers are unchanged.
+- [x] **Express app built in `src/app.js`** so tests exercise the real session/auth/router
+  wiring; `index.js` only adds the server, socket.io and background jobs.
+- [x] **Tests went from 146 to 212**, covering the queue lifecycle, `ytdlp.download()` (run
+  against a fake yt-dlp binary in `test/fixtures`), auto-delete rules and file deletion,
+  auth, the downloads API including `/info`, notification delivery, and a check that every
+  API router rejects requests without a session. `npm run test:coverage` prints a report
+  and runs in CI.
 
-## Improvements
+## Still open
+
+### Bugs / risks
+- [ ] **No socket.io handshake test.** The auth check is one call to the tested
+  `validateSession`, but an end-to-end socket test would need `socket.io-client` on the server.
+- [ ] **`GET /api/library` loads every completed row** and filters/sorts in JS before paging.
+  Fine for thousands of rows; move filtering/sorting into SQL if libraries get much larger.
 
 ### Downloads & queue
-
 - [ ] **Retry failed downloads.** A normal (non-Watch) failed download can only be deleted.
-  Add `POST /api/downloads/:id/retry` that resets the row to `queued`, plus a Retry button
-  on failed queue/History items.
-- [ ] **Bulk actions for failed/completed items.** "Clear all failed", "Retry all failed"
-  and "Clear completed" — the dashboard currently shows 140 failed with no way to deal
-  with them in one go.
-- [ ] **Group failures by cause.** Show why things failed (bot check, unavailable, private,
-  geo-blocked, network) so the user knows whether retrying makes sense.
-- [ ] **Reorder / pause the queue.** Move jobs up/down, pause and resume the whole queue.
-- [ ] **Configurable concurrency in Settings.** `MAX_CONCURRENT_DOWNLOADS` is env-only.
-- [ ] **Duplicate detection.** Warn when a pasted URL (or video ID) was already downloaded.
+  Add `POST /api/downloads/:id/retry` and a Retry button on failed queue/History items.
+- [ ] **Bulk actions**: "Retry all failed", "Clear all failed", "Clear completed".
+- [ ] **Group failures by cause** (bot check, unavailable, private, geo-blocked, network).
+- [ ] **Reorder / pause the queue.**
+- [ ] **Configurable concurrency in Settings** (`MAX_CONCURRENT_DOWNLOADS` is env-only).
+- [ ] **Duplicate detection** when a pasted URL / video ID was already downloaded.
 
 ### Mobile / UI
+- [ ] **Audit every page at ~360–400px** for other non-wrapping flex rows; many components
+  still use inline `style={{ display: 'flex' }}`, which is hard to fix responsively.
+- [ ] **Share target / PWA** so links can be shared straight from the YouTube/X app.
+- [ ] **Auto-analyze on paste** (optional setting).
+- [ ] **Compact stat cards on phones** so Add downloads is visible without scrolling.
 
-- [ ] **Audit every page at ~360–400px wide** for other non-wrapping flex rows with inline
-  `style={{ display: 'flex' }}` (Dashboard had several). Moving inline layout styles into
-  CSS classes makes this easier to fix in one place.
-- [ ] **Share target / PWA.** Add a web app manifest with `share_target` so links can be
-  shared straight from the phone's YouTube/X app into the GUI, instead of copy → paste.
-- [ ] **Auto-analyze on paste** (optional setting) to save a tap on mobile.
-- [ ] **Stat cards take a lot of vertical space on phones.** Use a 2-column (or compact
-  horizontal) layout below 640px so the Add downloads box is visible without scrolling.
-
-### Code quality & tooling
-
-- [ ] **Code-split the client.** The production bundle is over 500 kB (Vite warns on every
-  build); `Music.jsx` alone is ~3,000 lines. Lazy-load routes with `React.lazy`.
-- [ ] **Split up large files.** `server/src/services/ytdlp.js` (~2,000 lines),
-  `client/src/pages/Music.jsx` (~3,000) and `Twitch.jsx` (~1,000) are hard to review.
-- [ ] **Add client linting and tests.** The client has no ESLint config and no tests; a
-  basic ESLint setup would have caught the missing `fs` import class of bug on the server
-  too (`no-undef`). Add ESLint to both packages and run it in CI.
-- [ ] **Queue tests.** `queue.js` has no unit tests; cover the success, failure, removal
-  mid-run, subtitle-retry and live-split paths.
+### Code quality & testing
+- [ ] **Split `client/src/pages/Music.jsx`** (~3,000 lines) into components, and
+  `Twitch.jsx` (~1,000).
+- [ ] **Client tests.** None yet; start with the downloads context (merge/update logic) and
+  History paging using Vitest + Testing Library.
+- [ ] **Remaining low-coverage server areas**: `music.js` (YouTube matching, ~14%),
+  `jellyfinSync.js` / `plexSync.js` (~25%), `dependencyUpdater.js`, and the settings,
+  library, music and Twitch routes beyond their read endpoints.
+- [ ] **Some older tests write into the repo's `server/config/`** (e.g. the cookies test in
+  `ytdlp.test.js`); move them onto a temp `CONFIG_DIR` like the newer tests.
