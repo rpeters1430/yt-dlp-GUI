@@ -97,21 +97,97 @@ router.get('/download', (req, res) => {
 const qbitRouter = express.Router();
 qbitRouter.use(express.urlencoded({ extended: true }));
 
+async function parseMultipartForm(req) {
+  const ctype = req.headers['content-type'] || '';
+  if (!ctype.toLowerCase().includes('multipart/form-data')) {
+    return { fields: req.body || {}, files: [] };
+  }
+
+  const boundaryMatch = ctype.match(/boundary=(?:["']([^"']+)["']|([^;\s]+))/);
+  if (!boundaryMatch) {
+    return { fields: req.body || {}, files: [] };
+  }
+  const boundary = boundaryMatch[1] || boundaryMatch[2];
+  const boundaryBuf = Buffer.from(`--${boundary}`);
+
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+  const bodyBuf = Buffer.concat(chunks);
+  const fields = {};
+  const files = [];
+
+  let start = 0;
+  while (start < bodyBuf.length) {
+    const bIdx = bodyBuf.indexOf(boundaryBuf, start);
+    if (bIdx === -1) break;
+
+    const afterBoundary = bIdx + boundaryBuf.length;
+    // Check if end delimiter "--"
+    if (bodyBuf[afterBoundary] === 0x2d && bodyBuf[afterBoundary + 1] === 0x2d) {
+      break;
+    }
+
+    const headerStart = bodyBuf.indexOf(Buffer.from('\r\n'), afterBoundary);
+    if (headerStart === -1) break;
+    const headerEnd = bodyBuf.indexOf(Buffer.from('\r\n\r\n'), headerStart);
+    if (headerEnd === -1) break;
+
+    const headerStr = bodyBuf.toString('utf8', headerStart + 2, headerEnd);
+    const contentStart = headerEnd + 4;
+    const nextBIdx = bodyBuf.indexOf(boundaryBuf, contentStart);
+    if (nextBIdx === -1) break;
+    const contentEnd = nextBIdx - 2; // strip trailing \r\n
+    const contentBuf = bodyBuf.subarray(contentStart, Math.max(contentStart, contentEnd));
+
+    const nameMatch = headerStr.match(/name="([^"]+)"/);
+    const filenameMatch = headerStr.match(/filename="([^"]+)"/);
+
+    if (nameMatch) {
+      const fieldName = nameMatch[1];
+      if (filenameMatch) {
+        files.push({
+          fieldName,
+          filename: filenameMatch[1],
+          buffer: contentBuf,
+        });
+      } else {
+        fields[fieldName] = contentBuf.toString('utf8').trim();
+      }
+    }
+
+    start = nextBIdx;
+  }
+
+  return { fields, files };
+}
+
 qbitRouter.post('/auth/login', (req, res) => {
   res.set('Set-Cookie', 'SID=ytdlp-lidarr-session; HttpOnly; Path=/');
-  res.status(200).send('Ok.');
+  res.type('text/plain').status(200).send('Ok.');
 });
 
 qbitRouter.post('/auth/logout', (req, res) => {
-  res.status(200).send('Ok.');
+  res.type('text/plain').status(200).send('Ok.');
 });
 
 qbitRouter.get('/app/version', (req, res) => {
-  res.status(200).send('v4.6.0');
+  res.type('text/plain').status(200).send('v4.6.0');
 });
 
 qbitRouter.get('/app/webapiVersion', (req, res) => {
-  res.status(200).send('2.9.3');
+  res.type('text/plain').status(200).send('2.9.3');
+});
+
+qbitRouter.get('/app/buildInfo', (req, res) => {
+  res.json({
+    qt: '6.5.0',
+    libtorrent: '2.0.8',
+    boost: '1.82.0',
+    openssl: '3.0.8',
+    bitness: 64,
+  });
 });
 
 qbitRouter.get('/app/preferences', (req, res) => {
@@ -119,6 +195,75 @@ qbitRouter.get('/app/preferences', (req, res) => {
   res.json({
     save_path: config.musicFolder || 'Music',
     temp_path: config.musicFolder || 'Music',
+    queueing_enabled: true,
+    max_ratio_enabled: false,
+    max_seeding_time_enabled: false,
+    dht: true,
+  });
+});
+
+qbitRouter.get('/app/defaultSavePath', (req, res) => {
+  const config = lidarr.getLidarrConfig();
+  res.type('text/plain').status(200).send(config.musicFolder || 'Music');
+});
+
+qbitRouter.get('/torrents/categories', (req, res) => {
+  res.json(lidarr.getQbitCategories());
+});
+
+qbitRouter.post('/torrents/createCategory', (req, res) => {
+  const category = req.body?.category || req.query?.category;
+  const savePath = req.body?.savePath || req.query?.savePath || '';
+  if (category) {
+    lidarr.addQbitCategory(category, savePath);
+  }
+  res.type('text/plain').status(200).send('Ok.');
+});
+
+qbitRouter.post('/torrents/editCategory', (req, res) => {
+  const category = req.body?.category || req.query?.category;
+  const savePath = req.body?.savePath || req.query?.savePath || '';
+  if (category) {
+    lidarr.addQbitCategory(category, savePath);
+  }
+  res.type('text/plain').status(200).send('Ok.');
+});
+
+qbitRouter.post('/torrents/removeCategories', (req, res) => {
+  const categories = req.body?.categories || req.query?.categories;
+  if (categories) {
+    lidarr.removeQbitCategories(categories);
+  }
+  res.type('text/plain').status(200).send('Ok.');
+});
+
+qbitRouter.post('/torrents/setCategory', (req, res) => {
+  res.type('text/plain').status(200).send('Ok.');
+});
+
+qbitRouter.post('/torrents/setShareLimits', (req, res) => {
+  res.type('text/plain').status(200).send('Ok.');
+});
+
+qbitRouter.post('/torrents/topPrio', (req, res) => {
+  res.type('text/plain').status(200).send('Ok.');
+});
+
+qbitRouter.post('/torrents/setForceStart', (req, res) => {
+  res.type('text/plain').status(200).send('Ok.');
+});
+
+qbitRouter.get('/sync/maindata', (req, res) => {
+  res.json({
+    rid: 1,
+    full_update: true,
+    torrents: {},
+    categories: lidarr.getQbitCategories(),
+    server_state: {
+      connection_status: 'connected',
+      dlspeed: 0,
+      upspeed: 0,
+    },
   });
 });
 
@@ -129,54 +274,84 @@ qbitRouter.get('/torrents/info', (req, res) => {
 });
 
 qbitRouter.post('/torrents/add', async (req, res) => {
-  const rawUrls = req.body?.urls || req.query?.urls;
-  const category = req.body?.category || req.query?.category || 'music';
-  const savepath = req.body?.savepath || req.query?.savepath || null;
+  let fields = req.body || {};
+  let files = [];
 
-  if (!rawUrls) {
-    return res.status(200).send('Ok.');
+  if (req.headers['content-type']?.toLowerCase().includes('multipart/form-data')) {
+    try {
+      const parsed = await parseMultipartForm(req);
+      fields = { ...fields, ...parsed.fields };
+      files = parsed.files;
+    } catch (err) {
+      console.error('[lidarr:qbit] Error parsing multipart upload:', err.message);
+    }
   }
 
-  const urls = String(rawUrls).split(/[\r\n]+/).map((u) => u.trim()).filter(Boolean);
+  const rawUrls = fields.urls || req.query?.urls;
+  const category = fields.category || req.query?.category || 'music';
+  const savepath = fields.savepath || req.query?.savepath || null;
 
-  for (const urlStr of urls) {
+  // 1. Process files (if Lidarr uploaded .torrent files)
+  for (const file of files) {
     try {
-      const parsedUrl = new URL(urlStr, getHostUrl(req));
-      const type = parsedUrl.searchParams.get('type') || 'album';
-      const id = parsedUrl.searchParams.get('id');
-      const artist = parsedUrl.searchParams.get('artist');
-      const album = parsedUrl.searchParams.get('album');
-
-      if (id) {
+      const torrentInfo = lidarr.parseTorrentBuffer(file.buffer);
+      if (torrentInfo && torrentInfo.id) {
         await lidarr.handleDownloadAdd({
-          type,
-          id,
-          artist,
-          album,
+          type: torrentInfo.type || 'album',
+          id: torrentInfo.id,
+          artist: torrentInfo.artist,
+          album: torrentInfo.album,
           category,
           savePath: savepath,
         });
       }
     } catch (err) {
-      console.error('[lidarr:qbit] Failed to process torrent add url:', urlStr, err.message);
+      console.error('[lidarr:qbit] Failed to process uploaded torrent file:', file.filename, err.message);
     }
   }
 
-  res.status(200).send('Ok.');
+  // 2. Process URLs (if magnet link or URL was passed)
+  if (rawUrls) {
+    const urls = String(rawUrls).split(/[\r\n]+/).map((u) => u.trim()).filter(Boolean);
+    for (const urlStr of urls) {
+      try {
+        const parsedUrl = new URL(urlStr, getHostUrl(req));
+        const type = parsedUrl.searchParams.get('type') || 'album';
+        const id = parsedUrl.searchParams.get('id');
+        const artist = parsedUrl.searchParams.get('artist');
+        const album = parsedUrl.searchParams.get('album');
+
+        if (id) {
+          await lidarr.handleDownloadAdd({
+            type,
+            id,
+            artist,
+            album,
+            category,
+            savePath: savepath,
+          });
+        }
+      } catch (err) {
+        console.error('[lidarr:qbit] Failed to process torrent add url:', urlStr, err.message);
+      }
+    }
+  }
+
+  res.type('text/plain').status(200).send('Ok.');
 });
 
 qbitRouter.post('/torrents/delete', (req, res) => {
   const hashes = req.body?.hashes || req.query?.hashes;
   lidarr.deleteQbitTorrents(hashes);
-  res.status(200).send('Ok.');
+  res.type('text/plain').status(200).send('Ok.');
 });
 
 qbitRouter.post('/torrents/pause', (req, res) => {
-  res.status(200).send('Ok.');
+  res.type('text/plain').status(200).send('Ok.');
 });
 
 qbitRouter.post('/torrents/resume', (req, res) => {
-  res.status(200).send('Ok.');
+  res.type('text/plain').status(200).send('Ok.');
 });
 
 qbitRouter.get('/torrents/properties', (req, res) => {
@@ -193,8 +368,12 @@ qbitRouter.get('/torrents/files', (req, res) => {
   res.json([]);
 });
 
-// Mount qBittorrent endpoints at /qbit/api/v2 and /api/v2
+// Self-nest to support double prefix if client sends /api/v2/api/v2
+qbitRouter.use('/api/v2', qbitRouter);
+
+// Mount qBittorrent endpoints at /qbit/api/v2, /qbit, and /api/v2
 router.use('/qbit/api/v2', qbitRouter);
+router.use('/qbit', qbitRouter);
 router.use('/api/v2', qbitRouter);
 
 // -------------------------------------------------------------
@@ -380,4 +559,6 @@ router.post('/download-wanted', requireAuth, async (req, res) => {
   }
 });
 
+router.qbitRouter = qbitRouter;
 module.exports = router;
+

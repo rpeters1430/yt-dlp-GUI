@@ -149,7 +149,7 @@ function createApp({ watchRepository, watchService, checkAllWatches }) {
   app.use('/api/notifications', notificationsRoutes);
   app.use('/api/lidarr', lidarrRoutes);
   app.use('/api/torznab', lidarrRoutes);
-  app.use('/api/v2', lidarrRoutes);
+  app.use('/api/v2', lidarrRoutes.qbitRouter || lidarrRoutes);
 
   const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
   app.use(express.static(clientDist));

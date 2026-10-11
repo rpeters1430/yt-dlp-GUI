@@ -35,6 +35,81 @@ function bencode(val) {
   return Buffer.from('0:', 'ascii');
 }
 
+function bdecode(buf) {
+  let pos = 0;
+
+  function parseNext() {
+    if (pos >= buf.length) return null;
+    const byte = buf[pos];
+
+    if (byte === 0x69) { // 'i'
+      pos++;
+      const end = buf.indexOf(0x65, pos); // 'e'
+      if (end === -1) throw new Error('Unterminated integer');
+      const val = parseInt(buf.toString('ascii', pos, end), 10);
+      pos = end + 1;
+      return val;
+    }
+
+    if (byte === 0x6c) { // 'l'
+      pos++;
+      const list = [];
+      while (pos < buf.length && buf[pos] !== 0x65) {
+        list.push(parseNext());
+      }
+      pos++; // skip 'e'
+      return list;
+    }
+
+    if (byte === 0x64) { // 'd'
+      pos++;
+      const dict = {};
+      while (pos < buf.length && buf[pos] !== 0x65) {
+        const key = parseNext();
+        const keyStr = Buffer.isBuffer(key) ? key.toString('utf8') : String(key);
+        dict[keyStr] = parseNext();
+      }
+      pos++; // skip 'e'
+      return dict;
+    }
+
+    if (byte >= 0x30 && byte <= 0x39) { // '0' - '9'
+      const colon = buf.indexOf(0x3a, pos); // ':'
+      if (colon === -1) throw new Error('Invalid bencoded string length');
+      const len = parseInt(buf.toString('ascii', pos, colon), 10);
+      const start = colon + 1;
+      const end = start + len;
+      if (end > buf.length) throw new Error('Unexpected EOF reading string');
+      const slice = buf.subarray(start, end);
+      pos = end;
+      return slice;
+    }
+
+    throw new Error(`Unexpected character at ${pos}: ${String.fromCharCode(byte)}`);
+  }
+
+  return parseNext();
+}
+
+function parseTorrentBuffer(buf) {
+  try {
+    const decoded = bdecode(buf);
+    if (!decoded || !decoded.info) return null;
+    const info = decoded.info;
+    const getString = (val) => (Buffer.isBuffer(val) ? val.toString('utf8') : String(val || ''));
+    return {
+      name: getString(info.name),
+      id: getString(info.ytdlp_id),
+      type: getString(info.ytdlp_type) || 'album',
+      artist: getString(info.ytdlp_artist),
+      album: getString(info.ytdlp_album),
+    };
+  } catch (err) {
+    console.error('[lidarr:torrent] Error decoding torrent buffer:', err.message);
+    return null;
+  }
+}
+
 function escapeXml(unsafe) {
   if (unsafe == null) return '';
   return String(unsafe).replace(/[<>&'"]/g, (c) => {
@@ -72,6 +147,10 @@ function generateTorrentBuffer({ type, id, artist, album, title, sizeBytes, anno
     'piece length': pieceLength,
     pieces: piecesBuf,
     source: 'yt-dlp',
+    ytdlp_album: album || '',
+    ytdlp_artist: artist || '',
+    ytdlp_id: String(id),
+    ytdlp_type: type || 'album',
   };
 
   const torrentDict = {
@@ -718,8 +797,36 @@ async function notifyDownloadComplete(job, result) {
   }
 }
 
+const qbitCategories = {
+  music: { name: 'music', savePath: '' },
+};
+
+function getQbitCategories() {
+  const config = getLidarrConfig();
+  const cat = config.category || 'music';
+  if (!qbitCategories[cat]) {
+    qbitCategories[cat] = { name: cat, savePath: '' };
+  }
+  return { ...qbitCategories };
+}
+
+function addQbitCategory(category, savePath = '') {
+  if (!category) return;
+  qbitCategories[category] = { name: category, savePath: savePath || '' };
+}
+
+function removeQbitCategories(categories) {
+  if (!categories) return;
+  const list = String(categories).split(/\r?\n|\|/).map((c) => c.trim()).filter(Boolean);
+  for (const c of list) {
+    delete qbitCategories[c];
+  }
+}
+
 module.exports = {
   bencode,
+  bdecode,
+  parseTorrentBuffer,
   escapeXml,
   getDeterministicHash,
   generateTorrentBuffer,
@@ -731,6 +838,9 @@ module.exports = {
   handleDownloadAdd,
   getQbitTorrents,
   deleteQbitTorrents,
+  getQbitCategories,
+  addQbitCategory,
+  removeQbitCategories,
   getSabQueue,
   getSabHistory,
   testConnection,
@@ -739,3 +849,4 @@ module.exports = {
   getArtists,
   notifyDownloadComplete,
 };
+

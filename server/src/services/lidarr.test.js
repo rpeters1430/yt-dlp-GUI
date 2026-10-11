@@ -47,4 +47,33 @@ describe('lidarr service', () => {
     assert.equal(hash1.length, 40);
     assert.equal(hash1, hash2);
   });
+
+  it('bdecodes buffers and parses generated torrent metadata', () => {
+    const buf = lidarr.generateTorrentBuffer({
+      type: 'album',
+      id: 'album-987',
+      artist: 'Pink Floyd',
+      album: 'The Dark Side of the Moon',
+    });
+    const parsed = lidarr.parseTorrentBuffer(buf);
+    assert.ok(parsed);
+    assert.equal(parsed.id, 'album-987');
+    assert.equal(parsed.type, 'album');
+    assert.equal(parsed.artist, 'Pink Floyd');
+    assert.equal(parsed.album, 'The Dark Side of the Moon');
+  });
+
+  it('manages qBittorrent categories dynamically', () => {
+    const initial = lidarr.getQbitCategories();
+    assert.ok(initial.music);
+
+    lidarr.addQbitCategory('rock', '/music/rock');
+    const updated = lidarr.getQbitCategories();
+    assert.ok(updated.rock);
+    assert.equal(updated.rock.name, 'rock');
+
+    lidarr.removeQbitCategories('rock');
+    const afterDelete = lidarr.getQbitCategories();
+    assert.equal(afterDelete.rock, undefined);
+  });
 });

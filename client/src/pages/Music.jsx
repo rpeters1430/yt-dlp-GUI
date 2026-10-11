@@ -3070,7 +3070,7 @@ export default function MusicPage() {
                   </div>
 
                   <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 4 }}>
-                    Username/Password can be anything. Category: <code>music</code>
+                    Username & Password can be left blank (or dummy text). Category: <code>music</code>
                   </div>
                 </div>
               </div>
