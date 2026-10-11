@@ -63,7 +63,7 @@ export default function Twitch() {
   // Live recording options
   const [liveChannel, setLiveChannel] = useState('');
   const [waitForLive, setWaitForLive] = useState(false);
-  const [waitInterval, setWaitInterval] = useState(15);
+  const waitInterval = 15;
   const [quality, setQuality] = useState('');
   const [container, setContainer] = useState('mp4');
   const [hlsUseMpegts, setHlsUseMpegts] = useState(true);
@@ -91,7 +91,6 @@ export default function Twitch() {
   const [trimEnd, setTrimEnd] = useState('00:15:00');
   const [trimQuality, setTrimQuality] = useState('');
   const [trimContainer, setTrimContainer] = useState('mp4');
-  const [trimSubmitting, setTrimSubmitting] = useState(false);
 
   // Twitch Settings (OAuth token & Client ID). The server never sends the real token back —
   // only whether one's configured and a masked hint — so authToken here only ever holds a

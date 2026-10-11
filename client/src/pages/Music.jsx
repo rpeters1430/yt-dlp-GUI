@@ -113,7 +113,8 @@ export default function MusicPage() {
 
   // Selected album details
   const [selectedAlbum, setSelectedAlbum] = useState(null);
-  const [albumLoading, setAlbumLoading] = useState(false);
+  // Id of the album whose tracklist is being fetched, so its card can show it's working.
+  const [loadingAlbumId, setLoadingAlbumId] = useState(null);
   const [selectedTracks, setSelectedTracks] = useState(new Set());
   const [downloadingAlbum, setDownloadingAlbum] = useState(false);
   const [downloadingAlbumId, setDownloadingAlbumId] = useState(null);
@@ -315,6 +316,9 @@ export default function MusicPage() {
         if (checkingAlbum && !cancelled) setJellyfinCheckingAlbum(false);
       });
     return () => { cancelled = true; };
+    // libraryAlbums/libraryTracks are only read to skip already-checked items; this effect
+    // writes them, so depending on them would re-run it after every answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jellyfinStatus, searchType, searchResults, matchedArtist, selectedArtist, selectedAlbum]);
 
   async function handleTriggerJellyfinScan() {
@@ -347,7 +351,7 @@ export default function MusicPage() {
     if (!availableQualities.some((q) => q.value === downloadQuality)) {
       setDownloadQuality(availableQualities[0]?.value || '320k');
     }
-  }, [downloadFormat]);
+  }, [availableQualities, downloadQuality]);
 
   // Load music watches when tab opens
   useEffect(() => {
@@ -463,7 +467,7 @@ export default function MusicPage() {
   // Sorted releases for dedicated artist discography view
   function getSortedArtistReleases() {
     if (!selectedArtist) return [];
-    let list = [];
+    let list;
     if (artistTab === 'albums') list = selectedArtist.albums || [];
     else if (artistTab === 'singles') list = selectedArtist.singles || [];
     else list = selectedArtist.all || [];
@@ -531,6 +535,7 @@ export default function MusicPage() {
   // Shared release card renderer
   function renderReleaseCard(item) {
     const isDownloadingThis = downloadingAlbumId === item.id;
+    const isLoadingThis = loadingAlbumId === item.id;
     const libraryStatus = libraryAlbums[item.id];
     return (
       <div
@@ -538,10 +543,12 @@ export default function MusicPage() {
         className="card music-release-card"
         style={{
           padding: 12,
-          cursor: 'pointer',
+          cursor: isLoadingThis ? 'progress' : 'pointer',
+          opacity: isLoadingThis ? 0.6 : 1,
           display: 'flex',
           flexDirection: 'column',
         }}
+        aria-busy={isLoadingThis}
         onClick={() => handleSelectAlbum(item)}
       >
         <div style={{ position: 'relative', width: '100%', aspectRatio: '1/1', borderRadius: 8, overflow: 'hidden', backgroundColor: 'var(--surface-hover)', marginBottom: 10 }}>
@@ -611,8 +618,9 @@ export default function MusicPage() {
                 handleSelectAlbum(item);
               }}
               title="View tracklist & customize download"
+              disabled={isLoadingThis}
             >
-              Tracks
+              {isLoadingThis ? 'Loading…' : 'Tracks'}
             </button>
             <button
               type="button"
@@ -639,7 +647,8 @@ export default function MusicPage() {
 
   // View album details
   async function handleSelectAlbum(album) {
-    setAlbumLoading(true);
+    if (loadingAlbumId) return;
+    setLoadingAlbumId(album.id);
     setAlbumDownloadMessage(null);
     try {
       const data = await api.getMusicAlbum(album.id);
@@ -653,7 +662,7 @@ export default function MusicPage() {
     } catch (err) {
       showToast(`Could not load album details: ${err.message}`, 'error');
     } finally {
-      setAlbumLoading(false);
+      setLoadingAlbumId(null);
     }
   }
 

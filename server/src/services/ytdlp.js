@@ -325,8 +325,8 @@ function assertPublicUrl(url) {
   let parsed;
   try {
     parsed = new URL(url);
-  } catch (_) {
-    throw new Error('Invalid URL');
+  } catch (err) {
+    throw new Error('Invalid URL', { cause: err });
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error(`Unsupported URL scheme: ${parsed.protocol}`);
@@ -550,7 +550,7 @@ function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, play
 
 // Progress-template gives us a stable, parseable line for every progress tick instead of
 // scraping the human-readable percentage string, which varies by yt-dlp version/locale.
-const PROGRESS_TEMPLATE = 'YTDLP_PROGRESS %(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s';
+const PROGRESS_TEMPLATE = 'download:YTDLP_PROGRESS %(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s';
 
 // User-facing quality caps ("4K", "1080p", ...) map to a max height. yt-dlp's `<=` selector
 // plus the `/best[height<=N]` fallback means asking for 4K on a 1080p-only video just gets
@@ -827,7 +827,7 @@ function buildDownloadArgs(url, rawOptions = {}) {
     '--newline',
     '--progress',
     ...commonArgs(),
-    '--progress-template', 'download:YTDLP_PROGRESS %(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s',
+    '--progress-template', PROGRESS_TEMPLATE,
     '--progress-template', 'postprocess:YTDLP_POSTPROCESS %(progress._percent_str)s',
     '-o', targetOutput,
     '--print', 'after_move:FILEPATH %(filepath)s',
@@ -1235,13 +1235,6 @@ function download(url, options = {}, onProgress, onLog) {
     const isMultiFormat = !options.audioOnly && (!options.formatSelector || options.formatSelector.includes('+'));
     let currentPass = 1;
     let highestPassPercent = 0;
-    // Previously assigned without a declaration, which made these accidental globals shared
-    // across every concurrent download() call (a race under MAX_CONCURRENT_DOWNLOADS > 1) and
-    // risked a ReferenceError if a "[download] Destination:" line arrived before any
-    // "Downloading N format(s):" line had ever been seen process-wide.
-    let totalFormats = 1;
-    let formatIndex = 0;
-    let currentStage = null;
     let postprocessSample = null;
 
     function estimatePostprocessEta(percent) {
@@ -1341,15 +1334,6 @@ function download(url, options = {}, onProgress, onLog) {
           continue;
         }
 
-        // Detect number of formats to download, e.g. "Downloading 1 format(s): 395+251"
-        const formatMatch = trimmed.match(/Downloading \d+ format\(s\):\s*([^\s]+)/i);
-        if (formatMatch && formatMatch[1]) {
-          const formats = formatMatch[1].split('+');
-          totalFormats = formats.length;
-          formatIndex = 0;
-          currentStage = totalFormats > 1 ? 'Downloading video…' : 'Downloading…';
-        }
-
         if (trimmed.startsWith('FILEPATH ')) {
           filepath = trimmed.replace('FILEPATH ', '').trim();
           finalFilepath = filepath;
@@ -1359,19 +1343,13 @@ function download(url, options = {}, onProgress, onLog) {
         }
 
         if (trimmed.includes('[download] Destination: ')) {
-          formatIndex++;
           const dest = trimmed.split('[download] Destination: ')[1]?.trim();
           if (dest) filepath = dest.replace(/\.part$/, '');
-          if (totalFormats > 1) {
-            currentStage = formatIndex <= 1 ? 'Downloading video…' : 'Downloading audio…';
-          }
         }
 
         if (trimmed.includes('[Merger] Merging formats')) {
-          currentStage = 'Merging formats…';
           reportProgress(99, null, null, 'Merging formats…', true);
         } else if (trimmed.includes('[ExtractAudio]')) {
-          currentStage = 'Extracting audio…';
           reportProgress(99, null, null, 'Extracting audio…', true);
         } else if (
           trimmed.includes('[SponsorBlock]') &&
@@ -1379,7 +1357,6 @@ function download(url, options = {}, onProgress, onLog) {
           !trimmed.includes('unavailable') &&
           !trimmed.includes('SponsorBlock is not')
         ) {
-          currentStage = 'Applying SponsorBlock…';
           reportProgress(99, null, null, 'Applying SponsorBlock…', true);
         }
 

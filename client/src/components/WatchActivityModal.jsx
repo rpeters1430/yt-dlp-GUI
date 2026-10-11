@@ -321,10 +321,11 @@ function DownloadsTab({ watch }) {
 export default function WatchActivityModal({ open, onClose, watch, onChanged, initialTab = 'items' }) {
   const containerRef = useModalA11y(open, onClose);
   const [tab, setTab] = useState(initialTab);
+  const watchId = watch && watch.id;
 
   useEffect(() => {
     if (open) setTab(initialTab);
-  }, [open, initialTab, watch && watch.id]);
+  }, [open, initialTab, watchId]);
 
   if (!open || !watch) return null;
 

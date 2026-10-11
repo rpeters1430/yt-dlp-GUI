@@ -236,6 +236,8 @@ export default function WatchModal({
       setInspectData(null);
     }
     if (!watch && initialUrl) handleInspect(initialUrl, { fillName: true });
+    // Bumping the live counter (not a copy) is the point: it invalidates any inspect still in flight.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => { inspectSeq.current++; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, watch]);

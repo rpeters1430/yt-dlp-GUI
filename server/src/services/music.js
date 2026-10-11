@@ -14,7 +14,7 @@ const db = require('../db');
 function sanitizeFilename(name) {
   if (!name) return 'Unknown';
   const cleaned = String(name)
-    .replace(/[\/\\:*?"<>|]/g, '_')
+    .replace(/[/\\:*?"<>|]/g, '_')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 120);
@@ -619,7 +619,7 @@ async function enqueueMusicDownload({
   saveCover = true,
 }) {
   let youtubeUrl = track.youtubeUrl;
-  let matchedInfo = null;
+  let matchedInfo;
 
   if (!youtubeUrl) {
     matchedInfo = await matchTrackToYouTube(track);

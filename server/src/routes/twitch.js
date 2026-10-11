@@ -37,7 +37,7 @@ router.get('/channel/:channel', async (req, res) => {
   if (!channel) return res.status(400).json({ error: 'Channel name is required' });
 
   const channelUrl = `https://www.twitch.tv/${channel}`;
-  let live = false;
+  let live;
   let streamInfo = null;
 
   try {
@@ -64,7 +64,7 @@ router.get('/channel/:channel', async (req, res) => {
   }
 
   // Fetch recent VODs
-  let vods = [];
+  let vods;
   try {
     const vodsPlaylist = await ytdlp.getInfo(`https://www.twitch.tv/${channel}/videos`, { flatPlaylist: true });
     vods = (vodsPlaylist.entries || []).slice(0, 24).map((v) => {

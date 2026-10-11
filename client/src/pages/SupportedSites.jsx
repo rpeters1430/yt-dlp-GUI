@@ -350,6 +350,13 @@ export default function SupportedSites() {
               </tr>
             </thead>
             <tbody>
+              {filteredSites.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="muted small">
+                    {loadingGuide ? 'Loading site guide…' : 'Could not load the site guide.'}
+                  </td>
+                </tr>
+              )}
               {filteredSites.map((site) => (
                 <tr key={site.id}>
                   <td>
