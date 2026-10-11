@@ -1,19 +1,21 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Menu, Download } from 'lucide-react';
 import { api, setUnauthorizedHandler } from './api.js';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
-import History from './pages/History.jsx';
-import Library from './pages/Library.jsx';
-import Watches from './pages/Watches.jsx';
-import Settings from './pages/Settings.jsx';
-import Twitch from './pages/Twitch.jsx';
-import Music from './pages/Music.jsx';
-import SupportedSites from './pages/SupportedSites.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import QueueStatusWidget from './components/QueueStatusWidget.jsx';
 import { DownloadsProvider } from './context/DownloadsContext.jsx';
+
+// The dashboard ships in the main bundle; every other page loads when first opened.
+const History = lazy(() => import('./pages/History.jsx'));
+const Library = lazy(() => import('./pages/Library.jsx'));
+const Watches = lazy(() => import('./pages/Watches.jsx'));
+const Settings = lazy(() => import('./pages/Settings.jsx'));
+const Twitch = lazy(() => import('./pages/Twitch.jsx'));
+const Music = lazy(() => import('./pages/Music.jsx'));
+const SupportedSites = lazy(() => import('./pages/SupportedSites.jsx'));
 
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined = loading, null = logged out
@@ -91,18 +93,20 @@ export default function App() {
           </div>
 
           <main className="content">
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/music" element={<Music />} />
-              <Route path="/twitch" element={<Twitch />} />
-              <Route path="/library" element={<Library />} />
-              <Route path="/history" element={<History />} />
-              <Route path="/watches" element={<Watches />} />
-              <Route path="/sites" element={<SupportedSites />} />
-              <Route path="/supported-sites" element={<SupportedSites />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
+            <Suspense fallback={<div className="empty-state"><div className="spinner" /></div>}>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/music" element={<Music />} />
+                <Route path="/twitch" element={<Twitch />} />
+                <Route path="/library" element={<Library />} />
+                <Route path="/history" element={<History />} />
+                <Route path="/watches" element={<Watches />} />
+                <Route path="/sites" element={<SupportedSites />} />
+                <Route path="/supported-sites" element={<SupportedSites />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </Suspense>
           </main>
         </div>
       </div>
