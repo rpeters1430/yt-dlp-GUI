@@ -76,4 +76,13 @@ describe('lidarr service', () => {
     const afterDelete = lidarr.getQbitCategories();
     assert.equal(afterDelete.rock, undefined);
   });
+
+  it('normalizes musicFolder to absolute Linux paths for Alpine/Docker compatibility', () => {
+    assert.ok(lidarr.normalizeMusicFolder('Music').startsWith('/'));
+    assert.ok(lidarr.normalizeMusicFolder('Music').endsWith('/Music'));
+    assert.equal(lidarr.normalizeMusicFolder('/custom/music'), '/custom/music');
+    assert.ok(lidarr.normalizeMusicFolder('C:\\Music').startsWith('/'));
+    assert.ok(lidarr.normalizeMusicFolder('').startsWith('/'));
+  });
 });
+

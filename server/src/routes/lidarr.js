@@ -192,9 +192,10 @@ qbitRouter.get('/app/buildInfo', (req, res) => {
 
 qbitRouter.get('/app/preferences', (req, res) => {
   const config = lidarr.getLidarrConfig();
+  const savePath = lidarr.normalizeMusicFolder(config.musicFolder).replace(/\\/g, '/');
   res.json({
-    save_path: config.musicFolder || 'Music',
-    temp_path: config.musicFolder || 'Music',
+    save_path: savePath,
+    temp_path: savePath,
     queueing_enabled: true,
     max_ratio_enabled: false,
     max_seeding_time_enabled: false,
@@ -204,7 +205,7 @@ qbitRouter.get('/app/preferences', (req, res) => {
 
 qbitRouter.get('/app/defaultSavePath', (req, res) => {
   const config = lidarr.getLidarrConfig();
-  res.type('text/plain').status(200).send(config.musicFolder || 'Music');
+  res.type('text/plain').status(200).send(lidarr.normalizeMusicFolder(config.musicFolder).replace(/\\/g, '/'));
 });
 
 qbitRouter.get('/torrents/categories', (req, res) => {
@@ -357,7 +358,7 @@ qbitRouter.post('/torrents/resume', (req, res) => {
 qbitRouter.get('/torrents/properties', (req, res) => {
   const config = lidarr.getLidarrConfig();
   res.json({
-    save_path: config.musicFolder || 'Music',
+    save_path: lidarr.normalizeMusicFolder(config.musicFolder).replace(/\\/g, '/'),
     total_size: 50 * 1024 * 1024,
     pieces_num: 200,
     piece_size: 262144,
@@ -397,7 +398,7 @@ async function handleSabRequest(req, res) {
     return res.json({
       config: {
         misc: {
-          complete_dir: config.musicFolder || 'Music',
+          complete_dir: lidarr.normalizeMusicFolder(config.musicFolder).replace(/\\/g, '/'),
         },
       },
     });

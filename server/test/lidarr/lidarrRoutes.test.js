@@ -78,6 +78,7 @@ test('Mock qBittorrent Web API handles auth, version, and torrents/info', async 
   assert.equal(prefRes.status, 200);
   const pref = await prefRes.json();
   assert.ok(pref.save_path);
+  assert.ok(pref.save_path.startsWith('/'));
   assert.equal(pref.queueing_enabled, true);
 
   const catRes = await fetch(`${base}/api/lidarr/qbit/api/v2/torrents/categories`);

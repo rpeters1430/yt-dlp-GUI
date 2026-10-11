@@ -163,6 +163,23 @@ function generateTorrentBuffer({ type, id, artist, album, title, sizeBytes, anno
   return bencode(torrentDict);
 }
 
+function normalizeMusicFolder(folder) {
+  const downloadDir = (process.env.DOWNLOAD_DIR || ytdlp.DOWNLOAD_DIR || '/downloads').replace(/\\/g, '/');
+  const basePrefix = downloadDir.startsWith('/') ? downloadDir : '/downloads';
+
+  if (!folder || folder === 'Music') {
+    return `${basePrefix.replace(/\/+$/, '')}/Music`;
+  }
+
+  const str = String(folder).trim().replace(/\\/g, '/');
+  if (str.startsWith('/')) {
+    return str;
+  }
+
+  const clean = str.replace(/^[a-zA-Z]:[/\\]*/, '').replace(/^\/+/, '');
+  return `${basePrefix.replace(/\/+$/, '')}/${clean || 'Music'}`;
+}
+
 function getLidarrConfig() {
   const keys = [
     'lidarr_enabled',
@@ -191,7 +208,7 @@ function getLidarrConfig() {
     apiKey: map.lidarr_api_key || '',
     torznabApiKey,
     autoNotify: map.lidarr_auto_notify !== '0',
-    musicFolder: map.lidarr_music_folder || 'Music',
+    musicFolder: normalizeMusicFolder(map.lidarr_music_folder),
     category: map.lidarr_category || 'music',
     format: map.lidarr_format || 'mp3',
     quality: map.lidarr_quality || '320k',
@@ -209,7 +226,7 @@ function updateLidarrConfig(updates = {}) {
   if (updates.apiKey !== undefined) upsert.run('lidarr_api_key', String(updates.apiKey).trim());
   if (updates.torznabApiKey !== undefined) upsert.run('lidarr_torznab_api_key', String(updates.torznabApiKey).trim());
   if (updates.autoNotify !== undefined) upsert.run('lidarr_auto_notify', updates.autoNotify ? '1' : '0');
-  if (updates.musicFolder !== undefined) upsert.run('lidarr_music_folder', String(updates.musicFolder).trim() || 'Music');
+  if (updates.musicFolder !== undefined) upsert.run('lidarr_music_folder', normalizeMusicFolder(updates.musicFolder));
   if (updates.category !== undefined) upsert.run('lidarr_category', String(updates.category).trim() || 'music');
   if (updates.format !== undefined) upsert.run('lidarr_format', String(updates.format).trim() || 'mp3');
   if (updates.quality !== undefined) upsert.run('lidarr_quality', String(updates.quality).trim() || '320k');
@@ -600,8 +617,8 @@ function getQbitTorrents({ category, hashes } = {}) {
       category: task.category || 'music',
       super_seeding: false,
       force_start: false,
-      save_path: task.save_path,
-      content_path: task.content_path,
+      save_path: normalizeMusicFolder(task.save_path).replace(/\\/g, '/'),
+      content_path: normalizeMusicFolder(task.content_path).replace(/\\/g, '/'),
       added_on: addedOn,
       completion_on: completionOn,
       amount_left: amountLeft,
@@ -804,15 +821,20 @@ const qbitCategories = {
 function getQbitCategories() {
   const config = getLidarrConfig();
   const cat = config.category || 'music';
+  const defaultPath = normalizeMusicFolder(config.musicFolder).replace(/\\/g, '/');
   if (!qbitCategories[cat]) {
-    qbitCategories[cat] = { name: cat, savePath: '' };
+    qbitCategories[cat] = { name: cat, savePath: defaultPath };
+  } else if (!qbitCategories[cat].savePath) {
+    qbitCategories[cat].savePath = defaultPath;
   }
   return { ...qbitCategories };
 }
 
 function addQbitCategory(category, savePath = '') {
   if (!category) return;
-  qbitCategories[category] = { name: category, savePath: savePath || '' };
+  const config = getLidarrConfig();
+  const resolved = savePath ? normalizeMusicFolder(savePath).replace(/\\/g, '/') : normalizeMusicFolder(config.musicFolder).replace(/\\/g, '/');
+  qbitCategories[category] = { name: category, savePath: resolved };
 }
 
 function removeQbitCategories(categories) {
@@ -832,6 +854,7 @@ module.exports = {
   generateTorrentBuffer,
   getLidarrConfig,
   updateLidarrConfig,
+  normalizeMusicFolder,
   validateTorznabApiKey,
   getCapsXml,
   searchTorznab,
@@ -849,4 +872,5 @@ module.exports = {
   getArtists,
   notifyDownloadComplete,
 };
+
 

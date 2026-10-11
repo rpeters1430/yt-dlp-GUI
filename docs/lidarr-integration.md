@@ -63,8 +63,20 @@ In the app, open the **Music** page and click the **Lidarr** tab. Your unique To
    - **URL Base**: `/api/lidarr/qbit`
    - **Username / Password**: Can be left blank or filled with any placeholder text.
    - **Category**: `music`
-4. Ensure **Completed Download Handling** is enabled.
-5. Click **Test** and then **Save**.
+6. Ensure **Completed Download Handling** is enabled.
+7. Click **Test** and then **Save**.
+
+### Remote Path Mappings (Docker / Alpine)
+
+The download client reports the download save path as an absolute Linux path (`/downloads/Music`), satisfying Linux and Alpine container path validation. If your Lidarr container has the shared download volume mounted at a different mount point (e.g. `/music` or `/data/downloads`), configure a Remote Path Mapping in Lidarr:
+
+1. In Lidarr, navigate to **Settings → Download Clients**.
+2. Scroll down to **Remote Path Mappings** and click **+** (Add).
+3. Set:
+   - **Host**: `<your-server-ip>` (e.g. `192.168.50.114`, matching the Host entered in your Download Client)
+   - **Remote Path**: `/downloads/Music`
+   - **Local Path**: The path inside Lidarr's container where the downloaded music files appear (e.g. `/music` or `/data/downloads`)
+4. Click **Save**.
 
 *(Optional: If you prefer SABnzbd, choose SABnzbd in Lidarr, set Host and Port to your server, URL Base to `/api/lidarr/sab`, and API Key to your Torznab API Key).*
 
