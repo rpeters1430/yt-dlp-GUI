@@ -3138,6 +3138,23 @@ export default function MusicPage() {
                       onChange={(e) => setLidarrConfig({ ...lidarrConfig, apiKey: e.target.value })}
                     />
                   </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: 6 }}>
+                      Download Path (Reported to Lidarr)
+                    </label>
+                    <input
+                      type="text"
+                      className="input"
+                      style={{ width: '100%', fontSize: '0.9rem' }}
+                      placeholder="/downloads/Music"
+                      value={lidarrConfig.musicFolder}
+                      onChange={(e) => setLidarrConfig({ ...lidarrConfig, musicFolder: e.target.value })}
+                    />
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 4 }}>
+                      The directory reported to Lidarr (e.g. <code>/downloads/Music</code> or <code>/volume1/Downloads/Music</code>).
+                    </div>
+                  </div>
                 </div>
 
                 <div>
