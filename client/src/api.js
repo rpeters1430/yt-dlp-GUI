@@ -33,6 +33,9 @@ export const api = {
   getInfo: (url) => request('/downloads/info', { method: 'POST', body: JSON.stringify({ url }) }),
   enqueue: (payload) => request('/downloads', { method: 'POST', body: JSON.stringify(payload) }),
   listDownloads: () => request('/downloads'),
+  searchDownloads: ({ status = 'all', q = '', limit = 50, offset = 0 } = {}) =>
+    request(`/downloads/history?${new URLSearchParams({ status, q, limit: String(limit), offset: String(offset) })}`),
+  getDownloadStats: () => request('/downloads/stats'),
   getDownloadLog: (id) => request(`/downloads/${id}/log`),
   deleteDownload: (id) => request(`/downloads/${id}`, { method: 'DELETE' }),
   stopDownload: (id) => request(`/downloads/${id}/stop`, { method: 'POST' }),

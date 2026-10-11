@@ -4048,3 +4048,12 @@ button.watch-activity-tab-btn.active { color: var(--accent); border-bottom-color
   min-width: 0;
 }
 
+
+.history-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 4px 0;
+}

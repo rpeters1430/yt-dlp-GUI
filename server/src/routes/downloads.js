@@ -211,8 +211,20 @@ router.post('/:id/stop', (req, res) => {
   res.json({ ok: true, stopped });
 });
 
+// Active jobs plus the newest `limit` finished ones (default 200); `?active=1` for active only.
 router.get('/', (req, res) => {
-  res.json(queue.listJobs());
+  const activeOnly = req.query.active === '1' || req.query.active === 'true';
+  res.json(queue.listJobs({ limit: req.query.limit, activeOnly }));
+});
+
+// Paged search over the whole history: ?status=failed&q=text&limit=50&offset=0 -> { jobs, total }
+router.get('/history', (req, res) => {
+  const { status, q, limit, offset } = req.query;
+  res.json(queue.searchJobs({ status, q, limit, offset }));
+});
+
+router.get('/stats', (req, res) => {
+  res.json(queue.getStatusCounts());
 });
 
 router.get('/:id/log', (req, res) => {
@@ -222,6 +234,7 @@ router.get('/:id/log', (req, res) => {
 });
 
 router.delete('/:id', (req, res) => {
+  // Idempotent: removing a row that's already gone (e.g. from another tab) is still ok.
   queue.removeJob(req.params.id);
   res.json({ ok: true });
 });

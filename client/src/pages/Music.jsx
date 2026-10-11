@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Music,
@@ -37,6 +37,14 @@ import { api } from '../api.js';
 import { useDownloads } from '../context/DownloadsContext.jsx';
 
 // Key for looking up a song in the Jellyfin library check results.
+function parseJobOptions(json) {
+  try {
+    return (json && JSON.parse(json)) || {};
+  } catch (_) {
+    return {};
+  }
+}
+
 function libraryTrackKey(t) {
   return `${t.artist || ''}|${t.title || ''}`;
 }
@@ -149,9 +157,11 @@ export default function MusicPage() {
   const [addingWatch, setAddingWatch] = useState(false);
 
   // Live downloads from context
-  const { jobs } = useDownloads() || { jobs: [] };
-  const activeMusicJobs = (jobs || []).filter(
-    (j) => (j.status === 'queued' || j.status === 'downloading') && (j.optionsJson?.isMusicDownload || j.optionsJson?.audioOnly || j.audio_only)
+  const { jobs: rawJobs } = useDownloads() || { jobs: [] };
+  // Rows carry their extra options as a JSON string column (options_json).
+  const jobs = useMemo(() => (rawJobs || []).map((j) => ({ ...j, options: parseJobOptions(j.options_json) })), [rawJobs]);
+  const activeMusicJobs = jobs.filter(
+    (j) => (j.status === 'queued' || j.status === 'downloading') && (j.options.isMusicDownload || j.options.audioOnly || j.audio_only)
   );
 
   // Match inspection modal state
@@ -184,7 +194,7 @@ export default function MusicPage() {
     if (!trackTitle || !jobs) return null;
     const titLower = trackTitle.toLowerCase().trim();
     return jobs.find((j) => {
-      const metaTitle = j.optionsJson?.musicMetadata?.title;
+      const metaTitle = j.options.musicMetadata?.title;
       if (metaTitle && metaTitle.toLowerCase().trim() === titLower) return true;
       if (j.title && j.title.toLowerCase().includes(titLower)) return true;
       return false;

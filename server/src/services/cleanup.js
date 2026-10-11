@@ -151,8 +151,8 @@ async function computeCleanupPlan() {
 
 function emitJobUpdate(id) {
   if (!io) return;
-  const job = db.prepare('SELECT * FROM downloads WHERE id = ?').get(id);
-  if (job) io.emit('job:update', job);
+  // Required lazily: queue.js pulls in the whole download pipeline.
+  require('./queue').announceJob(id);
 }
 
 const SUBTITLE_EXTS = new Set(['.vtt', '.srt', '.ass', '.ssa', '.lrc']);

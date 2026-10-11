@@ -181,6 +181,7 @@ CREATE INDEX IF NOT EXISTS idx_watch_items_state ON watch_items (watch_id, downl
 CREATE INDEX IF NOT EXISTS idx_watch_runs_watch ON watch_runs (watch_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_downloads_watch_item ON downloads (watch_item_id);
 CREATE INDEX IF NOT EXISTS idx_downloads_created ON downloads (created_at);
+CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads (status, created_at);
 `);
 
 // The channel tab a watch item was found on (NULL for playlists and older items), so a tab

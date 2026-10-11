@@ -8,7 +8,8 @@
     "start": "node src/index.js",
     "dev": "node src/index.js",
     "test": "node --test",
-    "lint": "eslint . --max-warnings 0"
+    "lint": "eslint . --max-warnings 0",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-exclude='test/**' --test-coverage-exclude='**/*.test.js'"
   },
   "dependencies": {
     "bcryptjs": "^3.0.0",

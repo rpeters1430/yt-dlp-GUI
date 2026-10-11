@@ -47,22 +47,17 @@ function init(socketIo) {
   processNext();
 }
 
-function emit(job) {
-  // A job removed from the list mid-run has no row left to report.
-  if (io && job) io.emit('job:update', job);
-}
-
 function getJob(id) {
   return db.prepare('SELECT * FROM downloads WHERE id = ?').get(id);
 }
 
-// The job list skips each row's yt-dlp log and command line: across a long history those
-// add up to megabytes, which stalled the dashboard's first load. getJobLog fetches them
-// for a single job when its log panel is opened.
+// Job lists and socket updates skip each row's yt-dlp log and command line: across a long
+// history those add up to megabytes, and a progress tick fires several times a second.
+// getJobLog fetches them for a single job when its log panel is opened.
 const LIST_EXCLUDED_COLUMNS = new Set(['log', 'command_args']);
 let listColumnsSql = null;
 
-function listJobs() {
+function listColumns() {
   if (!listColumnsSql) {
     listColumnsSql = db.prepare('PRAGMA table_info(downloads)').all()
       .map((c) => c.name)
@@ -70,7 +65,83 @@ function listJobs() {
       .map((name) => `"${name}"`)
       .join(', ');
   }
-  return db.prepare(`SELECT ${listColumnsSql} FROM downloads ORDER BY created_at DESC`).all();
+  return listColumnsSql;
+}
+
+function getJobSummary(id) {
+  return db.prepare(`SELECT ${listColumns()} FROM downloads WHERE id = ?`).get(id);
+}
+
+const ACTIVE_STATUSES_SQL = "('queued', 'downloading')";
+const DEFAULT_LIST_LIMIT = 200;
+const MAX_LIST_LIMIT = 1000;
+
+function clampLimit(limit, fallback) {
+  const n = parseInt(limit, 10);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(n, MAX_LIST_LIMIT);
+}
+
+// Every queued/downloading job plus the newest `limit` finished ones, newest first. The full
+// history can run to thousands of rows, and this list goes to every client on connect.
+function listJobs({ limit, activeOnly = false } = {}) {
+  const cols = listColumns();
+  const active = db.prepare(`SELECT ${cols} FROM downloads WHERE status IN ${ACTIVE_STATUSES_SQL}`).all();
+  if (activeOnly) return active.sort(byNewest);
+  const finished = db.prepare(`
+    SELECT ${cols} FROM downloads WHERE status NOT IN ${ACTIVE_STATUSES_SQL}
+    ORDER BY created_at DESC, rowid DESC LIMIT ?
+  `).all(clampLimit(limit, DEFAULT_LIST_LIMIT));
+  return active.concat(finished).sort(byNewest);
+}
+
+function byNewest(a, b) {
+  return a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0;
+}
+
+// Paged, filtered view of the whole history for the History page.
+function searchJobs({ status, q, limit, offset } = {}) {
+  const where = [];
+  const params = [];
+  if (status && status !== 'all') {
+    where.push('status = ?');
+    params.push(String(status));
+  }
+  const term = String(q || '').trim().toLowerCase();
+  if (term) {
+    // instr() rather than LIKE, so a search for "%" or "_" is taken literally.
+    where.push("(instr(lower(coalesce(title, url, '')), ?) > 0 OR instr(lower(coalesce(extractor, '')), ?) > 0)");
+    params.push(term, term);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const pageSize = clampLimit(limit, 50);
+  const skip = Math.max(0, parseInt(offset, 10) || 0);
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM downloads ${whereSql}`).get(...params).c;
+  const jobs = db.prepare(`
+    SELECT ${listColumns()} FROM downloads ${whereSql}
+    ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?
+  `).all(...params, pageSize, skip);
+  return { jobs, total };
+}
+
+// Count of jobs per status across the whole history, for the dashboard's stat cards.
+function getStatusCounts() {
+  const counts = { queued: 0, downloading: 0, completed: 0, failed: 0 };
+  for (const row of db.prepare('SELECT status, COUNT(*) AS c FROM downloads GROUP BY status').all()) {
+    counts[row.status] = row.c;
+  }
+  return counts;
+}
+
+function emitCounts() {
+  if (io) io.emit('jobs:counts', getStatusCounts());
+}
+
+// `extra` carries log/command_args on the updates that changed them; clients keep the
+// last copy they got, so every other update can leave them out.
+function emit(job, extra) {
+  // A job removed from the list mid-run has no row left to report.
+  if (io && job) io.emit('job:update', extra ? { ...job, ...extra } : job);
 }
 
 function getJobLog(id) {
@@ -119,11 +190,12 @@ function createQueuedJob(url, options = {}) {
 
 function startQueuedJobs(ids) {
   for (const id of ids) {
-    const job = getJob(id);
+    const job = getJobSummary(id);
     if (!job) continue;
     console.log(`[queue] [job:${id}] Enqueued download for: ${job.url}`);
     emit(job);
   }
+  if (ids.length) emitCounts();
   processNext();
 }
 
@@ -154,18 +226,18 @@ function updateJob(id, fields) {
   const setClause = keys.map((k) => `${k} = ?`).join(', ');
   db.prepare(`UPDATE downloads SET ${setClause}, updated_at = datetime('now') WHERE id = ?`)
     .run(...keys.map((k) => fields[k]), id);
-  const job = getJob(id);
-  emit(job);
-  if (fields.status) notifyWatchItem(job);
-}
-
-function isWaitForLiveJob(job) {
-  try {
-    return !!JSON.parse(job.options_json || '{}').waitForLive;
-  } catch (_) {
-    return false;
+  const job = getJobSummary(id);
+  const extra = {};
+  for (const k of LIST_EXCLUDED_COLUMNS) if (k in fields) extra[k] = fields[k];
+  emit(job, Object.keys(extra).length ? extra : null);
+  if (fields.status) {
+    notifyWatchItem(job);
+    emitCounts();
   }
 }
+
+// waitForLive lives in options_json; CASE keeps json_extract from ever seeing invalid JSON.
+const WAIT_FOR_LIVE_SQL = "(CASE WHEN json_valid(options_json) THEN json_extract(options_json, '$.waitForLive') END) = 1";
 
 // runJob marks the row 'downloading' synchronously before its first await, so a job can't be
 // picked up twice by overlapping processNext() calls.
@@ -178,16 +250,20 @@ function startJob(job, usesSlot) {
 }
 
 function processNext() {
-  const queued = db.prepare("SELECT * FROM downloads WHERE status = 'queued' ORDER BY created_at ASC").all();
-  for (const job of queued) {
-    // A job waiting for a scheduled broadcast can sit idle for hours or days, and must be
-    // running when the stream starts — so it never waits for (or holds) a download slot.
-    if (isWaitForLiveJob(job)) {
-      startJob(job, false);
-    } else if (activeCount < MAX_CONCURRENT) {
-      startJob(job, true);
-    }
-  }
+  // A job waiting for a scheduled broadcast can sit idle for hours or days, and must be
+  // running when the stream starts — so it never waits for (or holds) a download slot.
+  const waiting = db.prepare(`SELECT * FROM downloads WHERE status = 'queued' AND ${WAIT_FOR_LIVE_SQL}`).all();
+  for (const job of waiting) startJob(job, false);
+
+  // Only read as many queued rows as there are free slots; a big playlist backfill can
+  // leave thousands queued, and this runs every time a download finishes.
+  const free = MAX_CONCURRENT - activeCount;
+  if (free <= 0) return;
+  const next = db.prepare(`
+    SELECT * FROM downloads WHERE status = 'queued' AND NOT coalesce(${WAIT_FOR_LIVE_SQL}, 0)
+    ORDER BY created_at ASC, rowid ASC LIMIT ?
+  `).all(free);
+  for (const job of next) startJob(job, true);
 }
 
 async function runJob(job) {
@@ -509,6 +585,12 @@ async function runJob(job) {
   }
 }
 
+// Broadcasts a job row (and the status counts) after another module changed it directly.
+function announceJob(id) {
+  emit(getJobSummary(id));
+  emitCounts();
+}
+
 function stopJob(id) {
   const stopped = ytdlp.stopDownload(id);
   // The job stays in 'downloading' status until yt-dlp actually exits (SIGINT is graceful and
@@ -521,10 +603,14 @@ function stopJob(id) {
 }
 
 function removeJob(id) {
-  const job = getJob(id);
+  const job = getJobSummary(id);
   ytdlp.stopDownload(id);
   db.prepare('DELETE FROM downloads WHERE id = ?').run(id);
-  if (job) notifyWatchItem({ ...job, status: 'removed' });
+  if (!job) return false;
+  notifyWatchItem({ ...job, status: 'removed' });
+  if (io) io.emit('job:removed', { id });
+  emitCounts();
+  return true;
 }
 
 function getActiveCount() {
@@ -532,5 +618,6 @@ function getActiveCount() {
 }
 
 module.exports = {
-  init, enqueue, createQueuedJob, startQueuedJobs, setWatchItemListener, listJobs, getJobLog, getJob, stopJob, removeJob, getActiveCount,
+  init, enqueue, createQueuedJob, startQueuedJobs, setWatchItemListener, listJobs, searchJobs, getStatusCounts,
+  getJobLog, getJob, getJobSummary, announceJob, stopJob, removeJob, getActiveCount,
 };

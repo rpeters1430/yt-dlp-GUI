@@ -1,5 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Radio,
   Tv,
@@ -24,6 +23,7 @@ import {
   Video,
 } from 'lucide-react';
 import { api } from '../api.js';
+import { useDownloads } from '../context/DownloadsContext.jsx';
 import QueueItem from '../components/QueueItem.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import { useModalA11y } from '../hooks/useModalA11y.js';
@@ -102,35 +102,18 @@ export default function Twitch() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsStatus, setSettingsStatus] = useState('');
 
-  // Global jobs from socket
-  const [jobs, setJobs] = useState([]);
-  const socketRef = useRef(null);
+  // Live job list, shared with the rest of the app through one socket connection.
+  const { jobs, setJobs } = useDownloads();
 
   const [vodMessage, setVodMessage] = useState(null); // { type: 'success' | 'error', text }
 
   const trimModalRef = useModalA11y(!!selectedVod, () => setSelectedVod(null));
 
   useEffect(() => {
-    // Initial fetch of jobs & settings
-    api.listDownloads().then(setJobs).catch(() => {});
     api.getTwitchSettings().then((s) => {
       setAuthTokenMasked(s.authTokenMasked || '');
       setClientId(s.clientId || '');
     }).catch(() => {});
-
-    const socket = io({ path: '/socket.io' });
-    socketRef.current = socket;
-
-    socket.on('jobs:init', (initialJobs) => setJobs(initialJobs));
-    socket.on('job:update', (job) => {
-      setJobs((prev) => {
-        const exists = prev.some((j) => j.id === job.id);
-        if (exists) return prev.map((j) => (j.id === job.id ? job : j));
-        return [job, ...prev];
-      });
-    });
-
-    return () => socket.disconnect();
   }, []);
 
   // Filter jobs for Twitch

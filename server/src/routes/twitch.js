@@ -204,11 +204,13 @@ router.post('/settings', (req, res) => {
 
 // List active Twitch recordings and all Twitch jobs
 router.get('/jobs', (req, res) => {
+  // Newest 200, without the per-job log and command line (fetched per job via /downloads/:id/log).
   const jobs = db
     .prepare(
-      "SELECT * FROM downloads WHERE is_live = 1 OR url LIKE '%twitch.tv%' ORDER BY created_at DESC"
+      "SELECT * FROM downloads WHERE is_live = 1 OR url LIKE '%twitch.tv%' ORDER BY created_at DESC LIMIT 200"
     )
-    .all();
+    .all()
+    .map(({ log: _log, command_args: _args, ...job }) => job);
   res.json(jobs);
 });
 
