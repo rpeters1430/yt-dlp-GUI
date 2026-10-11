@@ -450,7 +450,7 @@ function getQbitTorrents({ category, hashes } = {}) {
       progress = 1.0;
     }
 
-    let state = 'downloading';
+    let state;
     if (progress >= 1.0 || completedCount >= totalExpected) {
       state = 'uploading'; // qBittorrent completion state that triggers Lidarr import
       if (task.status !== 'completed' && task.status !== 'imported') {

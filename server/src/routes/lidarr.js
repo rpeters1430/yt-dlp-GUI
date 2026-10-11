@@ -1,5 +1,4 @@
 const express = require('express');
-const path = require('path');
 const lidarr = require('../services/lidarr');
 const music = require('../services/music');
 const { requireAuth } = require('../auth');
@@ -205,6 +204,10 @@ router.use('/api/v2', qbitRouter);
 async function handleSabRequest(req, res) {
   const mode = (req.query.mode || req.body?.mode || '').toLowerCase();
   const apikey = req.query.apikey || req.body?.apikey;
+
+  if (apikey && !lidarr.validateTorznabApiKey(apikey)) {
+    return res.status(403).json({ error: 'Invalid API Key' });
+  }
 
   if (mode === 'version') {
     return res.json({ version: '4.3.0' });
