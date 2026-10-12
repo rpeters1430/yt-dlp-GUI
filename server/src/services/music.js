@@ -170,7 +170,7 @@ async function searchArtists(query, limit = 20) {
   );
 }
 
-async function searchAlbums(query, limit = 50) {
+async function searchAlbums(query, limit = 50, { includeArtist = true } = {}) {
   const q = String(query || '').trim();
   if (!q) return { results: [], matchedArtist: null };
 
@@ -179,7 +179,7 @@ async function searchAlbums(query, limit = 50) {
 
   const [albumData, artistData] = await Promise.all([
     fetchJson(albumUrl).catch(() => ({ results: [] })),
-    fetchJson(artistUrl).catch(() => ({ results: [] })),
+    includeArtist ? fetchJson(artistUrl).catch(() => ({ results: [] })) : { results: [] },
   ]);
 
   const rawResults = albumData.results || [];

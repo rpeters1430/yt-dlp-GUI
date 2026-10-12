@@ -363,13 +363,13 @@ function normalizeTitle(title) {
   return String(title || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 }
 
-// iTunes decorates names ("Drive - EP", "HQ Live (Special Edition)"); Lidarr asks for the plain title.
+// iTunes adds release-type and edition labels; Lidarr asks for the plain title.
 function albumTitleMatches(name, wanted) {
   const target = normalizeTitle(wanted);
   if (!target) return false;
   const base = String(name || '')
     .replace(/\s+-\s+(single|ep)$/i, '')
-    .replace(/\s*[([][^)\]]*[)\]]\s*$/, '');
+    .replace(/\s*[[(](?:\d{4}\s+)?(?:(?:deluxe|special|expanded|anniversary)\s+edition|remaster(?:ed)?(?:\s+(?:edition|version))?)[)\]]\s*$/i, '');
   return normalizeTitle(name) === target || normalizeTitle(base) === target;
 }
 
@@ -394,7 +394,7 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
       // the keyword results only fill in whatever the catalog lookup doesn't cover.
       const [artistRes, albumRes] = await Promise.all([
         cleanArtist ? music.searchAlbums(cleanArtist, effectiveLimit) : null,
-        cleanAlbum ? music.searchAlbums(q, effectiveLimit) : null,
+        cleanAlbum ? music.searchAlbums(q, effectiveLimit, { includeArtist: false }) : null,
       ]);
       let catalog = artistRes?.matchedArtist?.all || [];
       if (cleanAlbum) catalog = catalog.filter((alb) => albumTitleMatches(alb.name, cleanAlbum));

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildMusicTags, buildMetadataBlockPicture } = require('./music');
+const { buildMusicTags, buildMetadataBlockPicture, searchAlbums } = require('./music');
 
 test('buildMusicTags maps iTunes metadata to ffmpeg tag names and skips blanks', () => {
   assert.deepEqual(buildMusicTags({
@@ -19,4 +19,22 @@ test('buildMetadataBlockPicture encodes a FLAC front-cover picture block', () =>
   assert.equal(block.readUInt32BE(4), 'image/jpeg'.length);
   assert.deepEqual(block.subarray(block.length - 3), data);
   assert.equal(block.readUInt32BE(block.length - 7), 3);
+});
+
+test('searchAlbums can return keyword results without searching or enriching an artist', async () => {
+  const originalFetch = global.fetch;
+  const urls = [];
+  global.fetch = async (url) => {
+    urls.push(url);
+    return { ok: true, json: async () => ({ results: [] }) };
+  };
+
+  try {
+    const result = await searchAlbums('Incubus 8', 50, { includeArtist: false });
+    assert.equal(urls.length, 1);
+    assert.match(urls[0], /entity=album/);
+    assert.equal(result.matchedArtist, null);
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
