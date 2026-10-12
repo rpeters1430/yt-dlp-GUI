@@ -61,7 +61,8 @@ In the app, open the **Music** page and click the **Lidarr** tab. Your unique To
    - **Host**: `<your-server-ip>`
    - **Port**: `3000` (or your app's port)
    - **URL Base**: `/api/lidarr/qbit`
-   - **Username / Password**: Can be left blank or filled with any placeholder text.
+   - **Username**: Anything, e.g. `lidarr` (Lidarr skips logging in when it's blank, so it can't be empty).
+   - **Password**: Your Torznab API key from the Lidarr tab in the app.
    - **Category**: `music`
 6. Ensure **Completed Download Handling** is enabled.
 7. Click **Test** and then **Save**.
@@ -89,3 +90,17 @@ In the app's **Music → Lidarr** tab:
 3. Enable **Automatically notify Lidarr when downloads finish**.
 4. Click **Test Connection** and then **Save Lidarr Settings**.
 5. You can now view missing/wanted albums from your Lidarr library directly within the app and queue them with one click!
+
+## Troubleshooting
+
+### Indexer or download client test fails with an authentication error
+
+The indexer, `.torrent` download and SABnzbd endpoints require the Torznab API key, and the qBittorrent login requires it as the password. Setups made before this was enforced (blank qBittorrent username/password) need the username and password filled in as described in step 2. Until then Lidarr can't see the download client's queue, so nothing imports.
+
+### "Downloaded - Unable to Import Automatically: Artist name mismatch"
+
+Lidarr links a finished download to the release it grabbed by the torrent's infohash. Older versions of this integration reported a different hash to Lidarr's qBittorrent client, so Lidarr couldn't find the grab in its history and fell back to guessing the artist from the folder name. That is fixed: the mock qBittorrent client now reports the same infohash Lidarr computed from the `.torrent` file.
+
+Downloads grabbed **before** the fix keep the old hash. For each one, either use **Manual Import** in Lidarr's Activity → Queue, or remove it from the queue (with "Remove from Client") and search for the album again.
+
+"Automatically notify Lidarr when downloads finish" only applies to music you download from the app yourself. Lidarr imports its own grabs through the download client, so the app no longer sends a separate scan for those, and it waits for an album folder to stop changing (60 seconds) before asking Lidarr to scan it.

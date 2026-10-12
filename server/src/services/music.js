@@ -617,6 +617,7 @@ async function enqueueMusicDownload({
   audioQuality = '320k',
   musicFolder = 'Music',
   saveCover = true,
+  extraOptions = {},
 }) {
   let youtubeUrl = track.youtubeUrl;
   let matchedInfo;
@@ -631,7 +632,8 @@ async function enqueueMusicDownload({
     ? baseFolder
     : path.join(ytdlp.DOWNLOAD_DIR, baseFolder);
 
-  const artistDir = sanitizeFilename(track.artist || 'Unknown Artist');
+  // Group by album artist so "Artist feat. X" tracks stay in the album's folder.
+  const artistDir = sanitizeFilename(track.albumArtist || track.artist || 'Unknown Artist');
   const albumName = track.album && String(track.album).trim();
   // A track with no real album (a single) goes straight into the artist folder rather than
   // an extra "Single" subfolder, matching how album tracks are only nested when there's an
@@ -660,6 +662,7 @@ async function enqueueMusicDownload({
     container: audioFormat || 'mp3',
     quality: null,
     optionsJson: {
+      ...extraOptions,
       audioQuality: audioQuality || '320k',
       outputTemplate,
       sponsorblockRemove: 'music_offtopic',

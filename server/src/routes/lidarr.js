@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const lidarr = require('../services/lidarr');
 const music = require('../services/music');
@@ -17,15 +18,20 @@ function getHostUrl(req) {
 // Torznab / Newznab Indexer API
 // Accessible at /api/lidarr/torznab, /api/lidarr (when t= is passed), /api/torznab
 // -------------------------------------------------------------
+// The indexer, .torrent download and SABnzbd endpoints are called by Lidarr, not a logged-in
+// browser, so they authenticate with the Torznab API key shown on the Music → Lidarr tab.
+function getApiKey(req) {
+  return req.query.apikey || req.body?.apikey || req.get('X-Api-Key') || '';
+}
+
 async function handleTorznabRequest(req, res) {
   const t = (req.query.t || '').toLowerCase();
-  const apikey = req.query.apikey;
+  const apikey = getApiKey(req);
 
-  // Validate API key if configured
-  if (apikey && !lidarr.validateTorznabApiKey(apikey)) {
+  if (!lidarr.validateTorznabApiKey(apikey)) {
     res.set('Content-Type', 'application/xml');
-    return res.status(403).send(`<?xml version="1.0" encoding="UTF-8"?>
-<error code="100" description="Invalid API Key"/>`);
+    return res.status(401).send(`<?xml version="1.0" encoding="UTF-8"?>
+<error code="100" description="Invalid or missing API Key"/>`);
   }
 
   if (t === 'caps') {
@@ -43,6 +49,7 @@ async function handleTorznabRequest(req, res) {
         year: req.query.year,
         limit: req.query.limit,
         hostUrl: getHostUrl(req),
+        apiKey: apikey,
       });
       res.set('Content-Type', 'application/xml');
       return res.send(xml);
@@ -66,7 +73,10 @@ router.get('/torznab', handleTorznabRequest);
 // Called by Lidarr when downloading the .torrent file
 // -------------------------------------------------------------
 router.get('/download', (req, res) => {
-  const { type = 'album', id, artist, album } = req.query;
+  if (!lidarr.validateTorznabApiKey(getApiKey(req))) {
+    return res.status(401).send('Invalid or missing API Key');
+  }
+  const { type = 'album', id, artist, album, track } = req.query;
   if (!id) {
     return res.status(400).send('Missing release ID');
   }
@@ -77,6 +87,7 @@ router.get('/download', (req, res) => {
       id,
       artist,
       album,
+      track,
       announceUrl: `${getHostUrl(req)}/announce`,
     });
 
@@ -163,12 +174,44 @@ async function parseMultipartForm(req) {
   return { fields, files };
 }
 
+// qBittorrent-style auth: /auth/login takes the Torznab API key as the password and hands
+// out an SID cookie. Sessions live in memory; after a restart Lidarr gets a 403 and simply
+// logs in again, which is how it treats a real qBittorrent restart too.
+const MAX_QBIT_SESSIONS = 100;
+const qbitSessions = new Set();
+
+function getQbitSid(req) {
+  const match = (req.headers.cookie || '').match(/(?:^|;\s*)SID=([^;]+)/);
+  return match ? match[1] : null;
+}
+
+// Self-nest to support double prefix if client sends /api/v2/api/v2. Must come before the
+// auth check below so /api/v2/auth/login still reaches the login route.
+qbitRouter.use('/api/v2', qbitRouter);
+
 qbitRouter.post('/auth/login', (req, res) => {
-  res.set('Set-Cookie', 'SID=ytdlp-lidarr-session; HttpOnly; Path=/');
+  const password = req.body?.password || req.query?.password || '';
+  if (!lidarr.validateTorznabApiKey(password)) {
+    // Real qBittorrent answers a bad login with 200 "Fails.", which Lidarr reports as an auth error.
+    return res.type('text/plain').status(200).send('Fails.');
+  }
+  const sid = crypto.randomBytes(24).toString('hex');
+  qbitSessions.add(sid);
+  if (qbitSessions.size > MAX_QBIT_SESSIONS) {
+    qbitSessions.delete(qbitSessions.values().next().value);
+  }
+  res.set('Set-Cookie', `SID=${sid}; HttpOnly; Path=/`);
   res.type('text/plain').status(200).send('Ok.');
 });
 
+qbitRouter.use((req, res, next) => {
+  const sid = getQbitSid(req);
+  if (sid && qbitSessions.has(sid)) return next();
+  res.type('text/plain').status(403).send('Forbidden');
+});
+
 qbitRouter.post('/auth/logout', (req, res) => {
+  qbitSessions.delete(getQbitSid(req));
   res.type('text/plain').status(200).send('Ok.');
 });
 
@@ -302,6 +345,9 @@ qbitRouter.post('/torrents/add', async (req, res) => {
           id: torrentInfo.id,
           artist: torrentInfo.artist,
           album: torrentInfo.album,
+          track: torrentInfo.track || null,
+          // Must match the infohash Lidarr computed from this file, or it can't link the download.
+          hash: torrentInfo.infoHash,
           category,
           savePath: savepath,
         });
@@ -321,6 +367,7 @@ qbitRouter.post('/torrents/add', async (req, res) => {
         const id = parsedUrl.searchParams.get('id');
         const artist = parsedUrl.searchParams.get('artist');
         const album = parsedUrl.searchParams.get('album');
+        const track = parsedUrl.searchParams.get('track');
 
         if (id) {
           await lidarr.handleDownloadAdd({
@@ -328,6 +375,7 @@ qbitRouter.post('/torrents/add', async (req, res) => {
             id,
             artist,
             album,
+            track,
             category,
             savePath: savepath,
           });
@@ -356,21 +404,17 @@ qbitRouter.post('/torrents/resume', (req, res) => {
 });
 
 qbitRouter.get('/torrents/properties', (req, res) => {
-  const config = lidarr.getLidarrConfig();
-  res.json({
-    save_path: lidarr.normalizeMusicFolder(config.musicFolder).replace(/\\/g, '/'),
-    total_size: 50 * 1024 * 1024,
-    pieces_num: 200,
-    piece_size: 262144,
-  });
+  const props = lidarr.getQbitTorrentProperties(req.query.hash);
+  if (!props) return res.type('text/plain').status(404).send('Not Found');
+  res.json(props);
 });
 
 qbitRouter.get('/torrents/files', (req, res) => {
-  res.json([]);
+  const files = lidarr.getQbitTorrentFiles(req.query.hash);
+  if (!files) return res.type('text/plain').status(404).send('Not Found');
+  res.json(files);
 });
 
-// Self-nest to support double prefix if client sends /api/v2/api/v2
-qbitRouter.use('/api/v2', qbitRouter);
 
 // Mount qBittorrent endpoints at /qbit/api/v2, /qbit, and /api/v2
 router.use('/qbit/api/v2', qbitRouter);
@@ -383,10 +427,10 @@ router.use('/api/v2', qbitRouter);
 // -------------------------------------------------------------
 async function handleSabRequest(req, res) {
   const mode = (req.query.mode || req.body?.mode || '').toLowerCase();
-  const apikey = req.query.apikey || req.body?.apikey;
 
-  if (apikey && !lidarr.validateTorznabApiKey(apikey)) {
-    return res.status(403).json({ error: 'Invalid API Key' });
+  if (!lidarr.validateTorznabApiKey(getApiKey(req))) {
+    // SABnzbd's own wording, which Lidarr recognises as an authentication failure.
+    return res.status(200).json({ status: false, error: 'API Key Incorrect' });
   }
 
   if (mode === 'version') {
@@ -428,6 +472,7 @@ async function handleSabRequest(req, res) {
         const id = parsedUrl.searchParams.get('id');
         const artist = parsedUrl.searchParams.get('artist');
         const album = parsedUrl.searchParams.get('album');
+        const track = parsedUrl.searchParams.get('track');
 
         if (id) {
           const task = await lidarr.handleDownloadAdd({
@@ -435,6 +480,7 @@ async function handleSabRequest(req, res) {
             id,
             artist,
             album,
+            track,
             category: cat,
           });
           return res.json({ status: true, nzo_ids: [task.hash] });
