@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
 const db = require('../db');
 const music = require('./music');
@@ -243,6 +244,30 @@ function normalizeMusicFolder(folder) {
   return `${basePrefix.replace(/\/+$/, '')}/${clean || 'Music'}`;
 }
 
+const LOSSLESS_FORMATS = new Set(['flac', 'alac', 'wav']);
+const DEFAULT_KBPS = { mp3: 320, m4a: 256, aac: 256, opus: 160, vorbis: 192, flac: 900, alac: 900, wav: 1411 };
+const AVG_TRACK_SECONDS = 240;
+
+// Describes what we'll actually produce, so Lidarr's quality parser and size checks see the
+// configured format instead of a hardcoded "MP3 320k".
+function describeReleaseFormat(format, quality) {
+  const fmt = String(format || 'mp3').toLowerCase();
+  const lossless = LOSSLESS_FORMATS.has(fmt);
+  const match = String(quality || '').match(/^(\d+)k$/i);
+  const kbps = !lossless && match ? parseInt(match[1], 10) : (DEFAULT_KBPS[fmt] || 256);
+  const names = { mp3: 'MP3', m4a: 'AAC', aac: 'AAC', opus: 'Opus', vorbis: 'OGG Vorbis', flac: 'FLAC', alac: 'ALAC', wav: 'WAV' };
+  const name = names[fmt] || fmt.toUpperCase();
+  return {
+    label: lossless || !match ? name : `${name} ${kbps}`,
+    category: lossless ? 3040 : 3010,
+    bytesPerTrack: Math.round((kbps * 1000 / 8) * AVG_TRACK_SECONDS),
+  };
+}
+
+function estimateReleaseSize(trackCount, format, quality) {
+  return Math.max(1, trackCount || 1) * describeReleaseFormat(format, quality).bytesPerTrack;
+}
+
 function getLidarrConfig() {
   const keys = [
     'lidarr_enabled',
@@ -297,10 +322,16 @@ function updateLidarrConfig(updates = {}) {
   return getLidarrConfig();
 }
 
+function safeEqual(a, b) {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
+}
+
 function validateTorznabApiKey(providedKey) {
-  const config = getLidarrConfig();
   if (!providedKey) return false;
-  return providedKey === config.torznabApiKey || (config.apiKey && providedKey === config.apiKey);
+  const config = getLidarrConfig();
+  return safeEqual(providedKey, config.torznabApiKey) || (!!config.apiKey && safeEqual(providedKey, config.apiKey));
 }
 
 function getCapsXml() {
@@ -316,7 +347,7 @@ function getCapsXml() {
   <categories>
     <category id="3000" name="Audio">
       <subcat id="3010" name="Audio/MP3"/>
-      <subcat id="3020" name="Audio/Lossless"/>
+      <subcat id="3020" name="Audio/Video"/>
       <subcat id="3030" name="Audio/Audiobook"/>
       <subcat id="3040" name="Audio/Lossless"/>
     </category>
@@ -324,7 +355,11 @@ function getCapsXml() {
 </caps>`;
 }
 
-async function searchTorznab({ query = '', artist = '', album = '', track = '', year = '', limit = 50, hostUrl = '' }) {
+async function searchTorznab({ query = '', artist = '', album = '', track = '', year = '', limit = 50, hostUrl = '', apiKey = '' }) {
+  const config = getLidarrConfig();
+  const releaseFormat = describeReleaseFormat(config.format, config.quality);
+  // Lidarr fetches the .torrent from the link as-is, so it has to carry the key itself.
+  const keyParam = apiKey ? `&apikey=${encodeURIComponent(apiKey)}` : '';
   const items = [];
   const cleanArtist = String(artist || '').trim();
   const cleanAlbum = String(album || '').trim();
@@ -435,37 +470,35 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
   }
 
   const itemsXml = items.map((item) => {
-    const tracksEst = item.trackCount || 10;
-    const estSizeBytes = tracksEst * 9 * 1024 * 1024; // ~9MB per 320k track
+    const estSizeBytes = estimateReleaseSize(item.trackCount, config.format, config.quality);
     const yearStr = item.releaseYear ? ` (${item.releaseYear})` : '';
     const releaseTitle = item.type === 'album'
-      ? `${item.artist} - ${item.album}${yearStr} [MP3 320k] [WEB]`
-      : `${item.artist} - ${item.name}${yearStr} [MP3 320k] [WEB]`;
+      ? `${item.artist} - ${item.album}${yearStr} [${releaseFormat.label}] [WEB]`
+      : `${item.artist} - ${item.name}${yearStr} [${releaseFormat.label}] [WEB]`;
 
     const trackParam = item.type === 'track' ? `&track=${encodeURIComponent(item.name)}` : '';
-    const downloadUrl = `${hostUrl}/api/lidarr/download?type=${item.type}&id=${encodeURIComponent(item.id)}&artist=${encodeURIComponent(item.artist)}&album=${encodeURIComponent(item.album || item.name)}${trackParam}`;
+    const downloadUrl = `${hostUrl}/api/lidarr/download?type=${item.type}&id=${encodeURIComponent(item.id)}&artist=${encodeURIComponent(item.artist)}&album=${encodeURIComponent(item.album || item.name)}${trackParam}${keyParam}`;
     const guid = `ytdlp-music-${item.type}-${item.id}`;
     const pubDate = new Date(item.releaseDate || Date.now()).toUTCString();
 
+    // A single seeder: there is no swarm, the release is always "available", and Lidarr's
+    // default minimum-seeders check (1) passes without inflating the numbers.
     return `    <item>
       <title>${escapeXml(releaseTitle)}</title>
       <guid isPermaLink="false">${escapeXml(guid)}</guid>
       <link>${escapeXml(downloadUrl)}</link>
       <pubDate>${pubDate}</pubDate>
+      <size>${estSizeBytes}</size>
       <category>3000</category>
-      <category>3010</category>
-      <category>3020</category>
-      <category>3040</category>
+      <category>${releaseFormat.category}</category>
       <enclosure url="${escapeXml(downloadUrl)}" length="${estSizeBytes}" type="application/x-bittorrent"/>
       <torznab:attr name="category" value="3000"/>
-      <torznab:attr name="category" value="3010"/>
-      <torznab:attr name="category" value="3020"/>
-      <torznab:attr name="category" value="3040"/>
+      <torznab:attr name="category" value="${releaseFormat.category}"/>
       <torznab:attr name="artist" value="${escapeXml(item.artist)}"/>
       <torznab:attr name="album" value="${escapeXml(item.album || item.name)}"/>
       ${item.releaseYear ? `<torznab:attr name="year" value="${item.releaseYear}"/>` : ''}
-      <torznab:attr name="seeders" value="50"/>
-      <torznab:attr name="peers" value="10"/>
+      <torznab:attr name="seeders" value="1"/>
+      <torznab:attr name="peers" value="1"/>
       <torznab:attr name="size" value="${estSizeBytes}"/>
       <torznab:attr name="downloadvolumefactor" value="0"/>
       <torznab:attr name="uploadvolumefactor" value="1"/>
@@ -555,7 +588,7 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, track = nu
     contentPath = musicContentPath(resolvedBaseDir, artist, fallbackAlbum);
   }
 
-  const estSizeBytes = tracksToDownload.length * 9 * 1024 * 1024;
+  const estSizeBytes = estimateReleaseSize(tracksToDownload.length, targetFormat, targetQuality);
 
   db.prepare(`
     INSERT INTO lidarr_tasks (
@@ -662,7 +695,10 @@ function getQbitTorrents({ category, hashes } = {}) {
       state = 'uploading';
       progress = 1.0;
       if (task.status !== 'completed' && task.status !== 'imported') {
-        db.prepare("UPDATE lidarr_tasks SET status = 'completed', updated_at = datetime('now') WHERE id = ?").run(task.id);
+        const actualSize = listContentFiles(task).reduce((sum, f) => sum + f.size, 0);
+        if (actualSize > 0) task.size_bytes = actualSize;
+        db.prepare("UPDATE lidarr_tasks SET status = 'completed', size_bytes = ?, updated_at = datetime('now') WHERE id = ?")
+          .run(task.size_bytes || 0, task.id);
       }
     } else if (allTerminal) {
       state = 'error';
@@ -686,8 +722,8 @@ function getQbitTorrents({ category, hashes } = {}) {
       dlspeed: state === 'downloading' ? 1048576 : 0,
       upspeed: 0,
       priority: 0,
-      num_seeds: 50,
-      num_leechs: 10,
+      num_seeds: 1,
+      num_leechs: 0,
       num_incomplete: 0,
       ratio: 1.0,
       eta: state === 'downloading' ? 30 : 0,
@@ -706,6 +742,77 @@ function getQbitTorrents({ category, hashes } = {}) {
   }
 
   return result;
+}
+
+// Files under the task's content folder, named relative to its save path the way qBittorrent
+// names a multi-file torrent's files (e.g. "Artist/Album/01 - Title.mp3").
+function listContentFiles(task) {
+  const root = task.content_path;
+  const base = task.save_path || path.dirname(root || '');
+  const files = [];
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (_) {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.isFile() && !/\.(part|ytdl|temp)$/i.test(entry.name)) {
+        let size = 0;
+        try { size = fs.statSync(full).size; } catch (_) {}
+        files.push({ name: path.relative(base, full).replace(/\\/g, '/'), size });
+      }
+    }
+  };
+  if (root) walk(root);
+  return files.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function getTaskByHash(hash) {
+  if (!hash) return null;
+  return db.prepare('SELECT * FROM lidarr_tasks WHERE lower(hash) = ?').get(String(hash).toLowerCase()) || null;
+}
+
+function getQbitTorrentFiles(hash) {
+  const task = getTaskByHash(hash);
+  if (!task) return null;
+  const done = task.status === 'completed' || task.status === 'imported';
+  return listContentFiles(task).map((f, index) => ({
+    index,
+    name: f.name,
+    size: f.size,
+    progress: done ? 1 : 0,
+    priority: 1,
+    is_seed: done,
+    piece_range: [0, 0],
+    availability: 1,
+  }));
+}
+
+function getQbitTorrentProperties(hash) {
+  if (!hash) return null;
+  const torrent = getQbitTorrents({ hashes: hash })[0];
+  if (!torrent) return null;
+  return {
+    save_path: torrent.save_path,
+    total_size: torrent.size,
+    total_downloaded: Math.round(torrent.size * torrent.progress),
+    pieces_num: Math.max(1, Math.ceil(torrent.size / 262144)),
+    piece_size: 262144,
+    addition_date: torrent.added_on,
+    completion_date: torrent.completion_on,
+    seeding_time: 0,
+    share_ratio: torrent.ratio,
+    eta: torrent.eta,
+    dl_speed: torrent.dlspeed,
+    up_speed: 0,
+    seeds: torrent.num_seeds,
+    peers: torrent.num_leechs,
+  };
 }
 
 function deleteQbitTorrents(hashes) {
@@ -904,35 +1011,51 @@ function notifyDownloadComplete(job, result, extraOptions = {}) {
   pendingScans.set(albumDir, timer);
 }
 
-const qbitCategories = {
-  music: { name: 'music', savePath: '' },
-};
+// Categories Lidarr creates through the qBittorrent API, persisted so they survive restarts.
+function loadQbitCategories() {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'lidarr_qbit_categories'").get();
+  try {
+    const parsed = JSON.parse(row?.value || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveQbitCategories(categories) {
+  db.prepare(`
+    INSERT INTO settings (key, value) VALUES ('lidarr_qbit_categories', ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(JSON.stringify(categories));
+}
 
 function getQbitCategories() {
   const config = getLidarrConfig();
-  const cat = config.category || 'music';
   const defaultPath = normalizeMusicFolder(config.musicFolder).replace(/\\/g, '/');
-  if (!qbitCategories[cat]) {
-    qbitCategories[cat] = { name: cat, savePath: defaultPath };
-  } else if (!qbitCategories[cat].savePath) {
-    qbitCategories[cat].savePath = defaultPath;
+  const categories = loadQbitCategories();
+  const cat = config.category || 'music';
+  if (!categories[cat]) categories[cat] = { name: cat, savePath: defaultPath };
+  for (const entry of Object.values(categories)) {
+    if (!entry.savePath) entry.savePath = defaultPath;
   }
-  return { ...qbitCategories };
+  return categories;
 }
 
 function addQbitCategory(category, savePath = '') {
   if (!category) return;
   const config = getLidarrConfig();
-  const resolved = savePath ? normalizeMusicFolder(savePath).replace(/\\/g, '/') : normalizeMusicFolder(config.musicFolder).replace(/\\/g, '/');
-  qbitCategories[category] = { name: category, savePath: resolved };
+  const resolved = normalizeMusicFolder(savePath || config.musicFolder).replace(/\\/g, '/');
+  const categories = loadQbitCategories();
+  categories[category] = { name: category, savePath: resolved };
+  saveQbitCategories(categories);
 }
 
 function removeQbitCategories(categories) {
   if (!categories) return;
   const list = String(categories).split(/\r?\n|\|/).map((c) => c.trim()).filter(Boolean);
-  for (const c of list) {
-    delete qbitCategories[c];
-  }
+  const stored = loadQbitCategories();
+  for (const c of list) delete stored[c];
+  saveQbitCategories(stored);
 }
 
 module.exports = {
@@ -952,7 +1075,11 @@ module.exports = {
   searchTorznab,
   handleDownloadAdd,
   getQbitTorrents,
+  getQbitTorrentFiles,
+  getQbitTorrentProperties,
   deleteQbitTorrents,
+  describeReleaseFormat,
+  estimateReleaseSize,
   getQbitCategories,
   addQbitCategory,
   removeQbitCategories,
