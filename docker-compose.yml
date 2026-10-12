@@ -11,6 +11,12 @@ services:
     environment:
       - MAX_CONCURRENT_DOWNLOADS=2
       - TZ=America/Los_Angeles
+      # Separate folders for videos and music. Remove these (and their mounts below) to keep
+      # everything under /downloads. Settings → File naming / Music can still override them.
+      - VIDEO_DIR=/videos
+      - MUSIC_DIR=/music
     volumes:
       - ./downloads:/downloads
+      - ./videos:/videos
+      - ./music:/music
       - ./config:/config
