@@ -3073,7 +3073,7 @@ export default function MusicPage() {
                     Username & Password can be left blank (or dummy text). Category: <code>music</code>
                   </div>
                   <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 2 }}>
-                    Reported download path: <code>/downloads/Music</code>
+                    Reported download path: <code>{lidarrConfig.musicFolder || '/downloads/Music'}</code>
                   </div>
 
                   <div style={{
@@ -3086,7 +3086,7 @@ export default function MusicPage() {
                     color: 'var(--text-secondary)',
                     lineHeight: 1.4,
                   }}>
-                    <strong style={{ color: 'var(--warning)' }}>⚠️ Remote Path Mapping tip:</strong> If Lidarr is in Docker and you configure a Remote Path Mapping, set <strong>Remote Path</strong> to <code>/downloads/Music</code> and <strong>Local Path</strong> to your downloads directory (e.g. <code>/downloads</code> or <code>/music/Downloads</code>). Do <em>not</em> set Local Path to your Lidarr library Root Folder (<code>/music</code>).
+                    <strong style={{ color: 'var(--warning)' }}>⚠️ Remote Path Mapping tip:</strong> If Lidarr is in Docker and you configure a Remote Path Mapping, set <strong>Remote Path</strong> to <code>{lidarrConfig.musicFolder || '/downloads/Music'}</code> and <strong>Local Path</strong> to your downloads directory (e.g. <code>/downloads</code> or <code>/music/Downloads</code>). Do <em>not</em> set Local Path to your Lidarr library Root Folder (<code>/music</code>).
                   </div>
                 </div>
               </div>
@@ -3141,7 +3141,7 @@ export default function MusicPage() {
 
                   <div>
                     <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: 6 }}>
-                      Download Path (Reported to Lidarr)
+                      Lidarr Download Folder
                     </label>
                     <input
                       type="text"
@@ -3152,7 +3152,7 @@ export default function MusicPage() {
                       onChange={(e) => setLidarrConfig({ ...lidarrConfig, musicFolder: e.target.value })}
                     />
                     <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 4 }}>
-                      The directory reported to Lidarr (e.g. <code>/downloads/Music</code> or <code>/volume1/Downloads/Music</code>).
+                      Where Lidarr grabs are saved, as a path <em>inside this container</em> (e.g. <code>/downloads/Music</code>). It is also the path reported to Lidarr; if Lidarr sees the folder at a different path, add a Remote Path Mapping in Lidarr instead of changing this.
                     </div>
                   </div>
                 </div>

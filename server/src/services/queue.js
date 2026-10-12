@@ -571,7 +571,7 @@ async function runJob(job) {
     if (extraOptions.isMusicDownload && result.filepath) {
       try {
         const lidarr = require('./lidarr');
-        lidarr.notifyDownloadComplete(job, result);
+        lidarr.notifyDownloadComplete(job, result, extraOptions);
       } catch (e) {
         console.error(`[queue] [job:${job.id}] Lidarr notification failed: ${e.message}`);
       }

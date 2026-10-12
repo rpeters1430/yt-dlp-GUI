@@ -89,3 +89,13 @@ In the app's **Music → Lidarr** tab:
 3. Enable **Automatically notify Lidarr when downloads finish**.
 4. Click **Test Connection** and then **Save Lidarr Settings**.
 5. You can now view missing/wanted albums from your Lidarr library directly within the app and queue them with one click!
+
+## Troubleshooting
+
+### "Downloaded - Unable to Import Automatically: Artist name mismatch"
+
+Lidarr links a finished download to the release it grabbed by the torrent's infohash. Older versions of this integration reported a different hash to Lidarr's qBittorrent client, so Lidarr couldn't find the grab in its history and fell back to guessing the artist from the folder name. That is fixed: the mock qBittorrent client now reports the same infohash Lidarr computed from the `.torrent` file.
+
+Downloads grabbed **before** the fix keep the old hash. For each one, either use **Manual Import** in Lidarr's Activity → Queue, or remove it from the queue (with "Remove from Client") and search for the album again.
+
+"Automatically notify Lidarr when downloads finish" only applies to music you download from the app yourself. Lidarr imports its own grabs through the download client, so the app no longer sends a separate scan for those, and it waits for an album folder to stop changing (60 seconds) before asking Lidarr to scan it.

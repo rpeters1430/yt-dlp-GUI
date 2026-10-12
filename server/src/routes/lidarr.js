@@ -66,7 +66,7 @@ router.get('/torznab', handleTorznabRequest);
 // Called by Lidarr when downloading the .torrent file
 // -------------------------------------------------------------
 router.get('/download', (req, res) => {
-  const { type = 'album', id, artist, album } = req.query;
+  const { type = 'album', id, artist, album, track } = req.query;
   if (!id) {
     return res.status(400).send('Missing release ID');
   }
@@ -77,6 +77,7 @@ router.get('/download', (req, res) => {
       id,
       artist,
       album,
+      track,
       announceUrl: `${getHostUrl(req)}/announce`,
     });
 
@@ -302,6 +303,9 @@ qbitRouter.post('/torrents/add', async (req, res) => {
           id: torrentInfo.id,
           artist: torrentInfo.artist,
           album: torrentInfo.album,
+          track: torrentInfo.track || null,
+          // Must match the infohash Lidarr computed from this file, or it can't link the download.
+          hash: torrentInfo.infoHash,
           category,
           savePath: savepath,
         });
@@ -321,6 +325,7 @@ qbitRouter.post('/torrents/add', async (req, res) => {
         const id = parsedUrl.searchParams.get('id');
         const artist = parsedUrl.searchParams.get('artist');
         const album = parsedUrl.searchParams.get('album');
+        const track = parsedUrl.searchParams.get('track');
 
         if (id) {
           await lidarr.handleDownloadAdd({
@@ -328,6 +333,7 @@ qbitRouter.post('/torrents/add', async (req, res) => {
             id,
             artist,
             album,
+            track,
             category,
             savePath: savepath,
           });
@@ -428,6 +434,7 @@ async function handleSabRequest(req, res) {
         const id = parsedUrl.searchParams.get('id');
         const artist = parsedUrl.searchParams.get('artist');
         const album = parsedUrl.searchParams.get('album');
+        const track = parsedUrl.searchParams.get('track');
 
         if (id) {
           const task = await lidarr.handleDownloadAdd({
@@ -435,6 +442,7 @@ async function handleSabRequest(req, res) {
             id,
             artist,
             album,
+            track,
             category: cat,
           });
           return res.json({ status: true, nzo_ids: [task.hash] });

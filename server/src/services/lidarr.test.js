@@ -63,6 +63,18 @@ describe('lidarr service', () => {
     assert.equal(parsed.album, 'The Dark Side of the Moon');
   });
 
+  it('computes the BitTorrent infohash Lidarr uses as the download ID', () => {
+    const crypto = require('crypto');
+    const buf = lidarr.generateTorrentBuffer({ type: 'album', id: '42', artist: 'Incubus', album: 'Morning View' });
+    const info = lidarr.bdecode(buf).info;
+    const expected = crypto.createHash('sha1').update(lidarr.bencode(info)).digest('hex');
+    assert.equal(lidarr.getInfoHash(buf), expected);
+    assert.equal(lidarr.parseTorrentBuffer(buf).infoHash, expected);
+    // The URL path (no file upload) must land on the same hash as the served .torrent.
+    assert.equal(lidarr.computeReleaseHash({ type: 'album', id: '42', artist: 'Incubus', album: 'Morning View' }), expected);
+    assert.equal(lidarr.getInfoHash(Buffer.from('not a torrent')), null);
+  });
+
   it('manages qBittorrent categories dynamically', () => {
     const initial = lidarr.getQbitCategories();
     assert.ok(initial.music);

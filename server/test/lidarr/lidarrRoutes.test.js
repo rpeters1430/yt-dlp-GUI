@@ -126,3 +126,43 @@ test('Mock SABnzbd API handles version, queue, and history modes', async (t) => 
   const h = await hRes.json();
   assert.ok(h.history);
 });
+
+test('qBittorrent torrents/add reports the uploaded torrent under its real infohash', async (t) => {
+  const { db, base } = await startApp(t);
+  const lidarr = require(path.join(SRC, 'services', 'lidarr'));
+  const music = require(path.join(SRC, 'services', 'music'));
+
+  const enqueued = [];
+  const original = music.enqueueMusicDownload;
+  music.enqueueMusicDownload = async (opts) => {
+    enqueued.push(opts);
+    const id = `job-${enqueued.length}`;
+    db.prepare("INSERT INTO downloads (id, url, status, percent) VALUES (?, 'x', 'completed', 100)").run(id);
+    return { jobId: id };
+  };
+  t.after(() => { music.enqueueMusicDownload = original; });
+
+  // A track release skips the album lookup, so the test needs no network.
+  const torrent = lidarr.generateTorrentBuffer({ type: 'track', id: '7-1', artist: 'Incubus', album: 'Morning View', track: 'Wish You Were Here' });
+  const infoHash = lidarr.getInfoHash(torrent);
+
+  const form = new FormData();
+  form.append('category', 'music');
+  form.append('torrents', new Blob([torrent], { type: 'application/x-bittorrent' }), 'release.torrent');
+  const addRes = await fetch(`${base}/api/lidarr/qbit/api/v2/torrents/add`, { method: 'POST', body: form });
+  assert.equal(addRes.status, 200);
+
+  // Enqueueing runs in the background after the response.
+  for (let i = 0; i < 50 && !enqueued.length; i++) await new Promise((r) => setTimeout(r, 10));
+  await new Promise((r) => setTimeout(r, 20));
+
+  assert.equal(enqueued.length, 1);
+  assert.equal(enqueued[0].track.title, 'Wish You Were Here');
+  assert.equal(enqueued[0].extraOptions.lidarrHash, infoHash);
+
+  const list = await (await fetch(`${base}/api/lidarr/qbit/api/v2/torrents/info?hashes=${infoHash.toUpperCase()}`)).json();
+  assert.equal(list.length, 1);
+  assert.equal(list[0].hash, infoHash);
+  assert.equal(list[0].state, 'uploading');
+  assert.ok(list[0].content_path.endsWith('/Incubus/Morning View'));
+});

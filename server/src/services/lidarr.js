@@ -91,6 +91,65 @@ function bdecode(buf) {
   return parseNext();
 }
 
+// BitTorrent infohash: SHA-1 of the raw bencoded `info` dict. Lidarr computes this from the
+// .torrent file it grabbed and stores it as the download ID in its history, then matches the
+// hashes qBittorrent reports against it. If our hash differs, Lidarr can't link the download to
+// the release it grabbed and falls back to parsing the name ("Artist name mismatch").
+function getInfoHash(buf) {
+  if (!Buffer.isBuffer(buf) || buf[0] !== 0x64) return null;
+  let pos = 0;
+
+  function readStringEnd() {
+    const colon = buf.indexOf(0x3a, pos);
+    if (colon === -1) throw new Error('Invalid bencoded string length');
+    const end = colon + 1 + parseInt(buf.toString('ascii', pos, colon), 10);
+    if (end > buf.length) throw new Error('Unexpected EOF reading string');
+    return { start: colon + 1, end };
+  }
+
+  function skip() {
+    const byte = buf[pos];
+    if (byte === 0x69) { // 'i'
+      const end = buf.indexOf(0x65, pos);
+      if (end === -1) throw new Error('Unterminated integer');
+      pos = end + 1;
+    } else if (byte === 0x6c || byte === 0x64) { // 'l' / 'd'
+      pos++;
+      while (pos < buf.length && buf[pos] !== 0x65) skip();
+      if (pos >= buf.length) throw new Error('Unterminated list/dict');
+      pos++;
+    } else if (byte >= 0x30 && byte <= 0x39) {
+      pos = readStringEnd().end;
+    } else {
+      throw new Error(`Unexpected character at ${pos}`);
+    }
+  }
+
+  try {
+    pos = 1;
+    while (pos < buf.length && buf[pos] !== 0x65) {
+      const key = readStringEnd();
+      const keyStr = buf.toString('utf8', key.start, key.end);
+      pos = key.end;
+      const valueStart = pos;
+      skip();
+      if (keyStr === 'info') {
+        return crypto.createHash('sha1').update(buf.subarray(valueStart, pos)).digest('hex');
+      }
+    }
+  } catch (err) {
+    console.error('[lidarr:torrent] Error computing infohash:', err.message);
+  }
+  return null;
+}
+
+// The hash Lidarr will expect for a release served by our /download endpoint. Used when Lidarr
+// hands us the URL instead of uploading the .torrent file, so both paths agree on the hash.
+function computeReleaseHash({ type = 'album', id, artist, album, track }) {
+  return getInfoHash(generateTorrentBuffer({ type, id, artist, album, track }))
+    || getDeterministicHash(type, id);
+}
+
 function parseTorrentBuffer(buf) {
   try {
     const decoded = bdecode(buf);
@@ -103,6 +162,8 @@ function parseTorrentBuffer(buf) {
       type: getString(info.ytdlp_type) || 'album',
       artist: getString(info.ytdlp_artist),
       album: getString(info.ytdlp_album),
+      track: getString(info.ytdlp_track),
+      infoHash: getInfoHash(buf),
     };
   } catch (err) {
     console.error('[lidarr:torrent] Error decoding torrent buffer:', err.message);
@@ -128,7 +189,7 @@ function getDeterministicHash(type, id) {
   return crypto.createHash('sha1').update(`lidarr:${type}:${id}`).digest('hex');
 }
 
-function generateTorrentBuffer({ type, id, artist, album, title, sizeBytes, announceUrl }) {
+function generateTorrentBuffer({ type, id, artist, album, track, title, sizeBytes, announceUrl }) {
   const name = title || (artist && album ? `${artist} - ${album}` : `Music-${id}`);
   const length = Number(sizeBytes) > 0 ? Number(sizeBytes) : 50 * 1024 * 1024;
   const pieceLength = 262144;
@@ -152,6 +213,8 @@ function generateTorrentBuffer({ type, id, artist, album, title, sizeBytes, anno
     ytdlp_id: String(id),
     ytdlp_type: type || 'album',
   };
+  // Only present for single-track releases so album infohashes stay unchanged.
+  if (track) infoDict.ytdlp_track = String(track);
 
   const torrentDict = {
     announce: announceUrl || 'http://localhost/announce',
@@ -379,7 +442,8 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
       ? `${item.artist} - ${item.album}${yearStr} [MP3 320k] [WEB]`
       : `${item.artist} - ${item.name}${yearStr} [MP3 320k] [WEB]`;
 
-    const downloadUrl = `${hostUrl}/api/lidarr/download?type=${item.type}&id=${encodeURIComponent(item.id)}&artist=${encodeURIComponent(item.artist)}&album=${encodeURIComponent(item.album || item.name)}`;
+    const trackParam = item.type === 'track' ? `&track=${encodeURIComponent(item.name)}` : '';
+    const downloadUrl = `${hostUrl}/api/lidarr/download?type=${item.type}&id=${encodeURIComponent(item.id)}&artist=${encodeURIComponent(item.artist)}&album=${encodeURIComponent(item.album || item.name)}${trackParam}`;
     const guid = `ytdlp-music-${item.type}-${item.id}`;
     const pubDate = new Date(item.releaseDate || Date.now()).toUTCString();
 
@@ -419,7 +483,17 @@ ${itemsXml}
 </rss>`;
 }
 
-async function handleDownloadAdd({ type = 'album', id, artist, album, category = 'music', savePath = null }) {
+// Mirrors enqueueMusicDownload's <base>/<album artist>/<album> layout so the content_path we
+// report to Lidarr is the folder the files actually land in.
+function musicContentPath(baseDir, artist, album) {
+  const artistDir = music.sanitizeFilename(artist || 'Unknown Artist');
+  const albumName = album && String(album).trim();
+  return albumName
+    ? path.join(baseDir, artistDir, music.sanitizeFilename(albumName))
+    : path.join(baseDir, artistDir);
+}
+
+async function handleDownloadAdd({ type = 'album', id, artist, album, track = null, hash = null, category = 'music', savePath = null }) {
   const config = getLidarrConfig();
   const musicSettings = music.getMusicSettings();
   const targetFormat = config.format || musicSettings.musicFormat || 'mp3';
@@ -431,7 +505,7 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, category =
     ? baseFolder
     : path.join(ytdlp.DOWNLOAD_DIR, baseFolder);
 
-  const hash = getDeterministicHash(type, id);
+  hash = String(hash || computeReleaseHash({ type, id, artist, album, track })).toLowerCase();
 
   const existing = db.prepare('SELECT * FROM lidarr_tasks WHERE hash = ?').get(hash);
   if (existing) {
@@ -447,14 +521,13 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, category =
     try {
       albumDetails = await music.getAlbumDetails(id);
       if (albumDetails && albumDetails.tracks && albumDetails.tracks.length > 0) {
-        title = `${albumDetails.album.artist} - ${albumDetails.album.name}`;
-        const artistDir = music.sanitizeFilename(albumDetails.album.artist || 'Unknown Artist');
-        const albumDir = music.sanitizeFilename(albumDetails.album.name || 'Album');
-        contentPath = path.join(resolvedBaseDir, artistDir, albumDir);
+        const year = albumDetails.album.releaseYear ? ` (${albumDetails.album.releaseYear})` : '';
+        title = `${albumDetails.album.artist} - ${albumDetails.album.name}${year}`;
+        contentPath = musicContentPath(resolvedBaseDir, albumDetails.album.artist, albumDetails.album.name || 'Album');
 
         tracksToDownload = albumDetails.tracks.map((t) => ({
           ...t,
-          album: albumDetails.album.name,
+          album: albumDetails.album.name || 'Album',
           artist: t.artist || albumDetails.album.artist,
           albumArtist: albumDetails.album.artist,
           year: albumDetails.album.releaseYear,
@@ -470,14 +543,16 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, category =
 
   // Fallback if details could not be retrieved
   if (tracksToDownload.length === 0) {
+    const fallbackAlbum = album || 'Unknown Album';
     tracksToDownload.push({
-      title: album || title,
+      title: track || album || title,
       artist: artist || 'Unknown Artist',
-      album: album || 'Unknown Album',
+      album: fallbackAlbum,
       trackNumber: 1,
       totalTracks: 1,
     });
-    contentPath = path.join(resolvedBaseDir, music.sanitizeFilename(artist || 'Unknown Artist'));
+    if (track) title = `${artist || 'Unknown'} - ${track}`;
+    contentPath = musicContentPath(resolvedBaseDir, artist, fallbackAlbum);
   }
 
   const estSizeBytes = tracksToDownload.length * 9 * 1024 * 1024;
@@ -511,8 +586,11 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, category =
           track: tr,
           audioFormat: targetFormat,
           audioQuality: targetQuality,
-          musicFolder: targetFolder,
+          // Same base dir as the reported save/content path (Lidarr may send its own savepath).
+          musicFolder: resolvedBaseDir,
           saveCover: true,
+          // Lidarr imports these itself via the download client; skip the per-track scan.
+          extraOptions: { lidarrHash: hash },
         });
         if (job && job.jobId) {
           jobIds.push(job.jobId);
@@ -522,8 +600,10 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, category =
       }
     }
 
-    db.prepare('UPDATE lidarr_tasks SET job_ids = ?, updated_at = datetime(\'now\') WHERE hash = ?')
-      .run(JSON.stringify(jobIds), hash);
+    // Leaving 'downloading' marks the batch as fully enqueued, so getQbitTorrents knows how
+    // many jobs to wait for even if some tracks couldn't be matched.
+    db.prepare(`UPDATE lidarr_tasks SET job_ids = ?, status = ?, updated_at = datetime('now') WHERE hash = ?`)
+      .run(JSON.stringify(jobIds), jobIds.length > 0 ? 'enqueued' : 'failed', hash);
   })().catch((err) => {
     console.error(`[lidarr] Error processing download batch for ${hash}:`, err.message);
   });
@@ -532,7 +612,6 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, category =
 }
 
 function getQbitTorrents({ category, hashes } = {}) {
-  const config = getLidarrConfig();
   let tasks = db.prepare('SELECT * FROM lidarr_tasks ORDER BY created_at DESC').all();
 
   if (category && category !== 'all') {
@@ -560,31 +639,32 @@ function getQbitTorrents({ category, hashes } = {}) {
       const placeholders = jobIds.map(() => '?').join(',');
       const rows = db.prepare(`SELECT status, percent FROM downloads WHERE id IN (${placeholders})`).all(...jobIds);
       for (const r of rows) {
-        totalPercent += r.percent || 0;
+        totalPercent += r.status === 'completed' ? 100 : (r.percent || 0);
         if (r.status === 'completed') completedCount++;
         else if (r.status === 'failed') failedCount++;
         else if (r.status === 'downloading') downloadingCount++;
       }
+      // Jobs removed from the download queue will never finish; count them as failed.
+      failedCount += jobIds.length - rows.length;
     }
 
-    const totalExpected = Math.max(task.total_tracks || 1, jobIds.length || 1);
-    let progress = totalExpected > 0 ? (totalPercent / (totalExpected * 100)) : 0;
-    if (completedCount >= totalExpected && totalExpected > 0) {
-      progress = 1.0;
-    }
+    // job_ids is written once, together with the status change, after every track was enqueued.
+    // (Older rows stayed 'downloading' but already have job_ids.)
+    const enqueueDone = task.status !== 'downloading' || jobIds.length > 0;
+    const expected = enqueueDone ? jobIds.length : Math.max(task.total_tracks || 1, 1);
+    const allTerminal = enqueueDone && completedCount + failedCount >= expected;
 
+    let progress = totalPercent / (Math.max(task.total_tracks || 1, expected, 1) * 100);
     let state;
-    if (progress >= 1.0 || completedCount >= totalExpected) {
-      state = 'uploading'; // qBittorrent completion state that triggers Lidarr import
+    if (allTerminal && completedCount > 0) {
+      // qBittorrent "seeding" state: tells Lidarr the download is finished and ready to import.
+      // Partial albums (some tracks failed) are still handed over so Lidarr can import or flag them.
+      state = 'uploading';
+      progress = 1.0;
       if (task.status !== 'completed' && task.status !== 'imported') {
         db.prepare("UPDATE lidarr_tasks SET status = 'completed', updated_at = datetime('now') WHERE id = ?").run(task.id);
-        if (config.autoNotify && config.url && config.apiKey) {
-          triggerDownloadedAlbumsScan(task.content_path).catch((err) => {
-            console.error(`[lidarr] Auto-notify scan error for ${task.content_path}:`, err.message);
-          });
-        }
       }
-    } else if (failedCount === totalExpected && totalExpected > 0) {
+    } else if (allTerminal) {
       state = 'error';
     } else if (downloadingCount > 0) {
       state = 'downloading';
@@ -798,20 +878,30 @@ async function getArtists() {
   }
 }
 
-async function notifyDownloadComplete(job, result) {
+// Album downloads finish one track at a time; wait for the folder to go quiet before asking
+// Lidarr to scan it, otherwise it imports (and moves) a partial album.
+const SCAN_DEBOUNCE_MS = 60 * 1000;
+const pendingScans = new Map();
+
+function notifyDownloadComplete(job, result, extraOptions = {}) {
   const config = getLidarrConfig();
   if (!config.enabled || !config.autoNotify || !config.url || !config.apiKey) return;
+  // Lidarr-grabbed downloads are imported by Lidarr's own completed-download handling.
+  if (extraOptions.lidarrHash) return;
 
-  try {
-    const filepath = result?.filepath;
-    if (filepath) {
-      const albumDir = path.dirname(filepath);
-      await triggerDownloadedAlbumsScan(albumDir);
-      console.log(`[lidarr] Triggered DownloadedAlbumsScan for completed music folder: ${albumDir}`);
-    }
-  } catch (err) {
-    console.error(`[lidarr] Failed to notify Lidarr of completed download: ${err.message}`);
-  }
+  const filepath = result?.filepath;
+  if (!filepath) return;
+  const albumDir = path.dirname(filepath);
+
+  clearTimeout(pendingScans.get(albumDir));
+  const timer = setTimeout(() => {
+    pendingScans.delete(albumDir);
+    triggerDownloadedAlbumsScan(albumDir)
+      .then(() => console.log(`[lidarr] Triggered DownloadedAlbumsScan for completed music folder: ${albumDir}`))
+      .catch((err) => console.error(`[lidarr] Failed to notify Lidarr of completed download: ${err.message}`));
+  }, SCAN_DEBOUNCE_MS);
+  timer.unref?.();
+  pendingScans.set(albumDir, timer);
 }
 
 const qbitCategories = {
@@ -851,6 +941,8 @@ module.exports = {
   parseTorrentBuffer,
   escapeXml,
   getDeterministicHash,
+  getInfoHash,
+  computeReleaseHash,
   generateTorrentBuffer,
   getLidarrConfig,
   updateLidarrConfig,
