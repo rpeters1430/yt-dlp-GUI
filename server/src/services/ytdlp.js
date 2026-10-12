@@ -5,7 +5,7 @@ const siteProfiles = require('./siteProfiles');
 const { DEFAULT_TEMPLATE: DEFAULT_OUTPUT_TEMPLATE } = require('./outputTemplate');
 
 const {
-  YTDLP_BIN, DOWNLOAD_DIR, COOKIES_FILE, YTDLP_CACHE_DIR, getDenoBin, getFfmpegDir, getFfmpegBin,
+  YTDLP_BIN, DOWNLOAD_DIR, VIDEO_DIR, MUSIC_DIR, COOKIES_FILE, YTDLP_CACHE_DIR, getDenoBin, getFfmpegDir, getFfmpegBin,
 } = require('./ytdlpPaths');
 const {
   cookieArgs, setTwitchAuthCookie, hasTwitchAuthCookie, getTwitchAuthTokenMasked,
@@ -633,7 +633,7 @@ function buildDownloadArgs(url, rawOptions = {}) {
 
   // Queued jobs always pass a template (see outputTemplate.resolveTemplate); this fallback
   // only covers direct callers, and uses the same byte-capped default.
-  const targetOutput = outputTemplate || `${DOWNLOAD_DIR}/${DEFAULT_OUTPUT_TEMPLATE}`;
+  const targetOutput = outputTemplate || `${VIDEO_DIR}/${DEFAULT_OUTPUT_TEMPLATE}`;
 
   const args = [
     '--newline',
@@ -1391,6 +1391,8 @@ module.exports = {
   updateDenoIfAvailable,
   getDenoBin,
   DOWNLOAD_DIR,
+  VIDEO_DIR,
+  MUSIC_DIR,
   COOKIES_FILE,
   stopDownload,
   assertPublicUrl,

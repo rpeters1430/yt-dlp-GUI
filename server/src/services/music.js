@@ -5,6 +5,7 @@ const { spawn } = require('child_process');
 const ytdlp = require('./ytdlp');
 const queue = require('./queue');
 const db = require('../db');
+const { resolveMusicDir } = require('./ytdlpPaths');
 
 // Only replacing path separators/reserved characters isn't enough: a name that sanitizes to
 // exactly ".." (or ".") is still a valid path segment that walks up a directory when joined
@@ -594,7 +595,9 @@ function getMusicSettings() {
   for (const r of rows) map[r.key] = r.value;
 
   return {
-    musicFolder: map.music_folder || 'Music',
+    musicFolder: map.music_folder || ytdlp.MUSIC_DIR || 'Music',
+    // Where that folder actually is on disk, for display.
+    musicDir: resolveMusicDir(map.music_folder),
     musicFormat: map.music_format || 'mp3',
     musicQuality: map.music_quality || '320k',
     saveCover: map.music_save_cover !== '0',
@@ -607,7 +610,7 @@ function updateMusicSettings({ musicFolder, musicFormat, musicQuality, saveCover
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `);
 
-  if (musicFolder !== undefined) upsert.run('music_folder', String(musicFolder).trim() || 'Music');
+  if (musicFolder !== undefined) upsert.run('music_folder', String(musicFolder).trim() || ytdlp.MUSIC_DIR || 'Music');
   if (musicFormat !== undefined) upsert.run('music_format', String(musicFormat).trim() || 'mp3');
   if (musicQuality !== undefined) upsert.run('music_quality', String(musicQuality).trim() || '320k');
   if (saveCover !== undefined) upsert.run('music_save_cover', saveCover ? '1' : '0');
@@ -631,10 +634,7 @@ async function enqueueMusicDownload({
     youtubeUrl = matchedInfo.youtubeUrl;
   }
 
-  const baseFolder = String(musicFolder || 'Music').trim();
-  const resolvedBaseDir = path.isAbsolute(baseFolder)
-    ? baseFolder
-    : path.join(ytdlp.DOWNLOAD_DIR, baseFolder);
+  const resolvedBaseDir = resolveMusicDir(musicFolder);
 
   // Group by album artist so "Artist feat. X" tracks stay in the album's folder.
   const artistDir = sanitizeFilename(track.albumArtist || track.artist || 'Unknown Artist');

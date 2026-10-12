@@ -1,10 +1,10 @@
 const path = require('path');
 
-// Same default as ytdlp.js; not imported from there so this module (and its tests) stay
-// free of the database and binary lookups that module pulls in.
-const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(__dirname, '..', '..', 'downloads');
+// From ytdlpPaths rather than ytdlp.js so this module (and its tests) stay free of the
+// database and binary lookups that module pulls in.
+const { DOWNLOAD_DIR, VIDEO_DIR } = require('./ytdlpPaths');
 
-// Relative to DOWNLOAD_DIR. Titles are capped in bytes: some sites use very long (often
+// Relative to the video folder. Titles are capped in bytes: some sites use very long (often
 // multi-byte) titles that push the name past the 255-byte filesystem limit once yt-dlp's
 // post-processing adds suffixes like ".temp" / ".f137".
 const DEFAULT_TEMPLATE = '%(uploader,extractor).80B/%(title).150B [%(id)s].%(ext)s';
@@ -24,7 +24,7 @@ const PRESETS = [
 const MAX_TEMPLATE_LENGTH = 500;
 
 // Returns an error message, or null when the template is usable. Templates are always
-// resolved under DOWNLOAD_DIR, so absolute paths and `..` segments are rejected to keep
+// resolved under the video folder, so absolute paths and `..` segments are rejected to keep
 // every download inside the mounted volume. Field values yt-dlp substitutes are sanitized
 // by yt-dlp itself (path separators are replaced), so only the literal text needs checking.
 function validateTemplate(template) {
@@ -53,8 +53,36 @@ function getGlobalTemplate() {
   return value && !validateTemplate(value) ? value : DEFAULT_TEMPLATE;
 }
 
+// Returns an error message, or null when the folder is usable. Blank means "use the default".
+function validateVideoFolder(folder) {
+  if (folder == null) return null;
+  if (typeof folder !== 'string') return 'Video folder must be a path';
+  const f = folder.trim();
+  if (f.length > MAX_TEMPLATE_LENGTH) return `Video folder is too long (max ${MAX_TEMPLATE_LENGTH} characters)`;
+  if (/[\0\r\n%]/.test(f)) return 'Video folder must be a plain single-line path (no % fields)';
+  return null;
+}
+
+// The saved Settings folder (absolute, or relative to DOWNLOAD_DIR) when there is one, else
+// VIDEO_DIR from the environment, which itself defaults to DOWNLOAD_DIR.
+function resolveVideoDir(saved) {
+  const value = saved ? String(saved).trim() : '';
+  if (!value || validateVideoFolder(value)) return VIDEO_DIR;
+  return path.isAbsolute(value) ? value : path.join(DOWNLOAD_DIR, value);
+}
+
+function getVideoFolderSetting() {
+  const db = require('../db');
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'video_folder'").get();
+  return row && row.value ? row.value.trim() : '';
+}
+
+function getVideoDir() {
+  return resolveVideoDir(getVideoFolderSetting());
+}
+
 function toAbsolute(template) {
-  return `${DOWNLOAD_DIR}/${template}`;
+  return `${getVideoDir().replace(/[\\/]+$/, '')}/${template}`;
 }
 
 // The absolute yt-dlp -o template for a download: the Watch's own template when it has a
@@ -65,4 +93,7 @@ function resolveTemplate({ watchTemplate = null } = {}) {
   return toAbsolute(getGlobalTemplate());
 }
 
-module.exports = { DEFAULT_TEMPLATE, PRESETS, validateTemplate, getGlobalTemplate, resolveTemplate };
+module.exports = {
+  DEFAULT_TEMPLATE, PRESETS, validateTemplate, getGlobalTemplate, resolveTemplate,
+  validateVideoFolder, resolveVideoDir, getVideoFolderSetting, getVideoDir,
+};

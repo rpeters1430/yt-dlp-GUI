@@ -18,6 +18,7 @@ const ALLOWED_SETTINGS_KEYS = new Set([
   'music_quality',
   'music_save_cover',
   'output_template',
+  'video_folder',
   'default_live_chunk_mins',
 ]);
 
@@ -110,6 +111,10 @@ router.get('/output-template', (req, res) => {
     template: outputTemplate.getGlobalTemplate(),
     defaultTemplate: outputTemplate.DEFAULT_TEMPLATE,
     presets: outputTemplate.PRESETS,
+    // The folder saved in Settings (blank = use the default) and where videos actually go.
+    videoFolder: outputTemplate.getVideoFolderSetting(),
+    videoDir: outputTemplate.getVideoDir(),
+    defaultVideoDir: ytdlp.VIDEO_DIR,
   });
 });
 
@@ -138,6 +143,14 @@ router.put('/', (req, res) => {
   if (template && String(template[1] || '').trim()) {
     const templateError = outputTemplate.validateTemplate(String(template[1]));
     if (templateError) return res.status(400).json({ error: templateError });
+  }
+
+  const videoFolder = entries.find(([key]) => key === 'video_folder');
+  if (videoFolder) {
+    // Blank (or null) is stored as '' and means "use the default video folder".
+    videoFolder[1] = videoFolder[1] == null ? '' : String(videoFolder[1]).trim();
+    const folderError = outputTemplate.validateVideoFolder(videoFolder[1]);
+    if (folderError) return res.status(400).json({ error: folderError });
   }
 
   const upsert = db.prepare(`

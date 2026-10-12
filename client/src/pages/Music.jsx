@@ -2745,6 +2745,10 @@ export default function MusicPage() {
                 />
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 4 }}>
                   Relative to downloads folder or absolute path. Songs are saved as: <code>{settings.musicFolder}/{'{Artist}'}/{'{Album}'}/## - {'{Title}'}.{settings.musicFormat}</code>
+                  {settings.musicDir && (
+                    <> Currently saving to <code>{settings.musicDir}</code> (save to refresh). &quot;Music&quot; or blank uses the
+                    container&apos;s <code>MUSIC_DIR</code> mount when one is set.</>
+                  )}
                 </div>
               </div>
 

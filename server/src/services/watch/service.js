@@ -1,4 +1,4 @@
-const path = require('path');
+const { resolveMusicDir } = require('../ytdlpPaths');
 const { evaluateEntry, watchConfigError } = require('./filters');
 const { scanToBoundary, HARD_SCAN_LIMIT, FULL_BACKFILL_LIMIT } = require('./discovery');
 const { CONTENT_TYPES, scanSources, mergeNewestFirst, isMissingTabError, parseContentTypes, watchContentTypes } = require('./tabs');
@@ -14,7 +14,7 @@ function extractThumbnail(info) {
 }
 
 // Queue options for a download triggered by this watch.
-function buildDownloadOptions(watch, downloadDir) {
+function buildDownloadOptions(watch) {
   const sponsorblockCategories = watch.sponsorblock
     ? (watch.sponsorblock_categories ? watch.sponsorblock_categories.split(',').map((s) => s.trim()).filter(Boolean) : ['sponsor'])
     : [];
@@ -22,8 +22,7 @@ function buildDownloadOptions(watch, downloadDir) {
   let outputTemplate = null;
   let audioQuality = null;
   if (watch.is_music) {
-    const musicFolder = watch.music_folder || 'Music';
-    const resolvedMusicDir = path.isAbsolute(musicFolder) ? musicFolder : path.join(downloadDir || '', musicFolder);
+    const resolvedMusicDir = resolveMusicDir(watch.music_folder);
     // No album/playlist tag (a single, not part of a release) leaves this segment empty;
     // yt-dlp collapses the resulting "//" so the file lands directly in the artist
     // folder instead of a redundant subfolder that just repeats the artist's name.
@@ -135,7 +134,7 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
 
   // Creates and links download jobs for these items in one transaction, then starts them.
   function queueItems(watch, items, runId) {
-    const options = buildDownloadOptions(watch, ytdlp.DOWNLOAD_DIR);
+    const options = buildDownloadOptions(watch);
     const created = repository.transaction(() => items.map((item) => {
       const url = item.url || `https://www.youtube.com/watch?v=${item.video_id}`;
       const { id } = queue.createQueuedJob(url, { ...options, watchItemId: item.id });

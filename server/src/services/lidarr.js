@@ -4,6 +4,7 @@ const path = require('path');
 const db = require('../db');
 const music = require('./music');
 const ytdlp = require('./ytdlp');
+const { MUSIC_DIR, resolveMusicDir } = require('./ytdlpPaths');
 
 // Bencoding for BitTorrent .torrent files
 function bencode(val) {
@@ -232,7 +233,9 @@ function normalizeMusicFolder(folder) {
   const basePrefix = downloadDir.startsWith('/') ? downloadDir : '/downloads';
 
   if (!folder || folder === 'Music') {
-    return `${basePrefix.replace(/\/+$/, '')}/Music`;
+    return MUSIC_DIR
+      ? MUSIC_DIR.replace(/\\/g, '/').replace(/\/+$/, '')
+      : `${basePrefix.replace(/\/+$/, '')}/Music`;
   }
 
   const str = String(folder).trim().replace(/\\/g, '/');
@@ -569,10 +572,7 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, track = nu
   const targetQuality = config.quality || musicSettings.musicQuality || '320k';
   const targetFolder = config.musicFolder || musicSettings.musicFolder || 'Music';
 
-  const baseFolder = String(savePath || targetFolder).trim();
-  const resolvedBaseDir = path.isAbsolute(baseFolder)
-    ? baseFolder
-    : path.join(ytdlp.DOWNLOAD_DIR, baseFolder);
+  const resolvedBaseDir = resolveMusicDir(savePath || targetFolder);
 
   hash = String(hash || computeReleaseHash({ type, id, artist, album, track })).toLowerCase();
 

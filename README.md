@@ -112,7 +112,7 @@ A prebuilt multi-arch image (amd64 + arm64) is published to GitHub Container Reg
 Anywhere with disk space, e.g. `/volume1/docker/ytdlp-gui` on a NAS:
 
 ```bash
-mkdir -p ytdlp-gui/downloads ytdlp-gui/config
+mkdir -p ytdlp-gui/downloads ytdlp-gui/videos ytdlp-gui/music ytdlp-gui/config
 cd ytdlp-gui
 ```
 
@@ -133,12 +133,17 @@ services:
     environment:
       - MAX_CONCURRENT_DOWNLOADS=2
       - TZ=America/Los_Angeles
+      - VIDEO_DIR=/videos
+      - MUSIC_DIR=/music
     volumes:
       - ./downloads:/downloads
+      - ./videos:/videos
+      - ./music:/music
       - ./config:/config
 ```
 
 Adjust to taste:
+- **`./videos` / `./music`** — point these at your media library folders (e.g. `/volume1/Media/YouTube:/videos`, `/volume1/Media/music:/music`). Videos are saved under `VIDEO_DIR`, music under `MUSIC_DIR`. Leave both variables and mounts out to keep everything in `./downloads`.
 - **`ports`** — change the left-hand `3000` if that port is taken (e.g. `"8080:3000"`).
 - **`TZ`** — your timezone (e.g. `America/New_York`), so scheduled checks and timestamps line up.
 - **`MAX_CONCURRENT_DOWNLOADS`** — keep this low (1–2) on a NAS with limited CPU.
@@ -244,11 +249,13 @@ Everything below is optional — set it in `.env` (or `environment:` in `docker-
 | Variable | Default | Purpose |
 |---|---|---|
 | `DOWNLOAD_DIR` | `/downloads` in Docker, `./downloads` otherwise | Where downloaded files are written. |
+| `VIDEO_DIR` | `DOWNLOAD_DIR` | Default base folder for video downloads (YouTube, Twitch, …). Overridable in **Settings → File naming → Video folder**. |
+| `MUSIC_DIR` | `DOWNLOAD_DIR/Music` | Default folder for Music-tab, music Watch and Lidarr downloads. Overridable in **Music → Settings**; a saved folder of `Music` (the old default) also maps here. |
 | `CONFIG_DIR` | `/config` in Docker, `./config` otherwise | Where the database, sessions, and cookies are stored. |
 
 ## File naming
 
-**Settings → File naming** controls where new downloads go inside `./downloads`, as a [yt-dlp output template](https://github.com/yt-dlp/yt-dlp#output-template). Presets:
+**Settings → File naming** sets the **Video folder** (default `VIDEO_DIR`, else `/downloads`) and the layout of new video downloads inside it, as a [yt-dlp output template](https://github.com/yt-dlp/yt-dlp#output-template). Presets:
 
 | Preset | Example result |
 |---|---|
@@ -358,6 +365,8 @@ Dependency updates are skipped while downloads are active, so they never interru
 | Host path | Container path | Contents |
 |---|---|---|
 | `./downloads` | `/downloads` | Downloaded media (a subfolder per uploader/channel by default — see [File naming](#file-naming)), plus `.nfo`/poster files |
+| `./videos` (optional) | `/videos` (`VIDEO_DIR`) | Video downloads, when `VIDEO_DIR` is set |
+| `./music` (optional) | `/music` (`MUSIC_DIR`) | Music-tab, music Watch and Lidarr downloads, when `MUSIC_DIR` is set |
 | `./config` | `/config` | SQLite database (`app.db`), sessions, saved cookies, and app-managed tool builds |
 
 **Back up `./config`** to keep your history, Watches, and settings. Everything in it can be restored by copying the folder back before starting the container.

@@ -4,6 +4,10 @@ const path = require('path');
 
 const YTDLP_BIN = process.env.YTDLP_BIN || 'yt-dlp';
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(__dirname, '..', '..', 'downloads');
+// Optional separate mounts for video and music. Unset, videos go straight into DOWNLOAD_DIR
+// and music into DOWNLOAD_DIR/Music, as before. Folders saved in Settings take precedence.
+const VIDEO_DIR = process.env.VIDEO_DIR || DOWNLOAD_DIR;
+const MUSIC_DIR = process.env.MUSIC_DIR || '';
 const CONFIG_DIR = process.env.CONFIG_DIR || path.join(__dirname, '..', '..', 'config');
 const COOKIES_FILE = path.join(CONFIG_DIR, 'cookies.txt');
 const YTDLP_CACHE_DIR = path.join(CONFIG_DIR, 'yt-dlp-cache');
@@ -17,6 +21,16 @@ if (fs.existsSync(CUSTOM_BIN_DIR)) {
   if (!paths.includes(CUSTOM_BIN_DIR)) {
     process.env.PATH = `${CUSTOM_BIN_DIR}${path.delimiter}${process.env.PATH}`;
   }
+}
+
+// Absolute folder for music saved under `folder` (from Settings, a Watch or a request).
+// Blank, or "Music" (the old built-in default, which older versions saved automatically),
+// means the default: MUSIC_DIR when set, else DOWNLOAD_DIR/Music. Other relative folders
+// sit under DOWNLOAD_DIR.
+function resolveMusicDir(folder) {
+  const value = folder ? String(folder).trim() : '';
+  if (!value || value === 'Music') return MUSIC_DIR || path.join(DOWNLOAD_DIR, 'Music');
+  return path.isAbsolute(value) ? value : path.join(DOWNLOAD_DIR, value);
 }
 
 function getDenoBin() {
@@ -46,6 +60,6 @@ function getFfmpegBin() {
 }
 
 module.exports = {
-  YTDLP_BIN, DOWNLOAD_DIR, CONFIG_DIR, COOKIES_FILE, YTDLP_CACHE_DIR, CUSTOM_BIN_DIR,
-  FFMPEG_BUILD_MARKER, DENO_BUILD_MARKER, getDenoBin, getFfmpegDir, getFfmpegBin,
+  YTDLP_BIN, DOWNLOAD_DIR, VIDEO_DIR, MUSIC_DIR, CONFIG_DIR, COOKIES_FILE, YTDLP_CACHE_DIR, CUSTOM_BIN_DIR,
+  FFMPEG_BUILD_MARKER, DENO_BUILD_MARKER, resolveMusicDir, getDenoBin, getFfmpegDir, getFfmpegBin,
 };
