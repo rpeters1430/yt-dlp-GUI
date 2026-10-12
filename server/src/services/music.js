@@ -170,7 +170,7 @@ async function searchArtists(query, limit = 20) {
   );
 }
 
-async function searchAlbums(query, limit = 50) {
+async function searchAlbums(query, limit = 50, { includeArtist = true } = {}) {
   const q = String(query || '').trim();
   if (!q) return { results: [], matchedArtist: null };
 
@@ -179,7 +179,7 @@ async function searchAlbums(query, limit = 50) {
 
   const [albumData, artistData] = await Promise.all([
     fetchJson(albumUrl).catch(() => ({ results: [] })),
-    fetchJson(artistUrl).catch(() => ({ results: [] })),
+    includeArtist ? fetchJson(artistUrl).catch(() => ({ results: [] })) : { results: [] },
   ]);
 
   const rawResults = albumData.results || [];
@@ -207,21 +207,25 @@ async function searchAlbums(query, limit = 50) {
   let matchedArtist = null;
   const artists = artistData.results || [];
 
-  for (const a of artists) {
-    if (!a.artistName) continue;
-    const cleanName = a.artistName.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const isExact = cleanName === cleanQ;
-    const isClose = cleanName.length >= 3 && cleanQ.length >= 3 && (cleanName.includes(cleanQ) || cleanQ.includes(cleanName));
+  // An exact name match wins over an earlier partial one.
+  for (const wantExact of [true, false]) {
+    for (const a of artists) {
+      if (!a.artistName) continue;
+      const cleanName = a.artistName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const isExact = cleanName === cleanQ;
+      const isClose = cleanName.length >= 3 && cleanQ.length >= 3 && (cleanName.includes(cleanQ) || cleanQ.includes(cleanName));
 
-    if (isExact || isClose) {
-      matchedArtist = {
-        id: a.artistId,
-        name: a.artistName,
-        genre: a.primaryGenreName || null,
-        isExact,
-      };
-      break;
+      if (wantExact ? isExact : isClose) {
+        matchedArtist = {
+          id: a.artistId,
+          name: a.artistName,
+          genre: a.primaryGenreName || null,
+          isExact,
+        };
+        break;
+      }
     }
+    if (matchedArtist) break;
   }
 
   if (matchedArtist) {

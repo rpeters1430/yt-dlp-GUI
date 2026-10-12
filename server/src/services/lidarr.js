@@ -246,7 +246,11 @@ function normalizeMusicFolder(folder) {
 
 const LOSSLESS_FORMATS = new Set(['flac', 'alac', 'wav']);
 const DEFAULT_KBPS = { mp3: 320, m4a: 256, aac: 256, opus: 160, vorbis: 192, flac: 900, alac: 900, wav: 1411 };
-const AVG_TRACK_SECONDS = 240;
+// Deliberately short: Lidarr rejects a release bigger than its quality's max bitrate times the
+// album's real duration (MP3-320 allows only 350 kbps), and has no minimum size by default, so
+// the estimate must not overshoot for albums of short tracks. The real size replaces it once
+// the download finishes.
+const AVG_TRACK_SECONDS = 120;
 
 // Describes what we'll actually produce, so Lidarr's quality parser and size checks see the
 // configured format instead of a hardcoded "MP3 320k".
@@ -355,7 +359,21 @@ function getCapsXml() {
 </caps>`;
 }
 
-async function searchTorznab({ query = '', artist = '', album = '', track = '', year = '', limit = 50, hostUrl = '', apiKey = '' }) {
+function normalizeTitle(title) {
+  return String(title || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+// iTunes adds release-type and edition labels; Lidarr asks for the plain title.
+function albumTitleMatches(name, wanted) {
+  const target = normalizeTitle(wanted);
+  if (!target) return false;
+  const base = String(name || '')
+    .replace(/\s+-\s+(single|ep)$/i, '')
+    .replace(/\s*[[(](?:\d{4}\s+)?(?:(?:deluxe|special|expanded|anniversary)\s+edition|remaster(?:ed)?(?:\s+(?:edition|version))?)[)\]]\s*$/i, '');
+  return normalizeTitle(name) === target || normalizeTitle(base) === target;
+}
+
+async function searchTorznab({ query = '', artist = '', album = '', track = '', year = '', limit = 50, offset = 0, hostUrl = '', apiKey = '' }) {
   const config = getLidarrConfig();
   const releaseFormat = describeReleaseFormat(config.format, config.quality);
   // Lidarr fetches the .torrent from the link as-is, so it has to carry the key itself.
@@ -371,8 +389,21 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
   if (cleanAlbum || (cleanArtist && !cleanTrack)) {
     const q = cleanAlbum ? (cleanArtist ? `${cleanArtist} ${cleanAlbum}` : cleanAlbum) : cleanArtist;
     try {
-      const searchRes = await music.searchAlbums(q, effectiveLimit);
-      const albums = searchRes.results || [];
+      // iTunes keyword search ranks by popularity and often omits the wanted album entirely
+      // ("Incubus 8" never returns "8"), so the artist's own catalog is the primary source and
+      // the keyword results only fill in whatever the catalog lookup doesn't cover.
+      const [artistRes, albumRes] = await Promise.all([
+        cleanArtist ? music.searchAlbums(cleanArtist, effectiveLimit) : null,
+        cleanAlbum ? music.searchAlbums(q, effectiveLimit, { includeArtist: false }) : null,
+      ]);
+      let catalog = artistRes?.matchedArtist?.all || [];
+      if (cleanAlbum) catalog = catalog.filter((alb) => albumTitleMatches(alb.name, cleanAlbum));
+      const seenIds = new Set();
+      const albums = [...catalog, ...((albumRes || artistRes)?.results || [])].filter((alb) => {
+        if (seenIds.has(String(alb.id))) return false;
+        seenIds.add(String(alb.id));
+        return true;
+      });
       for (const alb of albums) {
         items.push({
           type: 'album',
@@ -469,7 +500,12 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
     }
   }
 
-  const itemsXml = items.map((item) => {
+  // A full catalog can exceed one page; honour offset so Lidarr's paging terminates.
+  const pageSize = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+  const pageStart = Math.max(0, parseInt(offset, 10) || 0);
+  const pageItems = items.slice(pageStart, pageStart + pageSize);
+
+  const itemsXml = pageItems.map((item) => {
     const estSizeBytes = estimateReleaseSize(item.trackCount, config.format, config.quality);
     const yearStr = item.releaseYear ? ` (${item.releaseYear})` : '';
     const releaseTitle = item.type === 'album'

@@ -260,3 +260,45 @@ test('search results carry the API key and the configured format', async (t) => 
   assert.ok(xml.includes('<torznab:attr name="seeders" value="1"/>'));
   assert.ok(xml.includes(`<size>${lidarr.estimateReleaseSize(13, 'flac', 'best')}</size>`));
 });
+
+test('album search finds the album in the artist catalog when keyword search misses it', async (t) => {
+  const { base, key } = await startApp(t);
+  const music = require(path.join(SRC, 'services', 'music'));
+  const original = music.searchAlbums;
+  const catalog = [
+    { id: 1, name: '8', artist: 'Incubus', releaseYear: '2017', trackCount: 11 },
+    { id: 2, name: 'Drive - EP', artist: 'Incubus', releaseYear: '2001', trackCount: 5 },
+    { id: 3, name: 'Morning View (Special Edition)', artist: 'Incubus', releaseYear: '2001', trackCount: 13 },
+    { id: 4, name: 'Morning View (Live)', artist: 'Incubus', releaseYear: '2001', trackCount: 13 },
+    { id: 5, name: 'Morning View [Disc 1]', artist: 'Incubus', releaseYear: '2001', trackCount: 13 },
+  ];
+  const searchCalls = [];
+  music.searchAlbums = async (q, limit, options) => {
+    searchCalls.push({ q, limit, options });
+    if (q === 'Incubus') return { results: [catalog[2]], matchedArtist: { id: 9, name: 'Incubus', isExact: true, all: catalog } };
+    if (q === 'Incubus Morning View') return { results: [] };
+    return { results: [{ id: 6, name: '8-Bit Versions of Incubus', artist: '8-Bit Misfits', trackCount: 8 }, catalog[2]] };
+  };
+  t.after(() => { music.searchAlbums = original; });
+
+  const titles = (xml) => [...xml.matchAll(/<title>(.*?) \[/g)].map((m) => m[1]);
+
+  const album = await (await fetch(`${base}/api/lidarr/torznab?t=music&artist=Incubus&album=8&apikey=${key}`)).text();
+  assert.deepEqual(titles(album), ['Incubus - 8 (2017)', '8-Bit Misfits - 8-Bit Versions of Incubus', 'Incubus - Morning View (Special Edition) (2001)']);
+  assert.deepEqual(searchCalls.map(({ options }) => options), [undefined, { includeArtist: false }]);
+
+  const ep = await (await fetch(`${base}/api/lidarr/torznab?t=music&artist=Incubus&album=Drive&apikey=${key}`)).text();
+  assert.equal(titles(ep)[0], 'Incubus - Drive - EP (2001)');
+
+  const specialEdition = await (await fetch(`${base}/api/lidarr/torznab?t=music&artist=Incubus&album=Morning+View&apikey=${key}`)).text();
+  assert.deepEqual(titles(specialEdition), ['Incubus - Morning View (Special Edition) (2001)']);
+
+  const artist = await (await fetch(`${base}/api/lidarr/torznab?t=music&artist=Incubus&apikey=${key}`)).text();
+  assert.equal(titles(artist).length, 5);
+
+  const page2 = await (await fetch(`${base}/api/lidarr/torznab?t=music&artist=Incubus&limit=2&offset=2&apikey=${key}`)).text();
+  assert.deepEqual(titles(page2), [
+    'Incubus - Morning View (Special Edition) (2001)',
+    'Incubus - Morning View (Live) (2001)',
+  ]);
+});
