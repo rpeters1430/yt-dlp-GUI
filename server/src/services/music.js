@@ -207,21 +207,25 @@ async function searchAlbums(query, limit = 50) {
   let matchedArtist = null;
   const artists = artistData.results || [];
 
-  for (const a of artists) {
-    if (!a.artistName) continue;
-    const cleanName = a.artistName.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const isExact = cleanName === cleanQ;
-    const isClose = cleanName.length >= 3 && cleanQ.length >= 3 && (cleanName.includes(cleanQ) || cleanQ.includes(cleanName));
+  // An exact name match wins over an earlier partial one.
+  for (const wantExact of [true, false]) {
+    for (const a of artists) {
+      if (!a.artistName) continue;
+      const cleanName = a.artistName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const isExact = cleanName === cleanQ;
+      const isClose = cleanName.length >= 3 && cleanQ.length >= 3 && (cleanName.includes(cleanQ) || cleanQ.includes(cleanName));
 
-    if (isExact || isClose) {
-      matchedArtist = {
-        id: a.artistId,
-        name: a.artistName,
-        genre: a.primaryGenreName || null,
-        isExact,
-      };
-      break;
+      if (wantExact ? isExact : isClose) {
+        matchedArtist = {
+          id: a.artistId,
+          name: a.artistName,
+          genre: a.primaryGenreName || null,
+          isExact,
+        };
+        break;
+      }
     }
+    if (matchedArtist) break;
   }
 
   if (matchedArtist) {

@@ -48,6 +48,7 @@ async function handleTorznabRequest(req, res) {
         track: req.query.track,
         year: req.query.year,
         limit: req.query.limit,
+        offset: req.query.offset,
         hostUrl: getHostUrl(req),
         apiKey: apikey,
       });

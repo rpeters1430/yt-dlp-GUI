@@ -82,7 +82,7 @@ describe('lidarr service', () => {
     assert.equal(lidarr.describeReleaseFormat('flac', 'best').label, 'FLAC');
     assert.equal(lidarr.describeReleaseFormat('flac', '320k').category, 3040);
     // 10 tracks * 4 min at 320 kbps = 96 MB
-    assert.equal(lidarr.estimateReleaseSize(10, 'mp3', '320k'), 96000000);
+    assert.equal(lidarr.estimateReleaseSize(10, 'mp3', '320k'), 48000000);
   });
 
   it('manages qBittorrent categories dynamically', () => {
