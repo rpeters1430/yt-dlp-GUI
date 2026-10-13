@@ -2565,7 +2565,7 @@ export default function MusicPage() {
                           <RefreshCw size={12} className="spin" /> Checking...
                         </span>
                       ) : (
-                        <span>Last check: {w.last_checked_at ? new Date(w.last_checked_at).toLocaleTimeString() : 'Pending'}</span>
+                        <span>Last check: {w.last_checked_at ? new Date(`${w.last_checked_at}Z`).toLocaleTimeString() : 'Pending'}</span>
                       )}
                     </div>
 

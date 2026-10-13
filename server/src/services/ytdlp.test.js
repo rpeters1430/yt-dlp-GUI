@@ -402,3 +402,23 @@ test('cutting the file (SponsorBlock, sections) forces keyframes so audio stays 
   assert.ok(buildDownloadArgs(url, { downloadSections: '*0-60' }).includes('--force-keyframes-at-cuts'));
   assert.equal(buildDownloadArgs(url, {}).includes('--force-keyframes-at-cuts'), false);
 });
+
+test('assertPublicUrl blocks loopback and private hosts in every spelling', () => {
+  const { assertPublicUrl } = require('./ytdlp');
+  for (const url of [
+    'http://127.0.0.1/', 'http://127.1/', 'http://2130706433/', 'http://[::1]/', 'http://[::ffff:127.0.0.1]/',
+    'http://[::ffff:192.168.1.5]/', 'http://[fd00::1]/', 'http://localhost/', 'http://app.localhost/',
+    'http://localhost./', 'http://app.localhost./',
+  ]) {
+    assert.throws(() => assertPublicUrl(url), /local\/private/, url);
+  }
+  for (const url of ['https://www.youtube.com/watch?v=x', 'http://[::ffff:8.8.8.8]/', 'http://8.8.8.8/']) {
+    assert.doesNotThrow(() => assertPublicUrl(url), url);
+  }
+});
+
+test('non-live downloads fetch fragments concurrently; live captures do not', () => {
+  const { buildDownloadArgs } = require('./ytdlp');
+  assert.ok(buildDownloadArgs('https://www.youtube.com/watch?v=abc123', {}).includes('--concurrent-fragments'));
+  assert.equal(buildDownloadArgs('https://www.youtube.com/watch?v=abc123', { isLive: true }).includes('--concurrent-fragments'), false);
+});

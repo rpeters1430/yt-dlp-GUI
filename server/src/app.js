@@ -127,8 +127,9 @@ function createApp({ watchRepository, watchService, checkAllWatches }) {
     },
   });
 
+  // JSON only: a cross-site <form> can't send it (see sameSite above). The Lidarr routes,
+  // called by Lidarr with form bodies and an API key rather than a cookie, parse their own.
   app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
   app.use(sessionMiddleware);
 
   app.use('/api/auth', authRoutes);

@@ -46,6 +46,15 @@ function isSubtitleDownloadError(message) {
   return SUBTITLE_DOWNLOAD_ERROR_RE.test(String(message || ''));
 }
 
+// The video itself can't be had (removed, private, age-gated, blocked in this country). yt-dlp
+// reports these during extraction, before writing any file, so another video can safely be
+// tried in its place. Disk, ffmpeg and network failures are deliberately not included.
+const VIDEO_UNAVAILABLE_RE = /Video unavailable|Private video|This video (?:has been removed|is no longer available|is not available)|Sign in to confirm your age|age[- ]restricted|inappropriate for some users|not (?:made this video )?available in your country|blocked it (?:in your country|on copyright grounds)|copyright claim|account associated with this video has been terminated|members-only content|Join this channel to get access/i;
+
+function isVideoUnavailableError(message) {
+  return VIDEO_UNAVAILABLE_RE.test(String(message || ''));
+}
+
 // Pasted links often lack a scheme ("www.tiktok.com/@user/live", "youtu.be/abc"). yt-dlp
 // treats those as search terms or local paths, so give anything that looks like a host an
 // https:// prefix. Everything else (including ytsearch: queries) passes through untouched.
@@ -114,6 +123,13 @@ function isPrivateOrLoopbackIp(host) {
     if (a === 169 && b === 254) return true;
     return false;
   }
+  // IPv4-mapped IPv6 ("::ffff:127.0.0.1", which URL normalises to "::ffff:7f00:1").
+  const mapped = host.match(/^(?:0*:)*:?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (mapped) {
+    const hi = parseInt(mapped[1], 16);
+    const lo = parseInt(mapped[2], 16);
+    return isPrivateOrLoopbackIp(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+  }
   if (host === '::1' || host === '::') return true;
   if (/^f[cd][0-9a-f]{2}:/i.test(host)) return true; // fc00::/7 (unique local)
   if (/^fe80:/i.test(host)) return true; // link-local
@@ -132,8 +148,9 @@ function assertPublicUrl(url) {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error(`Unsupported URL scheme: ${parsed.protocol}`);
   }
-  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  if (host === 'localhost' || isPrivateOrLoopbackIp(host)) {
+  // "localhost." (DNS root suffix) is the same host as "localhost".
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').replace(/\.+$/, '').toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost') || isPrivateOrLoopbackIp(host)) {
     throw new Error('URLs targeting local/private network addresses are not allowed');
   }
 }
@@ -613,6 +630,8 @@ function resolveDownloadOptions(url, options = {}) {
   return { options: resolved, adjustments, caps };
 }
 
+const CONCURRENT_FRAGMENTS = Math.max(1, Math.min(16, parseInt(process.env.CONCURRENT_FRAGMENTS || '4', 10) || 1));
+
 function buildDownloadArgs(url, rawOptions = {}) {
   const { options, caps } = resolveDownloadOptions(url, rawOptions);
   const {
@@ -740,6 +759,12 @@ function buildDownloadArgs(url, rawOptions = {}) {
     if (options.liveFromStart) {
       args.push('--live-from-start');
     }
+  }
+
+  // HLS/DASH downloads (Twitch VODs, most non-YouTube sites) fetch one fragment at a time by
+  // default. A live capture only ever has the newest fragment to fetch, so it's left alone.
+  if (!isLive && CONCURRENT_FRAGMENTS > 1) {
+    args.push('--concurrent-fragments', String(CONCURRENT_FRAGMENTS));
   }
 
   if (options.downloadSections) {
@@ -1407,6 +1432,7 @@ module.exports = {
   summarizeErrorOutput,
   isYouTube,
   isBotCheckError,
+  isVideoUnavailableError,
   isSubtitleDownloadError,
   BOT_CHECK_HINT,
   normalizeUrl,

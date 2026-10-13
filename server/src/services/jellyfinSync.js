@@ -36,7 +36,7 @@ function playlistNameForWatch(watch) {
 // Jellyfin's library mount may differ). Safe to call repeatedly — only items missing from the
 // playlist are added, and the resolved playlist ID is cached on the watch so a rename inside
 // this app doesn't create a second playlist next time.
-async function syncWatch(watchId, { config } = {}) {
+async function syncWatch(watchId, { config, libraryCache = null } = {}) {
   const watch = db.prepare('SELECT * FROM watches WHERE id = ?').get(watchId);
   if (!watch) throw new Error('Watch not found');
 
@@ -47,7 +47,7 @@ async function syncWatch(watchId, { config } = {}) {
 
   const playlistName = playlistNameForWatch(watch);
   const downloads = db.prepare(
-    "SELECT * FROM downloads WHERE watch_id = ? AND status = 'completed' AND filepath IS NOT NULL"
+    "SELECT filepath FROM downloads WHERE watch_id = ? AND status = 'completed' AND filepath IS NOT NULL"
   ).all(watchId);
 
   if (downloads.length === 0) {
@@ -56,7 +56,14 @@ async function syncWatch(watchId, { config } = {}) {
 
   const userId = await jellyfin.resolveUserId(cfg.url, cfg.apiKey, cfg.userId);
   const isMusic = !!watch.is_music;
-  const basenameMap = await jellyfin.getLibraryItemsByBasename(cfg.url, cfg.apiKey, userId, { includeAudio: isMusic });
+  // One sync-all run reads the library once per user/kind instead of once per watch.
+  const cacheKey = `${userId}:${isMusic}`;
+  if (libraryCache && !libraryCache.has(cacheKey)) {
+    libraryCache.set(cacheKey, jellyfin.getLibraryItemsByBasename(cfg.url, cfg.apiKey, userId, { includeAudio: isMusic }));
+  }
+  const basenameMap = await (libraryCache
+    ? libraryCache.get(cacheKey)
+    : jellyfin.getLibraryItemsByBasename(cfg.url, cfg.apiKey, userId, { includeAudio: isMusic }));
 
   const itemIds = [];
   let missingFromLibrary = 0;
@@ -116,10 +123,11 @@ async function syncAllWatches() {
     "SELECT id FROM watches WHERE id IN (SELECT DISTINCT watch_id FROM downloads WHERE watch_id IS NOT NULL AND status = 'completed')"
   ).all();
 
+  const libraryCache = new Map();
   const results = [];
   for (const w of watches) {
     try {
-      results.push(await syncWatch(w.id, { config: cfg }));
+      results.push(await syncWatch(w.id, { config: cfg, libraryCache }));
     } catch (err) {
       console.error(`[jellyfin-sync] Failed to sync watch #${w.id}: ${err.message}`);
       results.push({ watchId: w.id, error: err.message });
@@ -151,6 +159,25 @@ function scheduleLibraryScan(delayMs = 6000) {
   }, delayMs);
 }
 
+// A finished download isn't in Jellyfin's library until the (debounced) scan has found it,
+// and a backfill finishes downloads one after another; syncing once, a while after a watch's
+// last download, avoids re-reading the whole library for every file.
+const WATCH_SYNC_DELAY_MS = 2 * 60 * 1000;
+const pendingWatchSyncs = new Map();
+
+function scheduleWatchSync(watchId, delayMs = WATCH_SYNC_DELAY_MS) {
+  clearTimeout(pendingWatchSyncs.get(watchId));
+  const timer = setTimeout(() => {
+    pendingWatchSyncs.delete(watchId);
+    const cfg = getSyncConfig();
+    if (!cfg.enabled) return;
+    syncWatch(watchId, { config: cfg })
+      .catch((e) => console.error(`[jellyfin-sync] Failed to sync watch #${watchId}: ${e.message}`));
+  }, delayMs);
+  timer.unref?.();
+  pendingWatchSyncs.set(watchId, timer);
+}
+
 function start() {
   // A newly downloaded video is also synced right after it finishes (see queue.js), but
   // Jellyfin may not have scanned it into its library yet at that moment — this periodic
@@ -160,4 +187,4 @@ function start() {
   });
 }
 
-module.exports = { getSyncConfig, syncWatch, syncAllWatches, scheduleLibraryScan, start };
+module.exports = { getSyncConfig, syncWatch, syncAllWatches, scheduleLibraryScan, scheduleWatchSync, start };

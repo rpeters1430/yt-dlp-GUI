@@ -84,7 +84,7 @@ async function syncWatchUnlocked(watchId, { config, context } = {}) {
 
   const playlistName = playlistNameForWatch(watch);
   const downloads = db.prepare(
-    "SELECT * FROM downloads WHERE watch_id = ? AND status = 'completed' AND filepath IS NOT NULL"
+    "SELECT filepath FROM downloads WHERE watch_id = ? AND status = 'completed' AND filepath IS NOT NULL"
   ).all(watchId);
 
   if (downloads.length === 0) {
@@ -187,6 +187,24 @@ function scheduleLibraryScan(delayMs = 6000) {
   }, delayMs);
 }
 
+// Same as jellyfinSync.scheduleWatchSync: one playlist sync a while after a watch's last
+// finished download, once Plex's scan has found the files.
+const WATCH_SYNC_DELAY_MS = 2 * 60 * 1000;
+const pendingWatchSyncs = new Map();
+
+function scheduleWatchSync(watchId, delayMs = WATCH_SYNC_DELAY_MS) {
+  clearTimeout(pendingWatchSyncs.get(watchId));
+  const timer = setTimeout(() => {
+    pendingWatchSyncs.delete(watchId);
+    const cfg = getPlexConfig();
+    if (!cfg.syncEnabled || !isConfigured(cfg)) return;
+    syncWatch(watchId, { config: cfg })
+      .catch((e) => console.error(`[plex-sync] Failed to sync watch #${watchId}: ${e.message}`));
+  }, delayMs);
+  timer.unref?.();
+  pendingWatchSyncs.set(watchId, timer);
+}
+
 function start() {
   // Same catch-up pass as Jellyfin: a file synced right after download may not be scanned yet.
   cron.schedule('*/15 * * * *', () => {
@@ -194,4 +212,4 @@ function start() {
   });
 }
 
-module.exports = { getPlexConfig, isConfigured, syncWatch, syncAllWatches, scheduleLibraryScan, start };
+module.exports = { getPlexConfig, isConfigured, syncWatch, syncAllWatches, scheduleLibraryScan, scheduleWatchSync, start };

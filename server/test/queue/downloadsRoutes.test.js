@@ -207,3 +207,22 @@ test('POST /info offers an offline live channel as a stream to wait for', async 
   assert.equal(other.status, 502);
   assert.equal(other.body.error, 'ERROR: Unsupported URL');
 });
+
+test('POST /:id/retry requeues a failed download; POST /clear-failed drops failed ones', async (t) => {
+  const { q, call, settle } = await startApp(t);
+  insertJob(q.db, { id: 'bad', status: 'failed', url: 'https://www.youtube.com/watch?v=aaaaaaaaaaa' });
+  insertJob(q.db, { id: 'bad2', status: 'failed', url: 'https://www.youtube.com/watch?v=bbbbbbbbbbb' });
+  insertJob(q.db, { id: 'ok', status: 'completed', url: 'https://www.youtube.com/watch?v=ccccccccccc' });
+
+  assert.equal((await call('POST', '/missing/retry')).status, 404);
+  assert.equal((await call('POST', '/ok/retry')).status, 409);
+  assert.equal((await call('POST', '/bad/retry')).status, 200);
+  await waitFor(() => q.queue.getJob('bad').status === 'completed', { label: 'retried job to finish' });
+  await settle();
+
+  const cleared = await call('POST', '/clear-failed');
+  assert.deepEqual(cleared.body, { removed: 1 });
+  assert.equal(q.queue.getJob('bad2'), undefined);
+  assert.ok(q.queue.getJob('ok'));
+  assert.ok(q.io.of('job:removed').some((e) => e.id === 'bad2'));
+});

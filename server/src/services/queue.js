@@ -302,6 +302,7 @@ async function runJob(job) {
   const ffmpegDir = ytdlp.getFfmpegDir();
 
   appendLog(`Download job started`);
+  for (const attempt of extraOptions.previousAttempts || []) appendLog(`Previous match ${attempt}`);
   appendLog(`URL: ${job.url}`);
   if (ffmpegDir) {
     appendLog(`FFmpeg path: ${ffmpegDir}`);
@@ -542,26 +543,18 @@ async function runJob(job) {
       console.error(`[queue] [job:${job.id}] Jellyfin library scan schedule failed: ${e.message}`);
     }
 
-    // Best-effort: Jellyfin may not have scanned this file into its library yet, in which
-    // case this is a no-op and the periodic sync job (jellyfinSync.start) picks it up later.
-    if (job.watch_id) {
-      const syncConfig = jellyfinSync.getSyncConfig();
-      if (syncConfig.enabled) {
-        jellyfinSync.syncWatch(job.watch_id, { config: syncConfig })
-          .catch((e) => console.error(`[queue] [job:${job.id}] Jellyfin playlist sync failed: ${e.message}`));
-      }
+    // Playlist sync waits until the library scan above has had time to find the file, and
+    // runs once per watch after a batch of downloads; the periodic job catches up on the rest.
+    if (job.watch_id && jellyfinSync.getSyncConfig().enabled) {
+      jellyfinSync.scheduleWatchSync(job.watch_id);
     }
 
-    // Same two steps for Plex: a debounced library refresh, then a best-effort playlist sync
-    // that the periodic job (plexSync.start) catches up on once Plex has scanned the file.
+    // Same two steps for Plex: a debounced library refresh, then a delayed playlist sync.
     try {
       const plexConfig = plexSync.getPlexConfig();
       if (plexSync.isConfigured(plexConfig)) {
         plexSync.scheduleLibraryScan();
-        if (job.watch_id && plexConfig.syncEnabled) {
-          plexSync.syncWatch(job.watch_id, { config: plexConfig })
-            .catch((e) => console.error(`[queue] [job:${job.id}] Plex playlist sync failed: ${e.message}`));
-        }
+        if (job.watch_id && plexConfig.syncEnabled) plexSync.scheduleWatchSync(job.watch_id);
       }
     } catch (e) {
       console.error(`[queue] [job:${job.id}] Plex scan/sync schedule failed: ${e.message}`);
@@ -579,6 +572,22 @@ async function runJob(job) {
   } catch (err) {
     if (!getJob(job.id)) {
       console.log(`[queue] [job:${job.id}] Removed during download (${err.message})`);
+      return;
+    }
+    // A music track matched by search can fall back to the next YouTube match, but only when
+    // this video can't be had: that fails before anything is written, while a disk, ffmpeg or
+    // network failure would hit the next match too (and could leave a .part file it resumes).
+    const fallbackUrls = Array.isArray(extraOptions.fallbackUrls) ? extraOptions.fallbackUrls : [];
+    if (fallbackUrls.length && ytdlp.isVideoUnavailableError(err.message)) {
+      const [nextUrl, ...rest] = fallbackUrls;
+      appendLog(`ERROR: ${err.message}`);
+      appendLog(`Retrying with the next YouTube match: ${nextUrl}`);
+      console.warn(`[queue] [job:${job.id}] Failed (${err.message}); retrying with ${nextUrl}`);
+      db.prepare('UPDATE downloads SET url = ?, options_json = ? WHERE id = ?')
+        .run(nextUrl, JSON.stringify({ ...extraOptions, fallbackUrls: rest, previousAttempts: [...(extraOptions.previousAttempts || []), `${job.url} failed: ${err.message}`] }), job.id);
+      updateJob(job.id, {
+        status: 'queued', percent: 0, speed: null, eta: null, stage: 'Retrying with another match…', pid: null, log: logLines.join('\n'),
+      });
       return;
     }
     const errorMsg = ytdlp.isBotCheckError(err.message)
@@ -625,11 +634,33 @@ function removeJob(id) {
   return true;
 }
 
+// Queues a failed job again with the same URL and options. A Watch-linked job takes its
+// Watch item back to queued too (via notifyWatchItem).
+function retryJob(id) {
+  const job = getJobSummary(id);
+  if (!job || job.status !== 'failed') return false;
+  updateJob(id, { status: 'queued', error: null, percent: 0, speed: null, eta: null, stage: null, pid: null });
+  processNext();
+  return true;
+}
+
+// Drops every failed job from the history (their Watch items keep their own failure record).
+function clearFailedJobs() {
+  const ids = db.transaction(() => {
+    const rows = db.prepare("SELECT id FROM downloads WHERE status = 'failed'").all().map((r) => r.id);
+    db.prepare("DELETE FROM downloads WHERE status = 'failed'").run();
+    return rows;
+  })();
+  if (io) for (const id of ids) io.emit('job:removed', { id });
+  if (ids.length) emitCounts();
+  return ids.length;
+}
+
 function getActiveCount() {
   return activeCount;
 }
 
 module.exports = {
   init, enqueue, createQueuedJob, startQueuedJobs, setWatchItemListener, listJobs, searchJobs, getStatusCounts,
-  getJobLog, getJob, getJobSummary, announceJob, stopJob, removeJob, getActiveCount,
+  getJobLog, getJob, getJobSummary, listColumns, announceJob, stopJob, removeJob, retryJob, clearFailedJobs, getActiveCount,
 };

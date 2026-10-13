@@ -474,7 +474,11 @@ function createWatchesRouter({
 
   // Get downloads triggered by this watch
   router.get('/:id/downloads', (req, res) => {
-    const downloads = database.prepare('SELECT * FROM downloads WHERE watch_id = ? ORDER BY created_at DESC LIMIT 100').all(req.params.id);
+    // Not the per-job yt-dlp log and command line, which the Activity view doesn't show.
+    const downloads = database.prepare(`
+      SELECT id, url, title, thumbnail, filepath, error, status, created_at, protected
+      FROM downloads WHERE watch_id = ? ORDER BY created_at DESC LIMIT 100
+    `).all(req.params.id);
     res.json(downloads);
   });
 

@@ -7,6 +7,11 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(path.join(DATA_DIR, 'app.db'));
 db.pragma('journal_mode = WAL');
+// Progress updates write several times a second per download. In WAL mode NORMAL only skips
+// the fsync on each commit (a power cut can lose the last moments, never corrupt the file),
+// which matters on NAS hard drives. busy_timeout covers a backup tool briefly locking it.
+db.pragma('synchronous = NORMAL');
+db.pragma('busy_timeout = 5000');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -85,6 +90,10 @@ CREATE TABLE IF NOT EXISTS lidarr_tasks (
 CREATE INDEX IF NOT EXISTS idx_lidarr_tasks_hash ON lidarr_tasks (hash);
 CREATE INDEX IF NOT EXISTS idx_lidarr_tasks_status ON lidarr_tasks (status);
 `);
+// Lookups compare hashes as stored (lowercase) so they can use the index.
+// A mixed-case duplicate of an existing row is the same grab; drop it rather than fail.
+db.prepare('UPDATE OR IGNORE lidarr_tasks SET hash = lower(hash) WHERE hash <> lower(hash)').run();
+db.prepare('DELETE FROM lidarr_tasks WHERE hash <> lower(hash)').run();
 
 // CREATE TABLE IF NOT EXISTS above only applies to brand-new databases, so upgrades of an
 // existing /config/app.db need these columns added by hand.
@@ -202,6 +211,7 @@ CREATE TABLE IF NOT EXISTS watch_runs (
 CREATE INDEX IF NOT EXISTS idx_watch_items_state ON watch_items (watch_id, download_status, next_retry_at);
 CREATE INDEX IF NOT EXISTS idx_watch_runs_watch ON watch_runs (watch_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_downloads_watch_item ON downloads (watch_item_id);
+CREATE INDEX IF NOT EXISTS idx_downloads_watch ON downloads (watch_id, status);
 CREATE INDEX IF NOT EXISTS idx_downloads_created ON downloads (created_at);
 CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads (status, created_at);
 `);

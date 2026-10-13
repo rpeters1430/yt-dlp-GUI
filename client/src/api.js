@@ -28,7 +28,7 @@ export const api = {
   me: () => request('/auth/me'),
   login: (username, password) => request('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
   logout: () => request('/auth/logout', { method: 'POST' }),
-  changePassword: (newPassword) => request('/auth/change-password', { method: 'POST', body: JSON.stringify({ newPassword }) }),
+  changePassword: (currentPassword, newPassword) => request('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
 
   getInfo: (url) => request('/downloads/info', { method: 'POST', body: JSON.stringify({ url }) }),
   enqueue: (payload) => request('/downloads', { method: 'POST', body: JSON.stringify(payload) }),
@@ -39,6 +39,8 @@ export const api = {
   getDownloadLog: (id) => request(`/downloads/${id}/log`),
   deleteDownload: (id) => request(`/downloads/${id}`, { method: 'DELETE' }),
   stopDownload: (id) => request(`/downloads/${id}/stop`, { method: 'POST' }),
+  retryDownload: (id) => request(`/downloads/${id}/retry`, { method: 'POST' }),
+  clearFailedDownloads: () => request('/downloads/clear-failed', { method: 'POST' }),
   toggleDownloadProtect: (id, protectedFlag) => request(`/downloads/${id}/protect`, { method: 'PATCH', body: JSON.stringify({ protected: protectedFlag }) }),
 
   listWatches: () => request('/watches'),

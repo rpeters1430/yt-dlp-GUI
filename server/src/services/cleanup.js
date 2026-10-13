@@ -38,9 +38,10 @@ function getCleanupConfig() {
 // wasn't "subscribed" to and shouldn't disappear on its own. LEFT JOIN (not INNER) so a
 // download whose watch was since deleted stays a candidate instead of silently becoming
 // permanently un-cleanable — it just reads as "not exempt" with no watch name to show.
+// Only the columns the plan uses: d.* would also read every job's yt-dlp log.
 function getCleanupCandidates() {
   return db.prepare(`
-    SELECT d.*, w.cleanup_exempt AS watch_cleanup_exempt, w.name AS watch_name, w.channel_name AS watch_channel_name
+    SELECT d.id, d.title, d.url, d.filepath, d.created_at, d.watch_id, d.protected, w.cleanup_exempt AS watch_cleanup_exempt, w.name AS watch_name, w.channel_name AS watch_channel_name
     FROM downloads d
     LEFT JOIN watches w ON w.id = d.watch_id
     WHERE d.status = 'completed' AND d.filepath IS NOT NULL AND d.watch_id IS NOT NULL

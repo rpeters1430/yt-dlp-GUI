@@ -219,6 +219,7 @@ Everything below is optional — set it in `.env` (or `environment:` in `docker-
 | `TZ` | container default (UTC) | Timezone for schedules and timestamps. |
 | `PORT` | `3000` | Port the server listens on inside the container. |
 | `MAX_CONCURRENT_DOWNLOADS` | `2` | How many downloads run at once. |
+| `CONCURRENT_FRAGMENTS` | `4` | Fragments fetched in parallel within one HLS/DASH download (Twitch VODs and most non-YouTube sites). `1` turns it off; live recordings never use it. |
 | `TRUST_PROXY` | off | Set to `1` behind a TLS-terminating reverse proxy — required for `COOKIE_SECURE` to work there. |
 | `COOKIE_SECURE` | off | Set to `1` once the app is reachable over HTTPS; restricts the login cookie to HTTPS. |
 | `ALLOW_LOCAL_URLS` | off | Set to `1` to allow URLs pointing at loopback/private/link-local addresses (e.g. `127.0.0.1`, `192.168.x.x`). Only needed to target an internal mirror or service. |
