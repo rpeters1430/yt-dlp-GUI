@@ -846,3 +846,72 @@ button.watch-run-line:hover:not(:disabled) { background: none; color: var(--text
 .menu-pop button:hover:not(:disabled),
 .menu-pop a:hover { background: var(--surface-hover); color: var(--text); }
 .menu-pop .danger { color: var(--accent-text); }
+
+/* ---------------------------------------------------------------------- */
+/* Settings                                                               */
+/* ---------------------------------------------------------------------- */
+
+.settings-layout { display: flex; flex-wrap: wrap; gap: 24px 32px; align-items: flex-start; }
+.settings-nav {
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: sticky;
+  top: 0;
+}
+.settings-nav button {
+  justify-content: flex-start;
+  background: none;
+  color: var(--text-4);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 10px 14px;
+  border-radius: 10px;
+}
+.settings-nav button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
+.settings-nav button.active { background: var(--surface-hover); color: var(--text); }
+@media (max-width: 760px) {
+  .settings-nav {
+    flex: 1 1 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    scrollbar-width: none;
+    position: static;
+  }
+  .settings-nav::-webkit-scrollbar { display: none; }
+  .settings-nav button { flex: none; }
+}
+.settings-main { flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.settings-head { border-bottom: 1px solid var(--border); padding-bottom: 16px; }
+.settings-head h2 { font-size: 22px; font-weight: 700; }
+.settings-head p { color: var(--text-secondary); font-size: 14.5px; margin-top: 6px; }
+.settings-main .panel { background: transparent; border: none; border-radius: 0; padding: 0 0 18px; border-bottom: 1px solid var(--border); }
+.settings-main .panel:last-child { border-bottom: none; }
+.settings-main .panel-header h2 { font-size: 17px; }
+.settings-main .panel-header h2 svg { display: none; }
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.setting-rows { display: flex; flex-direction: column; margin-top: -18px; }
+.setting-row-text { flex: 1 1 240px; min-width: 0; }
+.setting-row-label { font-size: 15px; font-weight: 600; }
+.setting-row-desc { font-size: 13.5px; color: var(--text-4); margin-top: 3px; }
+.setting-row-control { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+select.value-chip {
+  width: auto;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  background: var(--surface-hover);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: var(--text);
+}
+select.value-chip:focus { border-color: var(--accent); }
