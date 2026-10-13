@@ -325,6 +325,7 @@ input:focus, textarea:focus, select:focus {
   box-shadow: none;
 }
 input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
+input[type="checkbox"], input[type="radio"] { width: auto; padding: 0; flex: none; accent-color: var(--accent); }
 textarea { resize: vertical; }
 select { width: auto; cursor: pointer; }
 
