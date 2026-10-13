@@ -571,6 +571,19 @@ function musicContentPath(baseDir, artist, album) {
     : path.join(baseDir, artistDir);
 }
 
+// iTunes rate-limits lookups (403/429), most often while Lidarr grabs several albums at once.
+const ALBUM_LOOKUP_RETRY_DELAYS_MS = [2000, 5000];
+async function getAlbumDetailsWithRetry(id, delaysMs = ALBUM_LOOKUP_RETRY_DELAYS_MS) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await music.getAlbumDetails(id);
+    } catch (err) {
+      if (attempt >= delaysMs.length || err.message === 'Album not found') throw err;
+      await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
+    }
+  }
+}
+
 async function handleDownloadAdd({ type = 'album', id, artist, album, track = null, hash = null, category = 'music', savePath = null }) {
   const config = getLidarrConfig();
   const musicSettings = music.getMusicSettings();
@@ -594,7 +607,7 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, track = nu
 
   if (type === 'album') {
     try {
-      albumDetails = await music.getAlbumDetails(id);
+      albumDetails = await getAlbumDetailsWithRetry(id);
       if (albumDetails && albumDetails.tracks && albumDetails.tracks.length > 0) {
         const year = albumDetails.album.releaseYear ? ` (${albumDetails.album.releaseYear})` : '';
         title = `${albumDetails.album.artist} - ${albumDetails.album.name}${year}`;
@@ -616,7 +629,21 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, track = nu
     }
   }
 
-  // Fallback if details could not be retrieved
+  // An album grab without a track list can't be downloaded: falling back to a single search
+  // for the album's name fetches its title track (or an unrelated song) as the "album". Report
+  // it failed instead, so Lidarr blocklists this grab and can search again.
+  if (type === 'album' && tracksToDownload.length === 0) {
+    db.prepare(`
+      INSERT INTO lidarr_tasks (
+        hash, title, artist, album, type, external_id, total_tracks,
+        job_ids, status, save_path, content_path, category, size_bytes
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, '[]', 'failed', ?, ?, ?, 0)
+    `).run(hash, title, artist || null, album || null, type, String(id), resolvedBaseDir,
+      musicContentPath(resolvedBaseDir, artist, album || 'Unknown Album'), category || 'music');
+    return { ok: false, hash, title, error: 'Album track list unavailable' };
+  }
+
+  // Single-track releases need no lookup.
   if (tracksToDownload.length === 0) {
     const fallbackAlbum = album || 'Unknown Album';
     tracksToDownload.push({
@@ -656,6 +683,8 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, track = nu
   (async () => {
     const jobIds = [];
     for (const tr of tracksToDownload) {
+      // Lidarr removed the grab while its tracks were still being matched.
+      if (!getTaskByHash(hash)) break;
       try {
         const job = await music.enqueueMusicDownload({
           track: tr,
@@ -677,8 +706,12 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, track = nu
 
     // Leaving 'downloading' marks the batch as fully enqueued, so getQbitTorrents knows how
     // many jobs to wait for even if some tracks couldn't be matched.
-    db.prepare(`UPDATE lidarr_tasks SET job_ids = ?, status = ?, updated_at = datetime('now') WHERE hash = ?`)
+    const updated = db.prepare(`UPDATE lidarr_tasks SET job_ids = ?, status = ?, updated_at = datetime('now') WHERE hash = ?`)
       .run(JSON.stringify(jobIds), jobIds.length > 0 ? 'enqueued' : 'failed', hash);
+    if (updated.changes === 0) {
+      const queue = require('./queue');
+      for (const jobId of jobIds) queue.removeJob(jobId);
+    }
   })().catch((err) => {
     console.error(`[lidarr] Error processing download batch for ${hash}:`, err.message);
   });
@@ -752,8 +785,9 @@ function getQbitTorrents({ category, hashes } = {}) {
 
     const size = task.size_bytes || 50 * 1024 * 1024;
     const amountLeft = Math.max(0, Math.round(size * (1 - progress)));
-    const addedOn = Math.floor(new Date(task.created_at).getTime() / 1000);
-    const completionOn = state === 'uploading' ? Math.floor(new Date(task.updated_at).getTime() / 1000) : -1;
+    // SQLite datetime('now') is UTC without a zone suffix; without the Z it parses as local time.
+    const addedOn = Math.floor(new Date(`${task.created_at}Z`).getTime() / 1000);
+    const completionOn = state === 'uploading' ? Math.floor(new Date(`${task.updated_at}Z`).getTime() / 1000) : -1;
 
     result.push({
       hash: task.hash,
@@ -857,11 +891,25 @@ function getQbitTorrentProperties(hash) {
   };
 }
 
+// Lidarr removes a grab it gave up on (failed, blocklisted, or removed by the user): stop its
+// tracks that haven't finished so they don't keep downloading into the library. Finished files
+// stay where they are.
 function deleteQbitTorrents(hashes) {
   if (!hashes) return;
-  const list = String(hashes).split('|');
+  const list = String(hashes).toLowerCase().split('|').filter(Boolean);
+  if (list.length === 0) return;
   const placeholders = list.map(() => '?').join(',');
-  db.prepare(`DELETE FROM lidarr_tasks WHERE hash IN (${placeholders})`).run(...list);
+  const tasks = db.prepare(`SELECT job_ids FROM lidarr_tasks WHERE lower(hash) IN (${placeholders})`).all(...list);
+  db.prepare(`DELETE FROM lidarr_tasks WHERE lower(hash) IN (${placeholders})`).run(...list);
+  const queue = require('./queue');
+  for (const task of tasks) {
+    let jobIds = [];
+    try { jobIds = JSON.parse(task.job_ids || '[]'); } catch (_) {}
+    for (const jobId of jobIds) {
+      const job = queue.getJobSummary(jobId);
+      if (job && (job.status === 'queued' || job.status === 'downloading')) queue.removeJob(jobId);
+    }
+  }
 }
 
 function getSabQueue() {

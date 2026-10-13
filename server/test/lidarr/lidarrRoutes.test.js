@@ -310,3 +310,45 @@ test('album search finds the album in the artist catalog when keyword search mis
     'Incubus - Morning View (Live) (2001)',
   ]);
 });
+
+test('an album grab whose track list cannot be fetched fails instead of downloading one song', async (t) => {
+  const { base, key, lidarr } = await startApp(t);
+  const music = require(path.join(SRC, 'services', 'music'));
+  const originals = { getAlbumDetails: music.getAlbumDetails, enqueueMusicDownload: music.enqueueMusicDownload };
+  const enqueued = [];
+  music.getAlbumDetails = async () => { throw new Error('Album not found'); };
+  music.enqueueMusicDownload = async (opts) => { enqueued.push(opts); return { jobId: 'x' }; };
+  t.after(() => Object.assign(music, originals));
+
+  const torrent = lidarr.generateTorrentBuffer({ type: 'album', id: '42', artist: 'Incubus', album: 'Morning View' });
+  const infoHash = lidarr.getInfoHash(torrent);
+  const cookie = await qbitLogin(base, key);
+  const form = new FormData();
+  form.append('torrents', new Blob([torrent], { type: 'application/x-bittorrent' }), 'release.torrent');
+  await fetch(`${base}/api/lidarr/qbit/api/v2/torrents/add`, { method: 'POST', body: form, headers: { Cookie: cookie } });
+  await new Promise((r) => setTimeout(r, 30));
+
+  assert.equal(enqueued.length, 0);
+  const list = await (await fetch(`${base}/api/lidarr/qbit/api/v2/torrents/info?hashes=${infoHash}`, { headers: { Cookie: cookie } })).json();
+  assert.equal(list.length, 1);
+  assert.equal(list[0].state, 'error');
+});
+
+test('removing a grab in Lidarr stops its unfinished tracks', async (t) => {
+  const { db, base, key } = await startApp(t);
+  const queue = require(path.join(SRC, 'services', 'queue'));
+  db.prepare("INSERT INTO downloads (id, url, status) VALUES ('done', 'x', 'completed'), ('waiting', 'x', 'queued')").run();
+  db.prepare(`INSERT INTO lidarr_tasks (hash, title, type, external_id, total_tracks, job_ids, status, save_path, content_path)
+    VALUES ('abcdef', 'Incubus - Morning View', 'album', '42', 2, '["done","waiting"]', 'enqueued', '/m', '/m/Incubus')`).run();
+
+  const cookie = await qbitLogin(base, key);
+  const res = await fetch(`${base}/api/lidarr/qbit/api/v2/torrents/delete`, {
+    method: 'POST',
+    headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'hashes=ABCDEF&deleteFiles=false',
+  });
+  assert.equal(res.status, 200);
+  assert.equal(db.prepare("SELECT 1 FROM lidarr_tasks WHERE hash = 'abcdef'").get(), undefined);
+  assert.ok(queue.getJob('done'), 'finished tracks are kept');
+  assert.equal(queue.getJob('waiting'), undefined);
+});
