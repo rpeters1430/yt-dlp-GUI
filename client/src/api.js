@@ -126,6 +126,7 @@ export const api = {
     const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
     return request(`/library${qs ? `?${qs}` : ''}`);
   },
+  getLibraryItem: (id) => request(`/library/${encodeURIComponent(id)}`),
   deleteLibraryFile: (id) => request(`/library/${id}/file`, { method: 'DELETE' }),
   libraryStreamUrl: (id) => `${BASE}/library/${encodeURIComponent(id)}/stream`,
   libraryFileUrl: (id) => `${BASE}/library/${encodeURIComponent(id)}/file`,
