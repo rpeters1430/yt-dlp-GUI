@@ -122,6 +122,7 @@ router.post('/download', (req, res) => {
     channel,
     isLive = false,
     waitForLive = false,
+    liveFromStart = false,
     waitInterval = 15,
     quality = '',
     container = 'mp4',
@@ -148,6 +149,8 @@ router.post('/download', (req, res) => {
   const optionsJson = {
     isLive: !!isLive,
     waitForLive: !!waitForLive,
+    // Record the broadcast from its start rather than from now (ignored when not live).
+    liveFromStart: !!isLive && !waitForLive && !!liveFromStart,
     waitInterval: parseInt(waitInterval, 10) || 15,
     twitchChat: !!twitchChat,
     hlsUseMpegts: hlsUseMpegts !== false,

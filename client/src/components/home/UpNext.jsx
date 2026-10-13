@@ -13,7 +13,7 @@ function chunkLabel(job) {
   return `${mins >= 60 ? `${mins / 60}h` : `${mins}m`} chunks`;
 }
 
-function UpNextCard({ job, onRemoved }) {
+export function UpNextCard({ job, onRemoved }) {
   const [confirm, setConfirm] = useState(null);
   const [stopping, setStopping] = useState(false);
   const elapsed = useLiveElapsed(job);

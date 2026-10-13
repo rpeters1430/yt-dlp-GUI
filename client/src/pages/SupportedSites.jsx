@@ -1,22 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import {
-  Globe,
-  Search,
-  CheckCircle2,
-  XCircle,
-  AlertTriangle,
-  Info,
-  Film,
-  Music,
-  Captions,
-  Radio,
-  ShieldAlert,
-  Cookie,
-  ExternalLink,
-  Sparkles,
-  Layers,
-  HelpCircle,
-} from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 
 export default function SupportedSites() {
@@ -114,363 +97,176 @@ export default function SupportedSites() {
   }, [testUrl, guideData]);
 
   return (
-    <div className="supported-sites-page">
-      <div className="page-header">
-        <div>
-          <h1>Supported Sites & Capabilities</h1>
-          <p>Learn which features, arguments, and requirements apply across yt-dlp extractors.</p>
-        </div>
+    <>
+      <div className="page-title-row">
+        <h1>Supported sites</h1>
       </div>
 
-      {/* SECTION 1: URL / PLATFORM QUICK CHECKER */}
-      <section className="panel" style={{ marginBottom: 24 }}>
-        <div className="panel-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Search size={18} className="text-accent" />
-            <h2>Platform Capability Checker</h2>
-          </div>
+      <section className="panel site-check">
+        <h2 className="panel-title">Check a link or site</h2>
+        <div className="site-check-input">
+          <input
+            className="mono"
+            type="text"
+            placeholder="twitch.tv/riotgames, soundcloud, a full link…"
+            value={testUrl}
+            onChange={(e) => setTestUrl(e.target.value)}
+            aria-label="Link or site name"
+          />
+          {testUrl && <button type="button" className="text-btn" onClick={() => setTestUrl('')}>Clear</button>}
         </div>
-        <p className="muted small" style={{ marginTop: 0, marginBottom: 12 }}>
-          Paste a link or type a website name (e.g. <code>youtube.com</code>, <code>twitch.tv</code>, <code>soundcloud</code>, <code>vimeo</code>) to see its allowed arguments and requirements.
-        </p>
+        {checkedPlatform ? (
+          <>
+            <div className="site-check-result">
+              <strong className="site-check-name">{checkedPlatform.name}</strong>
+              {capabilityPills(checkedPlatform).map((c) => (
+                <span key={c.label} className={`cap-pill cap-${c.tone}`}>{c.label}: {c.value}</span>
+              ))}
+            </div>
+            <p className="site-check-note">{checkedPlatform.notes}</p>
+          </>
+        ) : testUrl.trim() ? (
+          <p className="site-check-note">
+            Not one of the major platforms below. Paste a full link (https://…) to check it with yt-dlp&apos;s generic rules, or search the extractor directory.
+          </p>
+        ) : null}
+      </section>
 
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <div style={{ position: 'relative', flex: 1 }}>
-            <input
-              type="text"
-              placeholder="Paste any URL or platform name (e.g. https://www.twitch.tv/videos/123)..."
-              value={testUrl}
-              onChange={(e) => setTestUrl(e.target.value)}
-              style={{ width: '100%', paddingLeft: 34 }}
-            />
-            <Search
-              size={15}
-              style={{
-                position: 'absolute',
-                left: 12,
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: 'var(--text-muted)',
-              }}
-            />
-          </div>
-          {testUrl && (
-            <button type="button" className="btn-secondary btn-sm" onClick={() => setTestUrl('')}>
-              Clear
-            </button>
+      <section>
+        <div className="section-head">
+          <h2>Major platforms</h2>
+          {categories.length > 2 && (
+            <div className="chip-row section-head-actions">
+              {categories.map((cat) => (
+                <button key={cat} type="button" className={`chip${categoryFilter === cat ? ' active' : ''}`} onClick={() => setCategoryFilter(cat)}>
+                  {cat === 'all' ? 'All' : cat}
+                </button>
+              ))}
+            </div>
           )}
         </div>
-
-        {checkedPlatform && (
-          <div className="platform-check-card" style={{ marginTop: 16 }}>
-            <div className="platform-check-header">
-              <div>
-                <span className="count-badge accent" style={{ marginRight: 8 }}>
-                  {checkedPlatform.category}
-                </span>
-                <strong style={{ fontSize: 16 }}>{checkedPlatform.name}</strong>
-              </div>
-              <span className="muted small">{checkedPlatform.domains.join(', ')}</span>
-            </div>
-
-            <div className="platform-capabilities-grid">
-              <div className="capability-item">
-                <span className="cap-label">Video</span>
-                {checkedPlatform.video ? (
-                  <span className="cap-status yes"><CheckCircle2 size={14} /> Supported</span>
-                ) : (
-                  <span className="cap-status no"><XCircle size={14} /> Audio Only</span>
-                )}
-              </div>
-
-              <div className="capability-item">
-                <span className="cap-label">Audio</span>
-                <span className="cap-status yes"><CheckCircle2 size={14} /> Supported</span>
-              </div>
-
-              <div className="capability-item">
-                <span className="cap-label">Subtitles</span>
-                {checkedPlatform.subtitles === 'None' ? (
-                  <span className="cap-status no"><XCircle size={14} /> None</span>
-                ) : (
-                  <span className="cap-status yes"><CheckCircle2 size={14} /> {checkedPlatform.subtitles}</span>
-                )}
-              </div>
-
-              <div className="capability-item">
-                <span className="cap-label">SponsorBlock</span>
-                {checkedPlatform.sponsorblock ? (
-                  <span className="cap-status yes"><CheckCircle2 size={14} /> Supported</span>
-                ) : (
-                  <span className="cap-status no" title="SponsorBlock only indexes YouTube videos">
-                    <XCircle size={14} /> YouTube Only
-                  </span>
-                )}
-              </div>
-
-              <div className="capability-item">
-                <span className="cap-label">Live Broadcasts</span>
-                {checkedPlatform.live ? (
-                  <span className="cap-status yes">
-                    <CheckCircle2 size={14} /> {checkedPlatform.liveRewind ? 'Live + Rewind' : 'Live Edge Only'}
-                  </span>
-                ) : (
-                  <span className="cap-status no"><XCircle size={14} /> No</span>
-                )}
-              </div>
-
-              <div className="capability-item">
-                <span className="cap-label">Cookies / Login</span>
-                <span className="cap-status info"><Info size={14} /> {checkedPlatform.cookies}</span>
-              </div>
-            </div>
-
-            <div className="platform-check-notes">
-              <Info size={15} style={{ flexShrink: 0, marginTop: 2, color: 'var(--text-accent)' }} />
-              <div>
-                <strong>Requirements & Notes: </strong>
-                {checkedPlatform.notes}
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* SECTION 2: GENERAL RULES BREAKDOWN */}
-      <section className="panel" style={{ marginBottom: 24 }}>
-        <div className="panel-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Layers size={18} className="text-accent" />
-            <h2>Feature Requirements & Limitations Guide</h2>
-          </div>
-        </div>
-
-        <div className="feature-rules-grid">
-          <div className="rule-card">
-            <div className="rule-card-header">
-              <Sparkles size={16} className="text-accent" />
-              <strong>SponsorBlock</strong>
-              <span className="badge-tag">YouTube only</span>
-            </div>
-            <p className="muted small">
-              SponsorBlock is powered by the public community database (<strong>sponsor.ajay.app</strong>),
-              which specifically tracks YouTube video IDs. Other sites like Twitch, SoundCloud, or Vimeo
-              do not have SponsorBlock segments. The GUI automatically prevents sending SponsorBlock arguments to non-YouTube sites to avoid errors.
-            </p>
-          </div>
-
-          <div className="rule-card">
-            <div className="rule-card-header">
-              <Captions size={16} className="text-accent" />
-              <strong>Subtitles & Captions</strong>
-              <span className="badge-tag">Site-specific</span>
-            </div>
-            <p className="muted small">
-              <strong>Auto-generated speech-to-text captions</strong> are only available on YouTube.
-              On platforms like Vimeo or TED, subtitles only exist if the creator uploaded manual CC files.
-              Audio-only platforms (SoundCloud, Bandcamp) do not support subtitles. The app automatically converts WebVTT subtitles to SRT for clean MP4 embedding.
-            </p>
-          </div>
-
-          <div className="rule-card">
-            <div className="rule-card-header">
-              <Radio size={16} className="text-accent" />
-              <strong>Live Stream Rewind</strong>
-              <span className="badge-tag">Site-specific</span>
-            </div>
-            <p className="muted small">
-              Recording an ongoing live stream from its beginning (<code>--live-from-start</code>)
-              needs the site to expose the stream's history. Your installed yt-dlp supports it for{' '}
-              <strong>{guideData?.liveFromStartSites?.join(', ') || 'YouTube'}</strong>; this list is read
-              from yt-dlp itself and updates with it. Everywhere else, recording starts from the moment you join.
-            </p>
-          </div>
-
-          <div className="rule-card">
-            <div className="rule-card-header">
-              <Cookie size={16} className="text-accent" />
-              <strong>Cookies & Logged-In Sessions</strong>
-              <span className="badge-tag">Settings tab</span>
-            </div>
-            <p className="muted small">
-              Content that is age-restricted, subscriber-only (Twitch), or behind login gates (Instagram, private YouTube videos)
-              requires Netscape cookies. You can export cookies from your browser and paste them into <strong>Settings &rarr; Cookies</strong>.
-            </p>
-          </div>
-
-          <div className="rule-card">
-            <div className="rule-card-header">
-              <ShieldAlert size={16} style={{ color: 'var(--danger, #ef4444)' }} />
-              <strong>DRM Protection</strong>
-              <span className="badge-tag" style={{ color: 'var(--danger, #ef4444)' }}>Unsupported</span>
-            </div>
-            <p className="muted small">
-              yt-dlp does not bypass DRM encryption. Commercial subscription services (Netflix, Spotify, Hulu, Disney+, Amazon Prime)
-              cannot be downloaded by yt-dlp.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* SECTION 3: MAJOR SITES COMPATIBILITY MATRIX */}
-      <section className="panel" style={{ marginBottom: 24 }}>
-        <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Globe size={18} className="text-accent" />
-            <h2>Major Platforms Compatibility Matrix</h2>
-          </div>
-
-          <div className="segmented-choice">
-            {categories.map((cat) => (
-              <button
-                key={cat}
-                type="button"
-                className={categoryFilter === cat ? 'active' : ''}
-                onClick={() => setCategoryFilter(cat)}
-                style={{ textTransform: 'capitalize' }}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="table-wrapper">
-          <table className="sites-table">
+        <div className="table-wrapper platform-table-wrap">
+          <table className="platform-table">
             <thead>
               <tr>
                 <th>Platform</th>
-                <th>Category</th>
                 <th>Video</th>
                 <th>Audio</th>
-                <th>Subtitles</th>
+                <th>Live</th>
+                <th>Subs</th>
                 <th>SponsorBlock</th>
-                <th>Live Streams</th>
-                <th>Cookies / Auth</th>
+                <th>Cookies</th>
               </tr>
             </thead>
             <tbody>
               {filteredSites.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="muted small">
-                    {loadingGuide ? 'Loading site guide…' : 'Could not load the site guide.'}
-                  </td>
+                  <td colSpan={7} className="muted">{loadingGuide ? 'Loading site guide…' : 'Could not load the site guide.'}</td>
                 </tr>
               )}
-              {filteredSites.map((site) => (
-                <tr key={site.id}>
-                  <td>
-                    <strong>{site.name}</strong>
-                    <div className="muted small">{site.domains[0]}</div>
-                  </td>
-                  <td>
-                    <span className="badge-tag">{site.category}</span>
-                  </td>
-                  <td>
-                    {site.video ? (
-                      <span className="cap-status yes"><CheckCircle2 size={13} /> Yes</span>
-                    ) : (
-                      <span className="cap-status no"><XCircle size={13} /> Audio</span>
-                    )}
-                  </td>
-                  <td>
-                    <span className="cap-status yes"><CheckCircle2 size={13} /> Yes</span>
-                  </td>
-                  <td>
-                    {site.subtitles === 'None' ? (
-                      <span className="cap-status no"><XCircle size={13} /> None</span>
-                    ) : (
-                      <span className="cap-status yes"><CheckCircle2 size={13} /> {site.subtitles}</span>
-                    )}
-                  </td>
-                  <td>
-                    {site.sponsorblock ? (
-                      <span className="cap-status yes"><CheckCircle2 size={13} /> Supported</span>
-                    ) : (
-                      <span className="cap-status no"><XCircle size={13} /> No</span>
-                    )}
-                  </td>
-                  <td>
-                    {site.live ? (
-                      <span className="cap-status yes">
-                        <CheckCircle2 size={13} /> {site.liveRewind ? 'Live + Rewind' : 'Live Edge'}
-                      </span>
-                    ) : (
-                      <span className="cap-status no"><XCircle size={13} /> No</span>
-                    )}
-                  </td>
-                  <td>
-                    <span className="muted small">{site.cookies}</span>
-                  </td>
-                </tr>
-              ))}
+              {filteredSites.map((site) => {
+                const caps = Object.fromEntries(capabilityPills(site).map((c) => [c.label, c]));
+                return (
+                  <tr key={site.id}>
+                    <td>
+                      <div className="platform-name">{site.name}</div>
+                      <div className="mono-meta">{site.domains[0]}</div>
+                    </td>
+                    {['Video', 'Audio', 'Live', 'Subtitles', 'SponsorBlock', 'Cookies'].map((k) => (
+                      <td key={k} className={`mono cap-cell cap-text-${caps[k].tone}`} title={k === 'Cookies' ? site.cookies : undefined}>
+                        {caps[k].tone === 'off' && k !== 'Cookies' ? '—' : caps[k].value}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </section>
 
-      {/* SECTION 4: FULL EXTRACTORS DIRECTORY SEARCH */}
-      <section className="panel">
-        <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <HelpCircle size={18} className="text-accent" />
-            <h2>All Supported Extractors Directory</h2>
-            {totalExtractors > 0 && (
-              <span className="count-badge accent">{totalExtractors.toLocaleString()} extractors</span>
-            )}
+      <section>
+        <div className="section-head"><h2>How features differ by site</h2></div>
+        <div className="rule-rows">
+          <div className="rule-row">
+            <div className="rule-row-title">SponsorBlock <span className="cap-pill cap-partial">YouTube only</span></div>
+            <p>The community SponsorBlock database only tracks YouTube video IDs, so the app never sends SponsorBlock options to other sites.</p>
           </div>
-
-          <div style={{ position: 'relative', width: 260 }}>
-            <input
-              type="text"
-              placeholder="Search 1,700+ extractors..."
-              value={extractorSearch}
-              onChange={(e) => setExtractorSearch(e.target.value)}
-              style={{ width: '100%', paddingLeft: 30, fontSize: 13 }}
-            />
-            <Search
-              size={13}
-              style={{
-                position: 'absolute',
-                left: 10,
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: 'var(--text-muted)',
-              }}
-            />
+          <div className="rule-row">
+            <div className="rule-row-title">Subtitles <span className="cap-pill cap-partial">site-specific</span></div>
+            <p>Auto-generated captions exist only on YouTube. Elsewhere subtitles exist only if the uploader added them; audio sites have none. WebVTT is converted to SRT so it embeds cleanly in MP4.</p>
+          </div>
+          <div className="rule-row">
+            <div className="rule-row-title">Recording live from the start <span className="cap-pill cap-partial">site-specific</span></div>
+            <p>
+              Needs the site to expose the stream&apos;s history. Your installed yt-dlp supports it for{' '}
+              <strong>{guideData?.liveFromStartSites?.join(', ') || 'YouTube'}</strong>. Everywhere else, recording starts when you join.
+            </p>
+          </div>
+          <div className="rule-row">
+            <div className="rule-row-title">Cookies <span className="cap-pill cap-off">Settings › Cookies</span></div>
+            <p>Age-restricted, members-only and login-gated videos need browser cookies. Export a cookies.txt and paste it in <Link to="/settings?section=cookies">Settings › Cookies</Link>.</p>
+          </div>
+          <div className="rule-row">
+            <div className="rule-row-title">DRM <span className="cap-pill cap-danger">unsupported</span></div>
+            <p>yt-dlp does not bypass DRM, so Netflix, Spotify, Hulu, Disney+ and Prime Video can&apos;t be downloaded.</p>
           </div>
         </div>
+      </section>
 
-        <p className="muted small" style={{ marginTop: 0, marginBottom: 12 }}>
-          yt-dlp includes native support for over 1,700 domains and video services.
-          You can also view the official list on GitHub: {' '}
-          <a
-            href="https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: 'var(--accent)', textDecoration: 'none' }}
-          >
-            yt-dlp Supported Sites <ExternalLink size={11} style={{ verticalAlign: -1 }} />
+      <section>
+        <div className="section-head">
+          <h2>All extractors</h2>
+          <span className="mono-meta">{totalExtractors > 0 ? `${totalExtractors.toLocaleString()} ${extractorSearch ? 'match' : 'total'}` : ''}</span>
+          <a className="text-btn section-head-actions" href="https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md" target="_blank" rel="noopener noreferrer">
+            Official list
           </a>
-        </p>
-
+        </div>
+        <input
+          className="toolbar-search extractor-search"
+          type="text"
+          placeholder="Search 1,700+ extractors"
+          value={extractorSearch}
+          onChange={(e) => setExtractorSearch(e.target.value)}
+          aria-label="Search extractors"
+        />
         {loadingExtractors ? (
-          <p className="muted small">Searching extractors…</p>
+          <p className="empty-line">Searching extractors…</p>
         ) : extractors.length === 0 ? (
-          <p className="muted small">No extractors match &quot;{extractorSearch}&quot;.</p>
+          <p className="empty-line">
+            {extractorSearch ? <>No extractors match &quot;{extractorSearch}&quot;.</> : "Couldn't load the extractor list from yt-dlp."}
+          </p>
         ) : (
-          <div className="extractors-grid">
+          <div className="extractor-grid">
             {extractors.map((e) => (
-              <div key={e.name} className="extractor-pill" title={e.description}>
-                <span className="extractor-name">{e.name}</span>
-                {e.description && e.description !== e.name && (
-                  <span className="extractor-desc">{e.description}</span>
-                )}
+              <div key={e.name} className="extractor-item" title={e.description}>
+                <span className="mono">{e.name}</span>
+                {e.description && e.description !== e.name && <span className="extractor-item-desc">{e.description}</span>}
               </div>
             ))}
           </div>
         )}
       </section>
-    </div>
+    </>
   );
+}
+
+// Capability pills for a guide site: tone 'yes' (green), 'partial' (amber), 'off' (grey).
+function capabilityPills(site) {
+  const subs = site.subtitles || 'None';
+  const cookies = String(site.cookies || '');
+  let cookieValue = 'not needed';
+  let cookieTone = 'off';
+  if (/^required/i.test(cookies)) { cookieValue = 'required'; cookieTone = 'partial'; }
+  else if (/^recommended/i.test(cookies)) { cookieValue = 'recommended'; cookieTone = 'partial'; }
+  else if (/^optional/i.test(cookies)) { cookieValue = 'sometimes'; cookieTone = 'partial'; }
+  else if (cookies && !/^not needed/i.test(cookies)) { cookieValue = cookies.toLowerCase(); cookieTone = 'partial'; }
+  return [
+    { label: 'Video', value: site.video ? 'Yes' : 'audio only', tone: site.video ? 'yes' : 'off' },
+    { label: 'Audio', value: 'Yes', tone: 'yes' },
+    { label: 'Live', value: site.live ? (site.liveRewind ? 'from start' : 'Yes') : 'No', tone: site.live ? 'yes' : 'off' },
+    { label: 'Subtitles', value: subs === 'None' ? 'None' : /^manual & auto/i.test(subs) ? 'Yes' : subs.toLowerCase(), tone: subs === 'None' ? 'off' : /^manual & auto/i.test(subs) ? 'yes' : 'partial' },
+    { label: 'SponsorBlock', value: site.sponsorblock ? 'Yes' : 'No', tone: site.sponsorblock ? 'yes' : 'off' },
+    { label: 'Cookies', value: cookieValue, tone: cookieTone },
+  ];
 }

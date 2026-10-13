@@ -1,32 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Radio,
-  Tv,
-  Film,
-  Clock,
-  Sparkles,
-  Download,
-  CheckCircle2,
-  AlertCircle,
-  XCircle,
-  Loader2,
-  Search,
-  Scissors,
-  Key,
-  RefreshCw,
-  ExternalLink,
-  Music,
-  Captions,
-  Terminal,
-  Play,
-  Sliders,
-  Video,
-} from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { useDownloads } from '../context/DownloadsContext.jsx';
-import QueueItem from '../components/QueueItem.jsx';
-import ConfirmDialog from '../components/ConfirmDialog.jsx';
-import { useModalA11y } from '../hooks/useModalA11y.js';
+import Art from '../components/Art.jsx';
+import Drawer from '../components/Drawer.jsx';
+import { Segmented, Switch, ToggleRow } from '../components/DownloadOptionsFields.jsx';
+import { UpNextCard } from '../components/home/UpNext.jsx';
+import { FinishedRow } from '../components/home/RecentlyFinished.jsx';
+import { formatCount } from '../format.js';
 
 function formatDuration(sec) {
   if (!sec && sec !== 0) return '';
@@ -63,6 +44,8 @@ export default function Twitch() {
   // Live recording options
   const [liveChannel, setLiveChannel] = useState('');
   const [waitForLive, setWaitForLive] = useState(false);
+  const [liveFromStart, setLiveFromStart] = useState(true);
+  const [moreOptions, setMoreOptions] = useState(false);
   const waitInterval = 15;
   const [quality, setQuality] = useState('');
   const [container, setContainer] = useState('mp4');
@@ -79,7 +62,8 @@ export default function Twitch() {
   const [directUrl, setDirectUrl] = useState('');
   const [directQuality, setDirectQuality] = useState('');
   const [directContainer, setDirectContainer] = useState('mp4');
-  const [directDownloadSections, setDirectDownloadSections] = useState('');
+  const [directStart, setDirectStart] = useState('');
+  const [directEnd, setDirectEnd] = useState('');
   const [directChat, setDirectChat] = useState(false);
   const [directAudioOnly, setDirectAudioOnly] = useState(false);
   const [directSubmitting, setDirectSubmitting] = useState(false);
@@ -107,7 +91,6 @@ export default function Twitch() {
 
   const [vodMessage, setVodMessage] = useState(null); // { type: 'success' | 'error', text }
 
-  const trimModalRef = useModalA11y(!!selectedVod, () => setSelectedVod(null));
 
   // The shared list only holds the newest finished jobs across every site, so Twitch
   // captures could fall out of it; this page loads its own recent Twitch history.
@@ -171,7 +154,7 @@ export default function Twitch() {
     e?.preventDefault();
     const ch = (liveChannel || channelInput).trim();
     if (!ch) {
-      setLiveError('Please enter a channel name or URL');
+      setLiveError('Look up a channel first, or type its name above.');
       return;
     }
 
@@ -183,6 +166,7 @@ export default function Twitch() {
         channel: ch,
         isLive: true,
         waitForLive,
+        liveFromStart: !waitForLive && liveFromStart,
         waitInterval,
         quality,
         container,
@@ -195,8 +179,8 @@ export default function Twitch() {
       const splitNote = splitLiveChunks ? ` (will auto-split into ${liveChunkDuration}m chunks)` : '';
       setLiveSuccess(
         waitForLive
-          ? `Monitoring stream for ${ch}${splitNote}. yt-dlp will automatically begin recording as soon as the channel goes live.`
-          : `Started recording live stream for ${ch}${splitNote}. Tracking progress below.`
+          ? `Waiting for ${ch} to go live${splitNote}. Recording starts automatically.`
+          : `Recording ${ch}${splitNote}. Progress shows below and on Home.`
       );
     } catch (err) {
       setLiveError(err.message || 'Failed to start live recording');
@@ -208,6 +192,9 @@ export default function Twitch() {
   async function handleDirectDownload(e) {
     e?.preventDefault();
     if (!directUrl.trim()) return;
+    const sections = directStart.trim() || directEnd.trim()
+      ? `${directStart.trim() || '00:00:00'}-${directEnd.trim() || 'inf'}`
+      : '';
 
     setDirectSubmitting(true);
     setDirectMessage('');
@@ -216,14 +203,15 @@ export default function Twitch() {
         url: directUrl.trim(),
         quality: directQuality,
         container: directContainer,
-        downloadSections: directDownloadSections ? `*${directDownloadSections}` : '',
+        downloadSections: sections ? `*${sections}` : '',
         twitchChat: directChat,
         audioOnly: directAudioOnly,
         isLive: false,
       });
       setDirectMessage('Download queued successfully!');
       setDirectUrl('');
-      setDirectDownloadSections('');
+      setDirectStart('');
+      setDirectEnd('');
     } catch (err) {
       setDirectMessage(`Error: ${err.message}`);
     } finally {
@@ -285,6 +273,16 @@ export default function Twitch() {
     }
   }
 
+  const lookedUp = channelData;
+  const isLive = !!lookedUp?.live;
+  const targetChannel = (liveChannel || channelInput).trim();
+  const recordLabel = startingLive
+    ? 'Starting…'
+    : waitForLive || (lookedUp && !isLive)
+      ? 'Record when they go live'
+      : liveFromStart ? 'Record full broadcast' : 'Start recording now';
+  const chunkValue = splitLiveChunks ? liveChunkDuration : 0;
+
   return (
     <>
       <div className="page-title-row">
@@ -303,673 +301,320 @@ export default function Twitch() {
         </div>
       </div>
 
-      {/* Top Channel Checker Bar */}
-      <section className="panel twitch-channel-panel">
-        <div className="twitch-search-row">
-          <div className="search-input-group">
-            <Search size={16} className="search-icon" />
-            <input
-              type="text"
-              placeholder="Enter channel name or link (e.g. eslcs, shroud, twitch.tv/riotgames)"
-              value={channelInput}
-              onChange={(e) => setChannelInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleCheckChannel()}
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => handleCheckChannel()}
-            disabled={checkingChannel || !channelInput.trim()}
-          >
-            {checkingChannel ? <><Loader2 size={15} className="spin-icon" /> Checking…</> : 'Check Channel'}
+      {(activeTab === 'record' || activeTab === 'vods') && (
+        <form className="lookup-row" onSubmit={(e) => { e.preventDefault(); handleCheckChannel(); }}>
+          <input
+            type="text"
+            placeholder="Channel name or link, e.g. riotgames or twitch.tv/riotgames"
+            value={channelInput}
+            onChange={(e) => { setChannelInput(e.target.value); setLiveChannel(''); }}
+            aria-label="Twitch channel"
+          />
+          <button type="submit" className="btn-secondary btn-lg" disabled={checkingChannel || !channelInput.trim()}>
+            {checkingChannel ? 'Looking up…' : 'Look up'}
           </button>
-        </div>
+        </form>
+      )}
+      {channelError && (activeTab === 'record' || activeTab === 'vods') && <div className="notice notice-danger">{channelError}</div>}
 
-        <div className="twitch-quick-chips">
-          <span className="muted small">Try:</span>
-          {['eslcs', 'shroud', 'criticalrole', 'riotgames', 'dota2ti'].map((name) => (
-            <button
-              key={name}
-              type="button"
-              className="chip-btn"
-              onClick={() => {
-                setChannelInput(name);
-                handleCheckChannel(name);
-              }}
-            >
-              {name}
-            </button>
-          ))}
-        </div>
-
-        {channelError && (
-          <div className="alert alert-error" style={{ marginTop: 12 }}>
-            <AlertCircle size={16} /> {channelError}
-          </div>
-        )}
-
-        {/* Live / Offline Status Result Card */}
-        {channelData && (
-          <div className="twitch-status-card">
-            {channelData.live ? (
-              <div className="twitch-live-banner">
-                <div className="twitch-live-preview">
-                  {channelData.stream?.thumbnail ? (
-                    <img src={channelData.stream.thumbnail} alt={channelData.stream.title} />
-                  ) : (
-                    <div className="empty-thumb"><Tv size={32} /></div>
-                  )}
-                  <span className="live-pulsing-badge">
-                    <span className="pulsing-dot" /> LIVE NOW
-                  </span>
-                </div>
-
-                <div className="twitch-live-details">
-                  <div className="live-header-line">
-                    <span className="twitch-channel-tag">@{channelData.channel}</span>
-                    <span className="tag status-tag status-downloading">Online</span>
-                    {channelData.stream?.highestQuality && (
-                      <span className="tag"><Sparkles size={11} /> {channelData.stream.highestQuality}</span>
-                    )}
-                  </div>
-                  <h3 className="twitch-stream-title">{channelData.stream?.title}</h3>
-                  <div className="twitch-stream-actions">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setLiveChannel(channelData.channel);
-                        setActiveTab('record');
-                        setWaitForLive(false);
-                      }}
-                    >
-                      <Radio size={14} /> Record Live Stream
-                    </button>
-                    <a
-                      href={channelData.channelUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn-secondary"
-                    >
-                      <ExternalLink size={14} /> View on Twitch
-                    </a>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="twitch-offline-banner">
-                <div className="offline-left">
-                  <span className="offline-dot" />
-                  <div>
-                    <strong>@{channelData.channel}</strong> is currently <strong>Offline</strong>.
-                    <div className="muted small">You can set up auto-recording to start downloading the moment they go live.</div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => {
-                    setLiveChannel(channelData.channel);
-                    setActiveTab('record');
-                    setWaitForLive(true);
-                  }}
-                >
-                  <Clock size={14} /> Wait For Live (Auto-Record)
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </section>
-
-      {/* Tab 1: Live Stream Recorder */}
       {activeTab === 'record' && (
-        <section className="panel">
-          <div className="panel-header">
-            <h2><Radio size={16} /> Live Stream Recording Configuration</h2>
-          </div>
-          <form onSubmit={handleStartLiveRecord}>
-            <div className="form-group">
-              <label className="field-label">
-                Twitch Channel or URL
-                <input
-                  type="text"
-                  placeholder="e.g. eslcs or https://twitch.tv/eslcs"
-                  value={liveChannel}
-                  onChange={(e) => setLiveChannel(e.target.value)}
-                  required
+        <section className="twitch-live">
+          <Art
+            src={isLive ? lookedUp.stream?.thumbnail : null}
+            className={`twitch-preview${isLive ? '' : ' twitch-preview-empty'}`}
+            label={!lookedUp ? 'Look up a channel to see if it is live' : isLive ? 'live stream preview' : `@${lookedUp.channel} is offline`}
+          >
+            {isLive && <span className="badge badge-live badge-tl">● LIVE</span>}
+            {isLive && lookedUp.stream?.viewCount ? <span className="badge badge-dark badge-tr">{formatCount(lookedUp.stream.viewCount)} watching</span> : null}
+          </Art>
+
+          <form className="twitch-side" onSubmit={handleStartLiveRecord}>
+            <div className="twitch-channel">
+              <Art src={null} className="twitch-avatar" ratio="1" />
+              <div>
+                <div className="twitch-channel-name">{lookedUp?.channel || targetChannel || 'No channel yet'}</div>
+                <div className="twitch-channel-sub">
+                  {!lookedUp ? 'Look up a channel above' : isLive ? `Live · best ${lookedUp.stream?.highestQuality || 'source'}` : 'Offline'}
+                </div>
+              </div>
+            </div>
+            {isLive && lookedUp.stream?.title && <h2 className="twitch-stream-title">{lookedUp.stream.title}</h2>}
+            {lookedUp && !isLive && (
+              <p className="field-hint">Not live right now. Queue it and recording starts the moment they go live (yt-dlp checks every {waitInterval}s).</p>
+            )}
+
+            {(!lookedUp || isLive) && (
+              <div className="dl-options-group">
+                <span className="field-caption">When</span>
+                <Segmented
+                  className="seg-full"
+                  value={waitForLive ? 'wait' : 'now'}
+                  onChange={(v) => setWaitForLive(v === 'wait')}
+                  options={[{ value: 'now', label: 'Record now' }, { value: 'wait', label: 'When they go live' }]}
                 />
-              </label>
+              </div>
+            )}
+            {!waitForLive && (!lookedUp || isLive) && (
+              <div className="dl-options-group">
+                <span className="field-caption">Start from</span>
+                <Segmented
+                  className="seg-full"
+                  value={liveFromStart}
+                  onChange={setLiveFromStart}
+                  options={[{ value: true, label: 'Beginning of stream' }, { value: false, label: 'Right now' }]}
+                />
+              </div>
+            )}
+
+            <div className="dl-options-group">
+              <span className="field-caption">Split recording into chunks</span>
+              <div className="choice-grid choice-grid-4">
+                {[[0, 'Off'], [30, '30m'], [60, '1h'], [120, '2h']].map(([v, l]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    className={`choice choice-accent mono${chunkValue === v ? ' active' : ''}`}
+                    onClick={() => { setSplitLiveChunks(v > 0); if (v) setLiveChunkDuration(v); }}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div className="segmented-choice" style={{ marginBottom: 16 }}>
-              <button
-                type="button"
-                className={!waitForLive ? 'active' : ''}
-                onClick={() => setWaitForLive(false)}
-              >
-                <Radio size={14} /> Record Live Stream Now
-              </button>
-              <button
-                type="button"
-                className={waitForLive ? 'active' : ''}
-                onClick={() => setWaitForLive(true)}
-              >
-                <Clock size={14} /> Wait For Stream (Auto-record when live)
-              </button>
-            </div>
-
-            {waitForLive && (
-              <div className="alert alert-info" style={{ marginBottom: 14 }}>
-                <Clock size={16} />
-                <div>
-                  <strong>Auto-Record Enabled:</strong> yt-dlp will poll every {waitInterval}s in the background and automatically start capturing the moment this channel goes live.
+            <button type="button" className="text-btn more-toggle" onClick={() => setMoreOptions((v) => !v)} aria-expanded={moreOptions}>
+              {moreOptions ? 'Fewer options' : 'More options'}
+            </button>
+            {moreOptions && (
+              <div className="dl-options">
+                <Segmented
+                  className="seg-full"
+                  value={audioOnly}
+                  onChange={setAudioOnly}
+                  options={[{ value: false, label: 'Video' }, { value: true, label: 'Audio only' }]}
+                />
+                {!audioOnly && (
+                  <div className="form-pair">
+                    <label className="field-caption">Quality
+                      <select value={quality} onChange={(e) => setQuality(e.target.value)}>
+                        {QUALITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </label>
+                    <label className="field-caption">File type
+                      <select value={container} onChange={(e) => setContainer(e.target.value)}>
+                        <option value="mp4">MP4</option>
+                        <option value="mkv">MKV</option>
+                        <option value="ts">TS (raw stream)</option>
+                      </select>
+                    </label>
+                  </div>
+                )}
+                <div className="toggle-list">
+                  <ToggleRow label="Crash-proof recording" description="Writes MPEG-TS segments so an interrupted recording stays playable" checked={hlsUseMpegts} onChange={setHlsUseMpegts} />
+                  <ToggleRow label="Save chat log" checked={twitchChat} onChange={setTwitchChat} />
                 </div>
               </div>
             )}
 
-            <div className="options-row" style={{ flexWrap: 'wrap', gap: 14 }}>
-              <div className="segmented">
-                <button type="button" className={!audioOnly ? 'active' : ''} onClick={() => setAudioOnly(false)}>
-                  <Video size={13} /> Video
-                </button>
-                <button type="button" className={audioOnly ? 'active' : ''} onClick={() => setAudioOnly(true)}>
-                  <Music size={13} /> Audio only
-                </button>
-              </div>
-
-              {!audioOnly && (
-                <label className="field-inline">
-                  Quality Cap
-                  <select value={quality} onChange={(e) => setQuality(e.target.value)}>
-                    {QUALITY_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              {!audioOnly && (
-                <label className="field-inline">
-                  Container
-                  <select value={container} onChange={(e) => setContainer(e.target.value)}>
-                    <option value="mp4">MP4 (Standard)</option>
-                    <option value="mkv">MKV (Matroska)</option>
-                    <option value="ts">TS (MPEG-TS Raw Stream)</option>
-                  </select>
-                </label>
-              )}
-
-              <label className="checkbox-label" title="Records MPEG-TS live segments to guarantee stream files remain intact and playable even if stopped or interrupted.">
-                <input
-                  type="checkbox"
-                  checked={hlsUseMpegts}
-                  onChange={(e) => setHlsUseMpegts(e.target.checked)}
-                />
-                Crash-proof MPEG-TS HLS
-              </label>
-
-              <label className="checkbox-label" title="Download Twitch chat / rechat stream when available.">
-                <input
-                  type="checkbox"
-                  checked={twitchChat}
-                  onChange={(e) => setTwitchChat(e.target.checked)}
-                />
-                <Captions size={14} /> Twitch Chat Log
-              </label>
-            </div>
-
-            <div className="live-options-panel live-split-panel" style={{ marginTop: 14 }}>
-              <div className="live-split-header">
-                <span className="live-split-label">
-                  <Scissors size={14} /> Split recording into chunks
-                </span>
-                <span className="muted small">
-                  {splitLiveChunks
-                    ? `Every ${liveChunkDuration >= 60 ? `${liveChunkDuration / 60} hour${liveChunkDuration > 60 ? 's' : ''}` : `${liveChunkDuration} min`}`
-                    : 'Single continuous file'}
-                </span>
-              </div>
-              <div className="segmented-choice segmented-split">
-                <button
-                  type="button"
-                  className={!splitLiveChunks ? 'active' : ''}
-                  onClick={() => setSplitLiveChunks(false)}
-                >
-                  Single file
-                </button>
-                <button
-                  type="button"
-                  className={splitLiveChunks && liveChunkDuration === 15 ? 'active' : ''}
-                  onClick={() => { setSplitLiveChunks(true); setLiveChunkDuration(15); }}
-                >
-                  15 min
-                </button>
-                <button
-                  type="button"
-                  className={splitLiveChunks && liveChunkDuration === 30 ? 'active' : ''}
-                  onClick={() => { setSplitLiveChunks(true); setLiveChunkDuration(30); }}
-                >
-                  30 min
-                </button>
-                <button
-                  type="button"
-                  className={splitLiveChunks && liveChunkDuration === 60 ? 'active' : ''}
-                  onClick={() => { setSplitLiveChunks(true); setLiveChunkDuration(60); }}
-                >
-                  1 hour
-                </button>
-                <button
-                  type="button"
-                  className={splitLiveChunks && liveChunkDuration === 120 ? 'active' : ''}
-                  onClick={() => { setSplitLiveChunks(true); setLiveChunkDuration(120); }}
-                >
-                  2 hours
-                </button>
-                <button
-                  type="button"
-                  className={splitLiveChunks && ![15, 30, 60, 120].includes(liveChunkDuration) ? 'active' : ''}
-                  onClick={() => { setSplitLiveChunks(true); setLiveChunkDuration((d) => [15, 30, 60, 120].includes(d) ? 45 : d); }}
-                >
-                  Custom
-                </button>
-              </div>
-              {splitLiveChunks && (
-                <div className="live-split-info">
-                  {![15, 30, 60, 120].includes(liveChunkDuration) && (
-                    <div className="live-split-custom-row">
-                      <label htmlFor="twitch-custom-chunk-mins" className="muted small">Chunk time (minutes):</label>
-                      <input
-                        id="twitch-custom-chunk-mins"
-                        type="number"
-                        min="1"
-                        max="1440"
-                        value={liveChunkDuration || 30}
-                        onChange={(e) => setLiveChunkDuration(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                        className="input-sm"
-                      />
-                    </div>
-                  )}
-                  <p className="muted small">
-                    ✂️ When recording finishes, this Twitch stream will automatically be split into{' '}
-                    <strong>{liveChunkDuration >= 60 ? `${liveChunkDuration / 60} hour` : `${liveChunkDuration} minute`}</strong> chunks
-                    via lossless stream copy (no quality loss). Files will be saved as <code>.part01.mp4</code>, <code>.part02.mp4</code>, etc.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div style={{ marginTop: 14 }}>
-              <div className="spacer">
-                <button type="submit" disabled={startingLive || !liveChannel.trim()}>
-                  {startingLive ? (
-                    <><Loader2 size={15} className="spin-icon" /> Starting…</>
-                  ) : waitForLive ? (
-                    <><Clock size={15} /> Start Stream Watcher</>
-                  ) : (
-                    <><Radio size={15} /> Start Live Capture</>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {liveSuccess && <div className="alert alert-success" style={{ marginTop: 12 }}><CheckCircle2 size={16} />{liveSuccess}</div>}
-            {liveError && <div className="alert alert-error" style={{ marginTop: 12 }}><AlertCircle size={16} />{liveError}</div>}
+            <button type="submit" className="btn-primary btn-lg btn-block" disabled={startingLive || !targetChannel}>
+              {recordLabel}
+            </button>
+            {liveSuccess && <div className="notice notice-info">{liveSuccess}</div>}
+            {liveError && <div className="notice notice-danger">{liveError}</div>}
           </form>
         </section>
       )}
 
-      {/* Tab 2: Channel VODs & Highlights */}
       {activeTab === 'vods' && (
-        <section className="panel">
-          <div className="panel-header">
-            <h2><Film size={16} /> Past Broadcasts & VODs {channelData?.channel ? `for @${channelData.channel}` : ''}</h2>
-            {channelData?.channel && (
-              <button
-                type="button"
-                className="btn-secondary btn-sm"
-                onClick={() => handleCheckChannel(channelData.channel)}
-                disabled={checkingChannel}
-              >
-                <RefreshCw size={13} className={checkingChannel ? 'spin-icon' : ''} /> Refresh VODs
-              </button>
-            )}
-          </div>
-
-          {vodMessage && (
-            <div className={`alert ${vodMessage.type === 'error' ? 'alert-error' : 'alert-success'}`} style={{ marginBottom: 12 }}>
-              {vodMessage.type === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-              {vodMessage.text}
-            </div>
-          )}
-
+        <section>
+          {vodMessage && <div className={`notice ${vodMessage.type === 'error' ? 'notice-danger' : 'notice-info'}`} style={{ marginBottom: 14 }}>{vodMessage.text}</div>}
           {!channelData ? (
-            <div className="empty-state">
-              <Tv size={32} />
-              <span className="empty-title">No channel selected</span>
-              <span className="empty-subtitle">Use the search bar at the top to check a channel and view its VODs.</span>
-            </div>
+            <p className="empty-line">Look up a channel to see its past broadcasts.</p>
           ) : channelData.vods.length === 0 ? (
-            <div className="empty-state">
-              <Film size={32} />
-              <span className="empty-title">No public VODs found</span>
-              <span className="empty-subtitle">This channel might not have past broadcasts enabled or they may be subscriber-only (check the OAuth tab).</span>
-            </div>
+            <p className="empty-line">No public VODs. The channel may have past broadcasts turned off, or they may be subscriber-only (add your auth token under Settings).</p>
           ) : (
-            <div className="twitch-vod-grid">
+            <div className="vod-grid">
               {channelData.vods.map((vod) => (
-                <div key={vod.id} className="twitch-vod-card">
-                  <div className="vod-thumb-box">
-                    {vod.thumbnail ? (
-                      <img src={vod.thumbnail} alt={vod.title} className="vod-thumb-img" />
-                    ) : (
-                      <div className="vod-thumb-empty"><Film size={24} /></div>
-                    )}
-                    {vod.duration ? (
-                      <span className="vod-duration-tag">
-                        <Clock size={10} /> {formatDuration(vod.duration)}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="vod-card-body">
-                    <h4 className="vod-title" title={vod.title}>{vod.title}</h4>
-                    <div className="vod-meta-row">
-                      <span className="tag">VOD {vod.rawId}</span>
-                    </div>
-
-                    <div className="vod-actions-row">
+                <article key={vod.id} className="vod-tile">
+                  <Art src={vod.thumbnail} className="vod-art">
+                    {vod.duration ? <span className="badge badge-duration">{formatDuration(vod.duration)}</span> : null}
+                  </Art>
+                  <div className="up-title" title={vod.title}>{vod.title}</div>
+                  <div className="up-meta-row">
+                    <span className="mono-meta">VOD {vod.rawId}</span>
+                    <div className="btn-row">
                       <button
                         type="button"
-                        className="btn-sm"
-                        onClick={() => handleDownloadVod(vod)}
-                      >
-                        <Download size={13} /> Full VOD
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary btn-sm"
+                        className="btn-ghost btn-sm"
                         onClick={() => {
                           setSelectedVod(vod);
                           setTrimStart('00:00:00');
                           setTrimEnd(vod.duration ? formatDuration(Math.min(vod.duration, 1800)) : '00:30:00');
                         }}
                       >
-                        <Scissors size={13} /> Trim Segment
+                        Trim
                       </button>
+                      <button type="button" className="btn-primary btn-sm" onClick={() => handleDownloadVod(vod)}>Download</button>
                     </div>
                   </div>
-                </div>
+                </article>
               ))}
             </div>
           )}
 
-          {/* Modal / Panel for Trimming a selected VOD */}
-          {selectedVod && (
-            <div className="modal-backdrop" onClick={() => setSelectedVod(null)}>
-              <div
-                ref={trimModalRef}
-                className="modal-container"
-                onClick={(e) => e.stopPropagation()}
-                style={{ maxWidth: 520 }}
-                role="dialog"
-                aria-modal="true"
-                tabIndex={-1}
-              >
-                <div className="modal-header">
-                  <div className="modal-header-title">
-                    <Scissors size={18} className="text-accent" />
-                    <span>Trim VOD Segment</span>
-                  </div>
-                  <button type="button" className="icon-btn-neutral" onClick={() => setSelectedVod(null)}>
-                    <XCircle size={18} />
-                  </button>
-                </div>
-                <div className="modal-body">
-                  <p><strong>{selectedVod.title}</strong></p>
-                  <p className="muted small">Download only a specific segment instead of the entire VOD.</p>
-
-                  <div className="trim-time-grid">
-                    <label className="field-label">
-                      Start Time (HH:MM:SS)
-                      <input
-                        type="text"
-                        value={trimStart}
-                        onChange={(e) => setTrimStart(e.target.value)}
-                        placeholder="00:00:00"
-                      />
-                    </label>
-                    <label className="field-label">
-                      End Time (HH:MM:SS)
-                      <input
-                        type="text"
-                        value={trimEnd}
-                        onChange={(e) => setTrimEnd(e.target.value)}
-                        placeholder="00:30:00"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="options-row" style={{ marginTop: 8 }}>
-                    <label className="field-inline">
-                      Quality
-                      <select value={trimQuality} onChange={(e) => setTrimQuality(e.target.value)}>
-                        {QUALITY_OPTIONS.map((o) => (
-                          <option key={o.value} value={o.value}>{o.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="field-inline">
-                      Container
-                      <select value={trimContainer} onChange={(e) => setTrimContainer(e.target.value)}>
-                        <option value="mp4">MP4</option>
-                        <option value="mkv">MKV</option>
-                      </select>
-                    </label>
-                  </div>
-                </div>
-                <div className="modal-footer">
-                  <button type="button" className="btn-secondary" onClick={() => setSelectedVod(null)}>Cancel</button>
-                  <button
-                    type="button"
-                    onClick={() => handleDownloadVod(selectedVod, `${trimStart}-${trimEnd}`)}
-                  >
-                    <Download size={14} /> Download Trimmed Segment
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* Tab 3: Direct VOD / Clip Trimmer */}
-      {activeTab === 'direct' && (
-        <section className="panel">
-          <div className="panel-header">
-            <h2><Scissors size={16} /> Direct VOD & Clip Downloader</h2>
-          </div>
-          <form onSubmit={handleDirectDownload}>
-            <label className="field-label" style={{ marginBottom: 12 }}>
-              Twitch VOD or Clip URL
-              <input
-                type="text"
-                placeholder="https://www.twitch.tv/videos/12345678 or https://clips.twitch.tv/..."
-                value={directUrl}
-                onChange={(e) => setDirectUrl(e.target.value)}
-                required
-              />
-            </label>
-
-            <label className="field-label" style={{ marginBottom: 16 }}>
-              Time-Slice Trimming (Optional, e.g. 00:10:00-00:25:00)
-              <input
-                type="text"
-                placeholder="Leave blank for full video, or enter Start-End (HH:MM:SS-HH:MM:SS)"
-                value={directDownloadSections}
-                onChange={(e) => setDirectDownloadSections(e.target.value)}
-              />
-            </label>
-
-            <div className="options-row" style={{ flexWrap: 'wrap', gap: 14 }}>
-              <div className="segmented">
-                <button type="button" className={!directAudioOnly ? 'active' : ''} onClick={() => setDirectAudioOnly(false)}>
-                  <Video size={13} /> Video
+          <Drawer
+            open={!!selectedVod}
+            onClose={() => setSelectedVod(null)}
+            label="Download part of a VOD"
+            header={<Art src={selectedVod?.thumbnail} className="drawer-art" ratio="auto" />}
+            footer={(
+              <>
+                <span />
+                <button type="button" className="btn-primary btn-lg" onClick={() => handleDownloadVod(selectedVod, `${trimStart}-${trimEnd}`)}>
+                  Download segment
                 </button>
-                <button type="button" className={directAudioOnly ? 'active' : ''} onClick={() => setDirectAudioOnly(true)}>
-                  <Music size={13} /> Audio only
-                </button>
+              </>
+            )}
+          >
+            <h2 className="drawer-title">{selectedVod?.title}</h2>
+            <p className="drawer-sub">Download only part of this VOD.</p>
+            <div className="drawer-section dl-options">
+              <div className="form-pair">
+                <label className="field-caption">Start (HH:MM:SS)
+                  <input className="mono" value={trimStart} onChange={(e) => setTrimStart(e.target.value)} placeholder="00:00:00" />
+                </label>
+                <label className="field-caption">End (HH:MM:SS)
+                  <input className="mono" value={trimEnd} onChange={(e) => setTrimEnd(e.target.value)} placeholder="00:30:00" />
+                </label>
               </div>
-
-              {!directAudioOnly && (
-                <label className="field-inline">
-                  Quality
-                  <select value={directQuality} onChange={(e) => setDirectQuality(e.target.value)}>
-                    {QUALITY_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
+              <div className="form-pair">
+                <label className="field-caption">Quality
+                  <select value={trimQuality} onChange={(e) => setTrimQuality(e.target.value)}>
+                    {QUALITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 </label>
-              )}
-
-              {!directAudioOnly && (
-                <label className="field-inline">
-                  Container
-                  <select value={directContainer} onChange={(e) => setDirectContainer(e.target.value)}>
+                <label className="field-caption">File type
+                  <select value={trimContainer} onChange={(e) => setTrimContainer(e.target.value)}>
                     <option value="mp4">MP4</option>
                     <option value="mkv">MKV</option>
                   </select>
                 </label>
-              )}
-
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={directChat}
-                  onChange={(e) => setDirectChat(e.target.checked)}
-                />
-                <Captions size={14} /> Download Chat Log
-              </label>
-
-              <div className="spacer">
-                <button type="submit" disabled={directSubmitting || !directUrl.trim()}>
-                  {directSubmitting ? <><Loader2 size={15} className="spin-icon" /> Adding…</> : 'Download'}
-                </button>
               </div>
             </div>
-
-            {directMessage && (
-              <div className={`alert ${directMessage.startsWith('Error') ? 'alert-error' : 'alert-success'}`} style={{ marginTop: 12 }}>
-                {directMessage.startsWith('Error') ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-                {directMessage}
-              </div>
-            )}
-          </form>
+          </Drawer>
         </section>
       )}
 
-      {/* Tab 4: Twitch Settings & OAuth */}
-      {activeTab === 'settings' && (
-        <section className="panel">
-          <div className="panel-header">
-            <h2><Key size={16} /> Twitch Authentication & Ad-Bypass (OAuth)</h2>
-          </div>
-          <form onSubmit={handleSaveSettings}>
-            <p className="muted" style={{ marginBottom: 16 }}>
-              Twitch limits non-authenticated downloads with ad interstitials and blocks subscriber-only VODs. Providing your Twitch <code>auth-token</code> here (stored as a cookie the same way YouTube cookies are — see Settings) lets yt-dlp access sub-only content and avoid ad breaks.
-              This token is also covered by the cookies.txt uploaded on the main Settings page, if it includes your twitch.tv cookies — you only need to set it in one place.
-            </p>
-
-            <label className="field-label" style={{ marginBottom: 4 }}>
-              Twitch OAuth Auth Token (auth-token)
-              <input
-                type="password"
-                placeholder={authTokenMasked ? `Currently set (${authTokenMasked}) — enter a new value to replace it` : 'e.g. your 30-character oauth auth-token cookie'}
-                value={authToken}
-                onChange={(e) => {
-                  setAuthToken(e.target.value);
-                  setAuthTokenTouched(true);
-                }}
-              />
+      {activeTab === 'direct' && (
+        <form className="panel direct-form" onSubmit={handleDirectDownload}>
+          <label className="field-caption">VOD or clip link
+            <input
+              className="mono"
+              type="text"
+              placeholder="https://www.twitch.tv/videos/12345678 or a clips.twitch.tv link"
+              value={directUrl}
+              onChange={(e) => setDirectUrl(e.target.value)}
+              required
+            />
+          </label>
+          <div className="form-pair">
+            <label className="field-caption">Start time
+              <input className="mono" placeholder="00:10:00" value={directStart} onChange={(e) => setDirectStart(e.target.value)} />
             </label>
-            {authTokenMasked && !authTokenTouched && (
-              <div style={{ marginBottom: 12 }}>
-                <button type="button" className="btn-ghost btn-sm" onClick={handleClearAuthToken} disabled={savingSettings}>
-                  Clear saved token
-                </button>
-              </div>
+            <label className="field-caption">End time
+              <input className="mono" placeholder="00:25:00" value={directEnd} onChange={(e) => setDirectEnd(e.target.value)} />
+            </label>
+          </div>
+          <p className="field-hint">Leave start and end empty to download the whole video.</p>
+          <div className="toolbar">
+            <Segmented value={directAudioOnly} onChange={setDirectAudioOnly} options={[{ value: false, label: 'Video' }, { value: true, label: 'Audio only' }]} />
+            {!directAudioOnly && (
+              <>
+                <select className="toolbar-select" value={directQuality} onChange={(e) => setDirectQuality(e.target.value)} aria-label="Quality">
+                  {QUALITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+                <select className="toolbar-select" value={directContainer} onChange={(e) => setDirectContainer(e.target.value)} aria-label="File type">
+                  <option value="mp4">MP4</option>
+                  <option value="mkv">MKV</option>
+                </select>
+              </>
             )}
-
-            <div className="alert alert-info" style={{ marginBottom: 16, marginTop: 12 }}>
-              <div>
-                <strong>How to get your auth-token:</strong>
-                <ol style={{ paddingLeft: 18, marginTop: 6, marginBottom: 0 }}>
-                  <li>Open <a href="https://twitch.tv" target="_blank" rel="noopener noreferrer">twitch.tv</a> and ensure you are logged in.</li>
-                  <li>Press <strong>F12</strong> to open Browser Developer Tools.</li>
-                  <li>Go to <strong>Application</strong> (Chrome/Edge) or <strong>Storage</strong> (Firefox) &gt; <strong>Cookies</strong> &gt; <code>https://www.twitch.tv</code>.</li>
-                  <li>Find the cookie named <code>auth-token</code>, copy its value, and paste it here.</li>
-                </ol>
-              </div>
-            </div>
-
-            <button type="submit" disabled={savingSettings}>
-              {savingSettings ? <><Loader2 size={15} className="spin-icon" /> Saving…</> : 'Save Twitch Credentials'}
+            <label className="switch-label">
+              <Switch checked={directChat} onChange={setDirectChat} label="Save chat log" />
+              <span>Chat log</span>
+            </label>
+            <span className="btn-row-spacer" />
+            <button type="submit" className="btn-primary" disabled={directSubmitting || !directUrl.trim()}>
+              {directSubmitting ? 'Adding…' : 'Download'}
             </button>
+          </div>
+          {directMessage && <div className={`notice ${directMessage.startsWith('Error') ? 'notice-danger' : 'notice-info'}`}>{directMessage}</div>}
+        </form>
+      )}
 
-            {settingsStatus && (
-              <div className={`alert ${settingsStatus.startsWith('Failed') ? 'alert-error' : 'alert-success'}`} style={{ marginTop: 12 }}>
-                {settingsStatus.startsWith('Failed') ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-                {settingsStatus}
-              </div>
+      {activeTab === 'settings' && (
+        <form className="panel direct-form" onSubmit={handleSaveSettings}>
+          <h2 className="panel-title">Twitch sign-in</h2>
+          <p className="field-hint" style={{ marginTop: 0 }}>
+            Without your Twitch <code>auth-token</code>, downloads get ad breaks and subscriber-only VODs are blocked. The token is saved
+            as a cookie, the same way as cookies.txt in Settings, so you only need to set it in one place.
+          </p>
+          <label className="field-caption">auth-token
+            <input
+              className="mono"
+              type="password"
+              placeholder={authTokenMasked ? `Saved (${authTokenMasked}). Type a new value to replace it` : 'Your 30-character auth-token cookie'}
+              value={authToken}
+              onChange={(e) => {
+                setAuthToken(e.target.value);
+                setAuthTokenTouched(true);
+              }}
+            />
+          </label>
+          <details className="how-to">
+            <summary>How to find your auth-token</summary>
+            <ol>
+              <li>Open <a href="https://twitch.tv" target="_blank" rel="noopener noreferrer">twitch.tv</a> while signed in.</li>
+              <li>Press <strong>F12</strong> to open developer tools.</li>
+              <li>Go to <strong>Application</strong> (Chrome, Edge) or <strong>Storage</strong> (Firefox) › <strong>Cookies</strong> › <code>https://www.twitch.tv</code>.</li>
+              <li>Copy the value of the cookie named <code>auth-token</code> and paste it here.</li>
+            </ol>
+          </details>
+          <div className="btn-row">
+            <button type="submit" className="btn-primary" disabled={savingSettings}>{savingSettings ? 'Saving…' : 'Save'}</button>
+            {authTokenMasked && !authTokenTouched && (
+              <button type="button" className="btn-ghost" onClick={handleClearAuthToken} disabled={savingSettings}>Clear saved token</button>
             )}
-          </form>
+          </div>
+          {settingsStatus && <div className={`notice ${settingsStatus.startsWith('Failed') ? 'notice-danger' : 'notice-info'}`}>{settingsStatus}</div>}
+        </form>
+      )}
+
+      {activeLiveJobs.length > 0 && (
+        <section>
+          <div className="section-head">
+            <h2>Recording and queued</h2>
+            <span className="mono-meta">{activeLiveJobs.length}</span>
+          </div>
+          <div className="up-grid">
+            {activeLiveJobs.map((job) => <UpNextCard key={job.id} job={job} onRemoved={handleTwitchJobDeleted} />)}
+          </div>
         </section>
       )}
 
-      {/* Real-time Active Captures Tracker — QueueItem itself now shows the live badge,
-          elapsed recording time, and a "Stop Recording" action for any is_live job, so this
-          just lists them the same way the Dashboard queue does. */}
-      <section className="panel">
-        <div className="panel-header">
-          <h2><Radio size={16} /> Active Twitch Recordings & Queue</h2>
-          {activeLiveJobs.length > 0 && <span className="count-badge">{activeLiveJobs.length}</span>}
+      <section>
+        <div className="section-head">
+          <h2>Recent Twitch downloads</h2>
+          <Link to="/history" className="text-btn section-head-actions">All history</Link>
         </div>
-
-        {activeLiveJobs.length === 0 ? (
-          <div className="empty-state">
-            <Radio size={30} />
-            <span className="empty-title">No active Twitch downloads</span>
-            <span className="empty-subtitle">Active live stream captures and VOD downloads will show up here in real time.</span>
-          </div>
-        ) : (
-          <div className="queue-list">
-            {activeLiveJobs.map((job) => (
-              <QueueItem key={job.id} job={job} onDeleted={() => {}} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Recent Twitch Downloads History */}
-      <section className="panel">
-        <div className="panel-header">
-          <h2><CheckCircle2 size={16} /> Recent Twitch Captures & VODs</h2>
-          {finishedTwitchJobs.length > 0 && <span className="count-badge">{finishedTwitchJobs.length}</span>}
-        </div>
-
         {finishedTwitchJobs.length === 0 ? (
-          <div className="empty-state">
-            <Tv size={30} />
-            <span className="empty-title">No completed Twitch downloads yet</span>
-            <span className="empty-subtitle">Recorded live streams and downloaded VODs will appear here.</span>
-          </div>
+          <p className="empty-line">Recorded streams and downloaded VODs show up here.</p>
         ) : (
-          <div className="queue-list">
-            {finishedTwitchJobs.slice(0, 15).map((job) => (
-              <QueueItem key={job.id} job={job} onDeleted={handleTwitchJobDeleted} />
-            ))}
+          <div className="rows">
+            {finishedTwitchJobs.slice(0, 15).map((job) => <FinishedRow key={job.id} job={job} />)}
           </div>
         )}
       </section>
-
     </>
   );
 }
