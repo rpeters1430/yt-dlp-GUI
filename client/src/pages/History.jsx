@@ -1,12 +1,45 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Search, Film, X, Archive, Terminal, Copy, Check, Shield, ShieldOff } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Shield, ShieldOff, X } from 'lucide-react';
 import { api } from '../api.js';
+import Art from '../components/Art.jsx';
+import JobLog from '../components/JobLog.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
+import { useDownloads } from '../context/DownloadsContext.jsx';
+import { useToast } from '../context/ToastContext.jsx';
+import { parseUtc, shortPath, siteName } from '../format.js';
 
-const STATUS_FILTERS = ['all', 'completed', 'downloading', 'queued', 'failed', 'deleted'];
+const FILTERS = [
+  { value: 'all', label: 'All' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'queued', label: 'Queued' },
+  { value: 'deleted', label: 'Auto-deleted' },
+];
+const VALID = new Set([...FILTERS.map((f) => f.value), 'downloading']);
 const PAGE_SIZE = 50;
 
+function rowDate(job) {
+  if (job.status === 'queued' || job.status === 'downloading') return 'Now';
+  const d = parseUtc(job.updated_at || job.created_at);
+  if (!d) return '';
+  if (d.toDateString() === new Date().toDateString()) return 'Today';
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function subLine(job) {
+  if (job.status === 'failed') return job.error || 'Download failed';
+  if (job.status === 'deleted') return 'Removed by auto-delete';
+  if (job.filepath) return shortPath(job.filepath);
+  if (job.status === 'queued') return job.stage && job.stage !== 'Queued' ? job.stage : 'Waiting in queue';
+  if (job.status === 'downloading') return job.stage || `${Math.round(job.percent || 0)}%`;
+  return job.url;
+}
+
 export default function History() {
+  // The filter lives in the URL (?status=failed), so nav links and back/forward change it.
+  const [params, setParams] = useSearchParams();
+  const statusFilter = VALID.has(params.get('status')) ? params.get('status') : 'all';
   const [jobs, setJobs] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -14,19 +47,22 @@ export default function History() {
   const [loadError, setLoadError] = useState('');
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [hasAny, setHasAny] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
-  const [copiedId, setCopiedId] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
-  // The list arrives without logs; the expanded row's log is fetched on demand.
-  const [expandedLog, setExpandedLog] = useState(null); // { id, log, command_args }
-  const [logRetry, setLogRetry] = useState(0);
+  const [reload, setReload] = useState(0);
+  const [retryingAll, setRetryingAll] = useState(false);
+  const { failedCount } = useDownloads();
+  const toast = useToast();
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query.trim()), 250);
     return () => clearTimeout(timer);
   }, [query]);
+
+  function chooseFilter(value) {
+    setExpandedId(null);
+    setParams(value === 'all' ? {} : { status: value }, { replace: true });
+  }
 
   // Bumped whenever the search criteria change, so a "Load more" still in flight for the
   // previous criteria is ignored instead of appending the wrong rows.
@@ -43,12 +79,11 @@ export default function History() {
         if (cancelled) return;
         setJobs(res.jobs);
         setTotal(res.total);
-        if (statusFilter === 'all' && !debouncedQuery) setHasAny(res.total > 0);
       })
       .catch((err) => { if (!cancelled) setLoadError(err.message || 'Failed to load history.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [statusFilter, debouncedQuery]);
+  }, [statusFilter, debouncedQuery, reload]);
 
   async function handleLoadMore() {
     const generation = searchGeneration.current;
@@ -68,22 +103,6 @@ export default function History() {
     }
   }
 
-  useEffect(() => {
-    if (!expandedId) return undefined;
-    let cancelled = false;
-    setExpandedLog(null);
-    api.getDownloadLog(expandedId)
-      .then((row) => { if (!cancelled) setExpandedLog({ id: expandedId, ...row }); })
-      .catch((err) => { if (!cancelled) setExpandedLog({ id: expandedId, error: err.message || 'Failed to load log.' }); });
-    return () => { cancelled = true; };
-  }, [expandedId, logRetry]);
-
-  const expandedDetails = expandedLog && expandedLog.id === expandedId ? expandedLog : null;
-
-  function handleDelete(id, label) {
-    setPendingDelete({ id, label });
-  }
-
   async function confirmDelete() {
     const { id } = pendingDelete;
     setPendingDelete(null);
@@ -94,165 +113,139 @@ export default function History() {
 
   async function handleToggleProtect(job) {
     const updated = await api.toggleDownloadProtect(job.id, !job.protected);
-    setJobs((prev) => prev.map((j) => (j.id === job.id ? updated : j)));
+    setJobs((prev) => prev.map((j) => (j.id === job.id ? { ...j, ...updated } : j)));
   }
 
-  function handleCopy(job) {
-    const details = job.id === expandedId && expandedDetails ? expandedDetails : {};
-    const text = `${details.command_args ? `Command:\n${details.command_args}\n\n` : ''}Log:\n${details.log || ''}`;
-    navigator.clipboard.writeText(text).then(
-      () => {
-        setCopiedId(job.id);
-        setTimeout(() => setCopiedId(null), 2000);
-      },
-      () => {}
-    );
+  async function handleRetry(job) {
+    try {
+      const updated = await api.retryDownload(job.id);
+      setJobs((prev) => prev.map((j) => (j.id === job.id ? { ...j, ...updated } : j)));
+      toast('Queued again');
+    } catch (err) {
+      toast(err.message || 'Retry failed', { error: true });
+    }
   }
 
+  async function handleRetryAll() {
+    setRetryingAll(true);
+    try {
+      const { retried } = await api.retryFailedDownloads();
+      toast(retried ? `Queued ${retried} again` : 'Nothing to retry');
+      setReload((n) => n + 1);
+    } catch (err) {
+      toast(err.message || 'Retry failed', { error: true });
+    } finally {
+      setRetryingAll(false);
+    }
+  }
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Download history</h1>
-          <p>Everything you've downloaded, in one place.</p>
-        </div>
+      <div className="page-title-row">
+        <h1>History</h1>
+        <span className="mono-meta">{loading ? '' : `${total.toLocaleString()} ${statusFilter === 'all' && !debouncedQuery ? 'total' : 'shown'}`}</span>
       </div>
 
-      <section className="panel">
-        <div className="table-toolbar">
-          <div className="search-input">
-            <Search size={15} />
-            <input placeholder="Search by title or site…" value={query} onChange={(e) => setQuery(e.target.value)} />
-          </div>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            {STATUS_FILTERS.map((s) => (
-              <option key={s} value={s}>{s === 'all' ? 'All statuses' : s[0].toUpperCase() + s.slice(1)}</option>
-            ))}
-          </select>
+      <div className="toolbar">
+        <input
+          className="toolbar-search"
+          placeholder="Search by title or site"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label="Search history"
+        />
+        <div className="chip-row" role="radiogroup" aria-label="Status">
+          {FILTERS.map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              role="radio"
+              aria-checked={statusFilter === f.value}
+              className={`chip${statusFilter === f.value ? ' active' : ''}`}
+              onClick={() => chooseFilter(f.value)}
+            >
+              {f.label}{f.value === 'failed' && failedCount > 0 ? ` ${failedCount}` : ''}
+            </button>
+          ))}
         </div>
-
-        {loadError && <div className="alert alert-error" style={{ marginBottom: 12 }}>{loadError}</div>}
-        {loading ? (
-          <div className="empty-state"><div className="spinner" /></div>
-        ) : jobs.length === 0 ? (
-          <div className="empty-state">
-            <Archive size={30} />
-            <span className="empty-title">{hasAny ? 'No matches' : 'No downloads yet'}</span>
-            <span className="empty-subtitle">
-              {hasAny ? 'Try a different search or filter.' : 'Downloads you queue will show up here.'}
-            </span>
-          </div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="history-table">
-              <thead>
-                <tr>
-                  <th></th>
-                  <th>Title</th>
-                  <th>Site</th>
-                  <th>Status</th>
-                  <th>Date</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.map((job) => (
-                  <React.Fragment key={job.id}>
-                    <tr>
-                      <td>
-                        {job.thumbnail ? (
-                          <img className="thumb-sm" src={job.thumbnail} alt="" />
-                        ) : (
-                          <div className="thumb-sm thumb-empty" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <Film size={13} />
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <div className="history-row-title">{job.title || job.url}</div>
-                        {job.filepath && <div className="muted small">{job.filepath}</div>}
-                        {job.error && <div className="muted small" style={{ color: 'var(--danger)' }}>{job.error}</div>}
-                      </td>
-                      <td className="muted">{job.extractor || '—'}</td>
-                      <td><span className={`tag status-tag status-${job.status}`}>{job.status}</span></td>
-                      <td className="muted small">{new Date(job.created_at + 'Z').toLocaleString()}</td>
-                      <td>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          {job.watch_id && job.status === 'completed' && (
-                            <button
-                              className="icon-btn"
-                              onClick={() => handleToggleProtect(job)}
-                              title={job.protected ? 'Protected from auto-delete — click to allow it again' : 'Protect this video from auto-delete'}
-                            >
-                              {job.protected ? <Shield size={14} /> : <ShieldOff size={14} />}
-                            </button>
-                          )}
-                          <button
-                            className={`icon-btn ${expandedId === job.id ? 'active' : ''}`}
-                            title="View command & logs"
-                            onClick={() => setExpandedId(expandedId === job.id ? null : job.id)}
-                          >
-                            <Terminal size={14} />
-                          </button>
-                          <button className="icon-btn" onClick={() => handleDelete(job.id, job.title || job.url)} title="Delete"><X size={15} /></button>
-                        </div>
-                      </td>
-                    </tr>
-                    {expandedId === job.id && (
-                      <tr>
-                        <td colSpan={6} style={{ padding: '0 10px 14px' }}>
-                          <div className="log-panel" style={{ marginTop: 0 }}>
-                            <div className="log-panel-header">
-                              <span>Command &amp; Logs — {job.title || job.url}</span>
-                              <button
-                                type="button"
-                                className="btn-ghost btn-sm"
-                                style={{ padding: '2px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: 4 }}
-                                onClick={() => handleCopy(job)}
-                                disabled={!expandedDetails || !!expandedDetails.error}
-                              >
-                                {copiedId === job.id ? <Check size={12} /> : <Copy size={12} />}
-                                {copiedId === job.id ? 'Copied' : 'Copy'}
-                              </button>
-                            </div>
-                            {expandedDetails?.command_args && (
-                              <div className="command-box">
-                                <div style={{ color: 'var(--text-tertiary)', fontSize: '10px', marginBottom: '3px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                  Command &amp; Arguments
-                                </div>
-                                <code>{expandedDetails.command_args}</code>
-                              </div>
-                            )}
-                            {expandedDetails?.error ? (
-                              <div className="alert alert-error" style={{ marginTop: 8 }}>
-                                <span>{expandedDetails.error}</span>
-                                <button type="button" className="btn-ghost btn-sm" onClick={() => setLogRetry((attempt) => attempt + 1)}>Retry</button>
-                              </div>
-                            ) : (
-                              <pre className="log-panel-content">
-                                {expandedDetails ? (expandedDetails.log || 'No log output recorded.') : 'Loading log…'}
-                              </pre>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-            <div className="history-footer muted small">
-              <span>Showing {jobs.length} of {total}</span>
-              {jobs.length < total && (
-                <button type="button" className="btn-secondary btn-sm" onClick={handleLoadMore} disabled={loadingMore}>
-                  {loadingMore ? 'Loading…' : 'Load more'}
-                </button>
-              )}
-            </div>
-          </div>
+        {statusFilter === 'failed' && total > 0 && (
+          <button type="button" className="btn-danger" onClick={handleRetryAll} disabled={retryingAll}>
+            {retryingAll ? 'Retrying…' : 'Retry all failed'}
+          </button>
         )}
-      </section>
+      </div>
+
+      {loadError && <div className="notice notice-danger">{loadError}</div>}
+      {loading ? (
+        <div className="empty-state"><div className="spinner" /></div>
+      ) : jobs.length === 0 ? (
+        <p className="empty-line">
+          {debouncedQuery || statusFilter !== 'all' ? 'Nothing matches. Try a different search or filter.' : 'Downloads you queue will show up here.'}
+        </p>
+      ) : (
+        <div className="rows">
+          {jobs.map((job) => (
+            <div key={job.id} className="history-item">
+              <div className="row">
+                <Art src={job.thumbnail} className="row-thumb history-thumb" />
+                <div className="row-main">
+                  <div className="row-title">{job.title || job.url}</div>
+                  <div className={`row-sub${job.status === 'failed' ? ' text-accent' : ''}`} title={job.filepath || undefined}>{subLine(job)}</div>
+                </div>
+                <div className="history-cells">
+                  <span className="history-site">{siteName(job.extractor) || '—'}</span>
+                  <span className={`status-pill status-${job.status}`}>{job.status === 'deleted' ? 'deleted' : job.status}</span>
+                  <span className="history-date mono-meta">{rowDate(job)}</span>
+                  <div className="history-actions">
+                    {job.status === 'failed' && (
+                      <button type="button" className="btn-danger btn-sm" onClick={() => handleRetry(job)}>Retry</button>
+                    )}
+                    {job.watch_id && job.status === 'completed' && (
+                      <button
+                        type="button"
+                        className="icon-plain"
+                        onClick={() => handleToggleProtect(job)}
+                        title={job.protected ? 'Kept forever · click to allow auto-delete' : 'Keep forever (skip auto-delete)'}
+                        aria-label={job.protected ? 'Allow auto-delete' : 'Keep forever'}
+                      >
+                        {job.protected ? <Shield size={15} /> : <ShieldOff size={15} />}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={`btn-ghost btn-sm${expandedId === job.id ? ' active' : ''}`}
+                      onClick={() => setExpandedId(expandedId === job.id ? null : job.id)}
+                      aria-expanded={expandedId === job.id}
+                    >
+                      Log
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-plain"
+                      onClick={() => setPendingDelete({ id: job.id, label: job.title || job.url })}
+                      aria-label="Delete from history"
+                      title="Delete from history"
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {expandedId === job.id && <div className="history-log"><JobLog job={job} /></div>}
+            </div>
+          ))}
+        </div>
+      )}
+      {!loading && jobs.length > 0 && (
+        <div className="list-footer">
+          <span className="mono-meta">Showing {jobs.length} of {total}</span>
+          {jobs.length < total && (
+            <button type="button" className="btn-ghost btn-sm" onClick={handleLoadMore} disabled={loadingMore}>
+              {loadingMore ? 'Loading…' : 'Load more'}
+            </button>
+          )}
+        </div>
+      )}
 
       <ConfirmDialog
         open={!!pendingDelete}

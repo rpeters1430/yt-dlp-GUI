@@ -1,5 +1,5 @@
 import React from 'react';
-import { Captions, Film, Music, Radio, Clock, Scissors } from 'lucide-react';
+import { Radio, Clock } from 'lucide-react';
 
 export const SUBTITLE_LANG_OPTIONS = [
   { value: 'en.*', label: 'English' },
@@ -140,11 +140,84 @@ export function mergeCapabilities(list) {
   };
 }
 
+const QUALITY_CHOICES = [
+  { value: '', label: 'Best' },
+  { value: '2160', label: '2160p' },
+  { value: '1440', label: '1440p' },
+  { value: '1080', label: '1080p' },
+  { value: '720', label: '720p' },
+  { value: '480', label: '480p' },
+];
+const VIDEO_TYPES = ['mp4', 'mkv'];
+const AUDIO_TYPES = ['m4a', 'mp3', 'opus', 'flac'];
+const CHUNK_CHOICES = [
+  { value: 0, label: 'Off' },
+  { value: 30, label: '30m' },
+  { value: 60, label: '1h' },
+  { value: 120, label: '2h' },
+];
+
+// A small on/off switch (36×20), used for every toggle row in the redesign.
+export function Switch({ checked, onChange, disabled = false, label, size = 'sm' }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={!!checked}
+      aria-label={label}
+      disabled={disabled}
+      className={`switch${checked ? ' on' : ''}${size === 'lg' ? ' switch-lg' : ''}`}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="switch-knob" />
+    </button>
+  );
+}
+
+// A row with a label (and optional description) on the left and a control on the right.
+export function ToggleRow({ label, description, checked, onChange, disabled, note }) {
+  return (
+    <div className={`toggle-row${disabled ? ' disabled' : ''}`}>
+      <div className="toggle-row-text">
+        <span className="toggle-row-label">{label}</span>
+        {description && <span className="toggle-row-desc">{description}</span>}
+      </div>
+      {note && <span className="toggle-row-note">{note}</span>}
+      <Switch checked={checked && !disabled} onChange={onChange} disabled={disabled} label={typeof label === 'string' ? label : undefined} />
+    </div>
+  );
+}
+
+// Segmented control: [{ value, label }] with one selected.
+export function Segmented({ options, value, onChange, className = '', size }) {
+  return (
+    <div className={`seg${size === 'sm' ? ' seg-sm' : ''} ${className}`} role="radiogroup">
+      {options.map((o) => (
+        <button
+          key={String(o.value)}
+          type="button"
+          role="radio"
+          aria-checked={value === o.value}
+          className={value === o.value ? 'active' : ''}
+          onClick={() => onChange(o.value)}
+          disabled={o.disabled}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function subLangLabel(value) {
+  if (value === 'all') return 'all';
+  return value.replace('.*', '');
+}
+
 /**
- * Renders the shared "quality / container / subtitles / embed-into-file / SponsorBlock"
- * option controls. Used both for a single video and for each entry in a batch of videos, and
- * for the "apply to all" shared settings, so the same option set/behavior is available
- * everywhere instead of being duplicated and drifting.
+ * The shared download option controls: Video / Audio only, quality, file type, and the
+ * subtitle / embed / SponsorBlock switches, plus live-stream choices when the link is live.
+ * Used by Home's options drawer (per link and for the defaults) and Settings > Downloads.
  *
  * `caps` is the server's per-link `capabilities` object (or mergeCapabilities of several):
  * options the link can't use are hidden or disabled. Omit it to offer everything.
@@ -152,7 +225,6 @@ export function mergeCapabilities(list) {
 export default function DownloadOptionsFields({
   values,
   onChange,
-  resolutions,
   liveInfo,
   caps = null,
 }) {
@@ -175,6 +247,7 @@ export default function DownloadOptionsFields({
   // A channel's live page while nobody is broadcasting (e.g. a TikTok user who is offline).
   const isOffline = isUpcoming && !!liveInfo?.offline;
   const isAudioMode = audioOnly || !!c.audioOnlyMedia;
+  const showLiveSplit = isLive || isUpcoming || values.isLive;
 
   function set(patch) {
     onChange({ ...values, ...patch });
@@ -182,329 +255,195 @@ export default function DownloadOptionsFields({
 
   function toggleSponsorblockCategory(value) {
     const next = sponsorblockCategories.includes(value)
-      ? sponsorblockCategories.filter((c) => c !== value)
+      ? sponsorblockCategories.filter((v) => v !== value)
       : [...sponsorblockCategories, value];
     set({ sponsorblockCategories: next });
   }
 
-  function selectAllSponsorblockCategories() {
-    set({ sponsorblock: true, sponsorblockCategories: SPONSORBLOCK_ALL_VALUES });
-  }
-
-  function clearSponsorblockCategories() {
-    set({ sponsorblockCategories: [] });
-  }
+  const sbSummary = sponsorblockCategories.length
+    ? sponsorblockCategories.slice(0, 3).join(', ') + (sponsorblockCategories.length > 3 ? ', …' : '')
+    : '';
+  const chunkValue = splitLiveChunks ? liveChunkDuration : 0;
 
   return (
-    <div className="download-options-fields">
+    <div className="dl-options">
       {c.warnings?.length > 0 && (
-        <div className="site-caps-warnings">
-          {c.warnings.map((w) => (
-            <p key={w} className="muted small text-danger">{w}</p>
-          ))}
+        <div className="notice notice-warning">
+          {c.warnings.map((w) => <div key={w}>{w}</div>)}
         </div>
       )}
 
       {isUpcoming && (
-        <div className="live-options-panel">
-          <div className="segmented-choice">
-            <button type="button" className={waitForLive ? 'active' : ''} onClick={() => set({ waitForLive: true })}>
-              <Clock size={14} /> {isOffline ? 'Wait for them to go live' : 'Wait for it to start'}
-            </button>
-            <button type="button" className={!waitForLive ? 'active' : ''} onClick={() => set({ waitForLive: false })}>
-              <Radio size={14} /> Don't wait
-            </button>
-          </div>
-          {isOffline ? (
-            waitForLive ? (
-              <p className="muted small">
-                This channel isn't live right now. Recording will begin automatically the next time
-                they go live — yt-dlp checks every {waitInterval}s in the background, so this job can
-                sit queued for hours before it starts. Stop it from the queue at any time.
-              </p>
-            ) : (
-              <p className="muted small text-danger">
-                This channel isn't live right now, so there's nothing to record — the job will fail
-                immediately unless you enable "Wait for them to go live".
-              </p>
-            )
-          ) : waitForLive ? (
-            <p className="muted small">
-              This broadcast hasn't started yet. Recording will begin automatically the moment it
-              goes live — yt-dlp checks every {waitInterval}s in the background, so this job can
-              sit queued for a while before it starts.
-            </p>
-          ) : (
-            <p className="muted small text-danger">
-              This broadcast hasn't started yet and has no video to download — the job will fail
-              immediately unless you enable "Wait for it to start".
-            </p>
-          )}
-        </div>
-      )}
-
-      {isLive && (
-        <div className="live-options-panel">
-          <div className="segmented-choice">
-            <button type="button" className={!liveFromStart ? 'active' : ''} onClick={() => set({ liveFromStart: false })}>
-              <Radio size={14} /> Join live now
-            </button>
-            {canLiveFromStart && (
-              <button type="button" className={liveFromStart ? 'active' : ''} onClick={() => set({ liveFromStart: true })}>
-                <Clock size={14} /> Record from broadcast start
-              </button>
-            )}
-          </div>
-          <p className="muted small">
-            {liveFromStart && canLiveFromStart
-              ? "Downloads the full broadcast from the moment it started, not just from now. May take a while to catch up to the live edge."
-              : 'Only what airs from now on will be recorded — anything already broadcast before this point is skipped.'}
+        <div className="dl-options-group">
+          <span className="field-caption">{isOffline ? 'Channel is offline' : 'Scheduled broadcast'}</span>
+          <Segmented
+            value={!!waitForLive}
+            onChange={(v) => set({ waitForLive: v })}
+            options={[
+              { value: true, label: <><Clock size={14} /> {isOffline ? 'Wait for them to go live' : 'Wait for it to start'}</> },
+              { value: false, label: <><Radio size={14} /> Don&apos;t wait</> },
+            ]}
+          />
+          <p className={`field-hint${waitForLive ? '' : ' text-danger'}`}>
+            {waitForLive
+              ? `Recording starts automatically once it goes live. yt-dlp checks every ${waitInterval}s, so this can sit queued for a while.`
+              : 'There is nothing to record yet, so the download will fail unless you wait for it.'}
           </p>
         </div>
       )}
 
-      {(isLive || isUpcoming || values.isLive || values.waitForLive) && (
-        <div className="live-options-panel live-split-panel">
-          <div className="live-split-header">
-            <span className="live-split-label">
-              <Scissors size={14} /> Split recording into chunks
-            </span>
-            <span className="muted small">
-              {splitLiveChunks
-                ? `Every ${liveChunkDuration >= 60 ? `${liveChunkDuration / 60} hour${liveChunkDuration > 60 ? 's' : ''}` : `${liveChunkDuration} min`}`
-                : 'Single continuous file'}
-            </span>
+      {isLive && (
+        <div className="dl-options-group">
+          <span className="field-caption">Start from</span>
+          <Segmented
+            value={canLiveFromStart && liveFromStart}
+            onChange={(v) => set({ liveFromStart: v })}
+            options={[
+              ...(canLiveFromStart ? [{ value: true, label: 'Beginning of stream' }] : []),
+              { value: false, label: 'Right now' },
+            ]}
+          />
+        </div>
+      )}
+
+      {showLiveSplit && (
+        <div className="dl-options-group">
+          <span className="field-caption">Split recording into chunks</span>
+          <div className="choice-grid choice-grid-4">
+            {CHUNK_CHOICES.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                className={`choice mono${chunkValue === o.value ? ' active' : ''}`}
+                onClick={() => set(o.value ? { splitLiveChunks: true, liveChunkDuration: o.value } : { splitLiveChunks: false })}
+              >
+                {o.label}
+              </button>
+            ))}
           </div>
-          <div className="segmented-choice segmented-split">
-            <button
-              type="button"
-              className={!splitLiveChunks ? 'active' : ''}
-              onClick={() => set({ splitLiveChunks: false })}
-            >
-              Single file
-            </button>
-            <button
-              type="button"
-              className={splitLiveChunks && liveChunkDuration === 15 ? 'active' : ''}
-              onClick={() => set({ splitLiveChunks: true, liveChunkDuration: 15 })}
-            >
-              15 min
-            </button>
-            <button
-              type="button"
-              className={splitLiveChunks && liveChunkDuration === 30 ? 'active' : ''}
-              onClick={() => set({ splitLiveChunks: true, liveChunkDuration: 30 })}
-            >
-              30 min
-            </button>
-            <button
-              type="button"
-              className={splitLiveChunks && liveChunkDuration === 60 ? 'active' : ''}
-              onClick={() => set({ splitLiveChunks: true, liveChunkDuration: 60 })}
-            >
-              1 hour
-            </button>
-            <button
-              type="button"
-              className={splitLiveChunks && liveChunkDuration === 120 ? 'active' : ''}
-              onClick={() => set({ splitLiveChunks: true, liveChunkDuration: 120 })}
-            >
-              2 hours
-            </button>
-            <button
-              type="button"
-              className={splitLiveChunks && ![15, 30, 60, 120].includes(liveChunkDuration) ? 'active' : ''}
-              onClick={() => set({ splitLiveChunks: true, liveChunkDuration: [15, 30, 60, 120].includes(liveChunkDuration) ? 45 : (liveChunkDuration || 45) })}
-            >
-              Custom
-            </button>
-          </div>
-          {splitLiveChunks && (
-            <div className="live-split-info">
-              {![15, 30, 60, 120].includes(liveChunkDuration) && (
-                <div className="live-split-custom-row">
-                  <label htmlFor="custom-chunk-mins" className="muted small">Chunk time (minutes):</label>
-                  <input
-                    id="custom-chunk-mins"
-                    type="number"
-                    min="1"
-                    max="1440"
-                    value={liveChunkDuration || 30}
-                    onChange={(e) => set({ liveChunkDuration: Math.max(1, parseInt(e.target.value, 10) || 1) })}
-                    className="input-sm"
-                  />
-                </div>
-              )}
-              <p className="muted small">
-                ✂️ When recording finishes, this broadcast will be automatically split into{' '}
-                <strong>{liveChunkDuration >= 60 ? `${liveChunkDuration / 60} hour` : `${liveChunkDuration} minute`}</strong> chunks
-                via lossless stream copy (no quality loss or CPU re-encoding). Saved as <code>.part01.mp4</code>, <code>.part02.mp4</code>, etc.
-              </p>
-            </div>
+          {splitLiveChunks && ![30, 60, 120].includes(liveChunkDuration) && (
+            <p className="field-hint">Currently every {liveChunkDuration} min.</p>
           )}
         </div>
       )}
 
-      <div className="preview-options-grid">
-        <div className="segmented">
-          <button
-            type="button"
-            className={!audioOnly ? 'active' : ''}
-            onClick={() => set({ audioOnly: false, container: ['mp3', 'opus', 'm4a', 'flac'].includes(container) ? 'mp4' : container })}
-          >
-            <Film size={13} /> Video
-          </button>
-          <button
-            type="button"
-            className={audioOnly ? 'active' : ''}
-            onClick={() => set({ audioOnly: true, container: ['mp4', 'mkv', 'webm', 'ts'].includes(container) ? 'mp3' : container })}
-          >
-            <Music size={13} /> Audio only
-          </button>
+      <Segmented
+        className="seg-full"
+        value={!!audioOnly}
+        onChange={(v) => set({
+          audioOnly: v,
+          container: v
+            ? (AUDIO_TYPES.includes(container) ? container : 'mp3')
+            : (VIDEO_TYPES.includes(container) ? container : 'mp4'),
+        })}
+        options={[{ value: false, label: 'Video' }, { value: true, label: 'Audio only' }]}
+      />
+
+      {!audioOnly && (
+        <div className="dl-options-group">
+          <span className="field-caption">Quality · closest available at or below is used</span>
+          <div className="choice-grid choice-grid-6">
+            {QUALITY_CHOICES.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                className={`choice choice-accent mono${(quality || '') === o.value ? ' active' : ''}`}
+                onClick={() => set({ quality: o.value })}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
         </div>
+      )}
 
-        {!audioOnly && (
-          <label className="field-inline">
-            Quality
-            <select value={quality} onChange={(e) => set({ quality: e.target.value })}>
-              <option value="">Best available</option>
-              {resolutions && resolutions.length > 0 ? (
-                resolutions.map((r) => (
-                  <option key={r.height} value={String(r.height)}>{r.label}</option>
-                ))
-              ) : (
-                <>
-                  <option value="2160">Up to 4K (2160p)</option>
-                  <option value="1440">Up to 1440p</option>
-                  <option value="1080">Up to 1080p</option>
-                  <option value="720">Up to 720p</option>
-                  <option value="480">Up to 480p</option>
-                  <option value="360">Up to 360p</option>
-                </>
-              )}
-            </select>
-          </label>
-        )}
-
-        {audioOnly ? (
-          <label className="field-inline">
-            Audio Format
-            <select
-              value={['mp3', 'opus', 'm4a', 'flac'].includes(container) ? container : 'mp3'}
-              onChange={(e) => set({ container: e.target.value })}
+      <div className="dl-options-group">
+        <span className="field-caption">File type</span>
+        <div className="choice-row">
+          {(audioOnly ? AUDIO_TYPES : VIDEO_TYPES).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`choice mono${container === t ? ' active' : ''}`}
+              onClick={() => set({ container: t })}
             >
-              <option value="opus">Opus (Highest Quality - Native)</option>
-              <option value="mp3">MP3 (Universal, 320k)</option>
-              <option value="m4a">M4A (AAC)</option>
-              <option value="flac">FLAC (Transcoded)</option>
-            </select>
-          </label>
-        ) : (
-          <label className="field-inline">
-            Format
-            <select value={container} onChange={(e) => set({ container: e.target.value })}>
-              <option value="mp4">MP4</option>
-              <option value="mkv">MKV</option>
-            </select>
-          </label>
+              {t.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="toggle-list">
+        {!isAudioMode && (
+          <ToggleRow
+            label={`Subtitles (${subLangLabel(subLangs)})`}
+            checked={subtitles}
+            disabled={hasSubtitles === false}
+            note={hasSubtitles === false ? 'None available' : null}
+            onChange={(v) => set({ subtitles: v })}
+          />
         )}
-
-        {!isAudioMode ? (
-          <>
-            <label className={`checkbox-label ${hasSubtitles === false ? 'disabled' : ''}`}>
-              <input
-                type="checkbox"
-                checked={subtitles && hasSubtitles !== false}
-                disabled={hasSubtitles === false}
-                onChange={(e) => set({ subtitles: e.target.checked })}
-              />
-              <Captions size={14} /> Subtitles
-              {hasSubtitles === false && <span className="badge-tag">None available</span>}
-            </label>
-
-            {subtitles && hasSubtitles !== false && (
-              <label className="field-inline">
-                <select value={subLangs} onChange={(e) => set({ subLangs: e.target.value })}>
-                  {SUBTITLE_LANG_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </label>
-            )}
-          </>
-        ) : (
-          <div className="option-disabled-notice" title="Subtitles cannot be embedded into audio-only files">
-            <Captions size={14} />
-            <span className="muted small">Subtitles not applicable for audio</span>
+        {!isAudioMode && subtitles && hasSubtitles !== false && (
+          <div className="toggle-sub">
+            <select value={subLangs} onChange={(e) => set({ subLangs: e.target.value })} aria-label="Subtitle language">
+              {SUBTITLE_LANG_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
           </div>
         )}
-
-        <label className={`checkbox-label ${noThumbnail ? 'disabled' : ''}`}>
-          <input
-            type="checkbox"
-            checked={embedThumbnail && !noThumbnail}
-            disabled={noThumbnail}
-            onChange={(e) => set({ embedThumbnail: e.target.checked })}
-          />
-          Embed thumbnail
-          {noThumbnail && <span className="badge-tag">None available</span>}
-        </label>
-        <label className="checkbox-label">
-          <input type="checkbox" checked={embedMetadata} onChange={(e) => set({ embedMetadata: e.target.checked })} />
-          Embed metadata
-        </label>
-
+        <ToggleRow
+          label="Embed thumbnail"
+          checked={embedThumbnail}
+          disabled={noThumbnail}
+          note={noThumbnail ? 'None available' : null}
+          onChange={(v) => set({ embedThumbnail: v })}
+        />
+        <ToggleRow label="Embed metadata" checked={embedMetadata} onChange={(v) => set({ embedMetadata: v })} />
         {!isAudioMode && (
-          <label className={`checkbox-label ${noChapters ? 'disabled' : ''}`}>
-            <input
-              type="checkbox"
-              checked={embedChapters && !noChapters}
-              disabled={noChapters}
-              onChange={(e) => set({ embedChapters: e.target.checked })}
-            />
-            Embed chapters
-            {noChapters && <span className="badge-tag">None available</span>}
-          </label>
+          <ToggleRow
+            label="Chapters"
+            checked={embedChapters}
+            disabled={noChapters}
+            note={noChapters ? 'None available' : null}
+            onChange={(v) => set({ embedChapters: v })}
+          />
         )}
-
-        {canSponsorblock ? (
-          <label className="checkbox-label">
-            <input type="checkbox" checked={sponsorblock} onChange={(e) => set({ sponsorblock: e.target.checked })} />
-            Auto-remove sponsored segments (SponsorBlock)
-            <span className="badge-tag">{c.sponsorblockPartial ? 'YouTube links only' : 'YouTube'}</span>
-          </label>
-        ) : (
-          <div className="option-disabled-notice" title="SponsorBlock is only available for YouTube videos">
-            <span className="badge-tag">SponsorBlock</span>
-            <span className="muted small">
-              Only supported on YouTube{siteName ? ` (this is ${siteName})` : ''}
-            </span>
+        <ToggleRow
+          label={canSponsorblock && sbSummary ? `SponsorBlock (${sbSummary})` : 'SponsorBlock'}
+          checked={sponsorblock}
+          disabled={!canSponsorblock}
+          note={!canSponsorblock ? `YouTube only${siteName ? ` · this is ${siteName}` : ''}` : (c.sponsorblockPartial ? 'YouTube links only' : null)}
+          onChange={(v) => set({
+            sponsorblock: v,
+            sponsorblockCategories: v && sponsorblockCategories.length === 0 ? ['sponsor', 'intro'] : sponsorblockCategories,
+          })}
+        />
+        {canSponsorblock && sponsorblock && (
+          <div className="toggle-sub chip-row">
+            {SPONSORBLOCK_CATEGORIES.map((cat) => (
+              <button
+                key={cat.value}
+                type="button"
+                className={`chip${sponsorblockCategories.includes(cat.value) ? ' active' : ''}`}
+                onClick={() => toggleSponsorblockCategory(cat.value)}
+              >
+                {cat.label}
+              </button>
+            ))}
           </div>
         )}
       </div>
-
-      {canSponsorblock && sponsorblock && (
-        <div className="sponsorblock-categories">
-          <div className="sponsorblock-categories-actions">
-            <button type="button" className="btn-ghost btn-sm" onClick={selectAllSponsorblockCategories}>
-              Select all
-            </button>
-            <button type="button" className="btn-ghost btn-sm" onClick={clearSponsorblockCategories}>
-              Clear
-            </button>
-          </div>
-          {SPONSORBLOCK_CATEGORIES.map((cat) => (
-            <label key={cat.value} className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={sponsorblockCategories.includes(cat.value)}
-                onChange={() => toggleSponsorblockCategory(cat.value)}
-              />
-              {cat.label}
-            </label>
-          ))}
-        </div>
-      )}
     </div>
   );
+}
+
+// One-line summary of a set of options, e.g. "1080p · MP4 · SponsorBlock · Subs".
+export function summarizeOptions(o) {
+  const parts = [];
+  if (o.audioOnly) parts.push('Audio only');
+  else parts.push(o.quality ? `${o.quality}p` : 'Best');
+  parts.push((o.container || 'mp4').toUpperCase());
+  if (o.sponsorblock) parts.push('SponsorBlock');
+  if (o.subtitles && !o.audioOnly) parts.push('Subs');
+  if (o.splitLiveChunks) parts.push(`${o.liveChunkDuration >= 60 ? `${o.liveChunkDuration / 60}h` : `${o.liveChunkDuration}m`} chunks`);
+  return parts.join(' · ');
 }

@@ -20,6 +20,7 @@ const ALLOWED_SETTINGS_KEYS = new Set([
   'output_template',
   'video_folder',
   'default_live_chunk_mins',
+  'max_concurrent_downloads',
 ]);
 
 function saveSetting(key, value) {
@@ -125,6 +126,8 @@ router.get('/', (req, res) => {
   for (const r of rows) settings[r.key] = r.value;
   settings.ytdlpChannel = settings.ytdlpChannel === 'nightly' ? 'nightly' : 'stable';
   settings.default_live_chunk_mins = parseInt(settings.default_live_chunk_mins || '0', 10);
+  // The effective value, which falls back to the MAX_CONCURRENT_DOWNLOADS env var.
+  settings.max_concurrent_downloads = queue.getMaxConcurrent();
   res.json(settings);
 });
 
@@ -153,6 +156,14 @@ router.put('/', (req, res) => {
     if (folderError) return res.status(400).json({ error: folderError });
   }
 
+  const concurrency = entries.find(([key]) => key === 'max_concurrent_downloads');
+  if (concurrency) {
+    const n = Number(concurrency[1]);
+    if (!Number.isInteger(n) || n < 1 || n > queue.MAX_CONCURRENT_LIMIT) {
+      return res.status(400).json({ error: `max_concurrent_downloads must be a whole number from 1 to ${queue.MAX_CONCURRENT_LIMIT}` });
+    }
+  }
+
   const upsert = db.prepare(`
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -161,6 +172,8 @@ router.put('/', (req, res) => {
     for (const [key, value] of rows) upsert.run(key, String(value));
   });
   tx(entries);
+  // A higher limit can start queued downloads right away.
+  if (concurrency) queue.processNext();
   res.json({ ok: true });
 });
 

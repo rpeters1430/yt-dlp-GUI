@@ -41,6 +41,8 @@ export const api = {
   stopDownload: (id) => request(`/downloads/${id}/stop`, { method: 'POST' }),
   retryDownload: (id) => request(`/downloads/${id}/retry`, { method: 'POST' }),
   clearFailedDownloads: () => request('/downloads/clear-failed', { method: 'POST' }),
+  retryFailedDownloads: () => request('/downloads/retry-failed', { method: 'POST' }),
+  checkDuplicates: (items) => request('/downloads/check-duplicates', { method: 'POST', body: JSON.stringify({ items }) }),
   toggleDownloadProtect: (id, protectedFlag) => request(`/downloads/${id}/protect`, { method: 'PATCH', body: JSON.stringify({ protected: protectedFlag }) }),
 
   listWatches: () => request('/watches'),
@@ -124,6 +126,7 @@ export const api = {
     const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
     return request(`/library${qs ? `?${qs}` : ''}`);
   },
+  getLibraryItem: (id) => request(`/library/${encodeURIComponent(id)}`),
   deleteLibraryFile: (id) => request(`/library/${id}/file`, { method: 'DELETE' }),
   libraryStreamUrl: (id) => `${BASE}/library/${encodeURIComponent(id)}/stream`,
   libraryFileUrl: (id) => `${BASE}/library/${encodeURIComponent(id)}/file`,

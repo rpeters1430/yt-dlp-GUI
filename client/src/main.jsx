@@ -5,6 +5,7 @@ import App from './App.jsx';
 import { initTheme } from './theme.js';
 import { initDensity } from './density.js';
 import './styles.css';
+import './components.css';
 
 initTheme();
 initDensity();
