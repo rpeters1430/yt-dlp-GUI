@@ -543,26 +543,18 @@ async function runJob(job) {
       console.error(`[queue] [job:${job.id}] Jellyfin library scan schedule failed: ${e.message}`);
     }
 
-    // Best-effort: Jellyfin may not have scanned this file into its library yet, in which
-    // case this is a no-op and the periodic sync job (jellyfinSync.start) picks it up later.
-    if (job.watch_id) {
-      const syncConfig = jellyfinSync.getSyncConfig();
-      if (syncConfig.enabled) {
-        jellyfinSync.syncWatch(job.watch_id, { config: syncConfig })
-          .catch((e) => console.error(`[queue] [job:${job.id}] Jellyfin playlist sync failed: ${e.message}`));
-      }
+    // Playlist sync waits until the library scan above has had time to find the file, and
+    // runs once per watch after a batch of downloads; the periodic job catches up on the rest.
+    if (job.watch_id && jellyfinSync.getSyncConfig().enabled) {
+      jellyfinSync.scheduleWatchSync(job.watch_id);
     }
 
-    // Same two steps for Plex: a debounced library refresh, then a best-effort playlist sync
-    // that the periodic job (plexSync.start) catches up on once Plex has scanned the file.
+    // Same two steps for Plex: a debounced library refresh, then a delayed playlist sync.
     try {
       const plexConfig = plexSync.getPlexConfig();
       if (plexSync.isConfigured(plexConfig)) {
         plexSync.scheduleLibraryScan();
-        if (job.watch_id && plexConfig.syncEnabled) {
-          plexSync.syncWatch(job.watch_id, { config: plexConfig })
-            .catch((e) => console.error(`[queue] [job:${job.id}] Plex playlist sync failed: ${e.message}`));
-        }
+        if (job.watch_id && plexConfig.syncEnabled) plexSync.scheduleWatchSync(job.watch_id);
       }
     } catch (e) {
       console.error(`[queue] [job:${job.id}] Plex scan/sync schedule failed: ${e.message}`);
@@ -647,5 +639,5 @@ function getActiveCount() {
 
 module.exports = {
   init, enqueue, createQueuedJob, startQueuedJobs, setWatchItemListener, listJobs, searchJobs, getStatusCounts,
-  getJobLog, getJob, getJobSummary, announceJob, stopJob, removeJob, getActiveCount,
+  getJobLog, getJob, getJobSummary, listColumns, announceJob, stopJob, removeJob, getActiveCount,
 };

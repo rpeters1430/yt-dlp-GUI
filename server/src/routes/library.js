@@ -75,7 +75,8 @@ function toItem(row) {
 
 function getCompletedRow(id) {
   return db.prepare(`
-    SELECT d.*, w.name AS watch_name, w.channel_name AS watch_channel_name
+    SELECT d.id, d.url, d.title, d.thumbnail, d.extractor, d.filepath, d.created_at,
+      d.watch_id, d.protected, d.split_parts, w.name AS watch_name, w.channel_name AS watch_channel_name
     FROM downloads d LEFT JOIN watches w ON w.id = d.watch_id
     WHERE d.id = ? AND d.status = 'completed' AND d.filepath IS NOT NULL
   `).get(id);
