@@ -850,7 +850,7 @@ function listContentFiles(task) {
 
 function getTaskByHash(hash) {
   if (!hash) return null;
-  return db.prepare('SELECT * FROM lidarr_tasks WHERE lower(hash) = ?').get(String(hash).toLowerCase()) || null;
+  return db.prepare('SELECT * FROM lidarr_tasks WHERE hash = ?').get(String(hash).toLowerCase()) || null;
 }
 
 function getQbitTorrentFiles(hash) {
@@ -899,8 +899,8 @@ function deleteQbitTorrents(hashes) {
   const list = String(hashes).toLowerCase().split('|').filter(Boolean);
   if (list.length === 0) return;
   const placeholders = list.map(() => '?').join(',');
-  const tasks = db.prepare(`SELECT job_ids FROM lidarr_tasks WHERE lower(hash) IN (${placeholders})`).all(...list);
-  db.prepare(`DELETE FROM lidarr_tasks WHERE lower(hash) IN (${placeholders})`).run(...list);
+  const tasks = db.prepare(`SELECT job_ids FROM lidarr_tasks WHERE hash IN (${placeholders})`).all(...list);
+  db.prepare(`DELETE FROM lidarr_tasks WHERE hash IN (${placeholders})`).run(...list);
   const queue = require('./queue');
   for (const task of tasks) {
     let jobIds = [];

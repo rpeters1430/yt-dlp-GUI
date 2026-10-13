@@ -315,6 +315,17 @@ async function searchTracks(query, limit = 25) {
   }));
 }
 
+// Lowercased letters and digits only, for comparing titles across punctuation differences.
+function compactText(text) {
+  return String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+// The song's own name, without "(feat. X)", "[Remastered]" or " - Live at …" decorations
+// that YouTube uploads often word differently.
+function coreTitle(title) {
+  return compactText(String(title || '').replace(/\s*[([].*?[)\]]/g, '').replace(/\s+-\s+.*$/, ''));
+}
+
 function scoreCandidate(c, artist, title, targetDuration) {
   let score = 0;
   if (targetDuration && c.duration) {
@@ -330,15 +341,21 @@ function scoreCandidate(c, artist, title, targetDuration) {
   const cUploader = (c.uploader || '').toLowerCase();
   const artLower = (artist || '').toLowerCase();
   const titLower = (title || '').toLowerCase();
+  // Whole words only: "live" must not match "Oliver" or "Alive", nor "cover" "Discover".
+  const has = (text, word) => new RegExp(`\\b${word}\\b`).test(text);
+  const flagged = (word) => has(cTitle, word) && !has(titLower, word);
 
   // YouTube auto-generated Topic channels provide the pure record-label studio album audio
-  const isTopicChannel = cUploader.endsWith('- topic') || cUploader.includes('topic');
+  const isTopicChannel = cUploader.includes('topic');
   if (isTopicChannel) score += 55;
   else if (artLower && cUploader.includes(artLower)) score += 30;
   if (cUploader.includes('vevo')) score += 20;
 
-  // Title matching
+  // Title matching. A result that doesn't name the song is most likely a different track by
+  // the same artist (Topic channels upload every song on the album).
+  const core = coreTitle(title);
   if (titLower && cTitle.includes(titLower)) score += 25;
+  else if (core && !compactText(cTitle).includes(core)) score -= 60;
   if (cTitle.includes('official audio') || cTitle.includes('original audio')) score += 35;
   if (cTitle.includes('provided to youtube')) score += 40;
   if (cTitle.includes('remaster')) score += 10;
@@ -347,14 +364,14 @@ function scoreCandidate(c, artist, title, targetDuration) {
   if (cTitle.includes('music video') || cTitle.includes('official video')) score -= 15;
 
   // Heavy penalties for non-studio versions
-  if (cTitle.includes('live') && !titLower.includes('live')) score -= 50;
-  if (cTitle.includes('cover') && !titLower.includes('cover')) score -= 60;
-  if (cTitle.includes('karaoke') || (cTitle.includes('instrumental') && !titLower.includes('instrumental'))) score -= 60;
-  if (cTitle.includes('reaction') || cTitle.includes('review') || cTitle.includes('parody')) score -= 100;
-  if (cTitle.includes('slowed') || cTitle.includes('reverb') || cTitle.includes('bass boosted') || cTitle.includes('nightcore') || cTitle.includes('8d audio')) score -= 80;
-  if (cTitle.includes('teaser') || cTitle.includes('trailer') || cTitle.includes('snippet')) score -= 90;
-  if (cTitle.includes('clean') && !titLower.includes('clean')) score -= 25;
-  if (cTitle.includes('censored')) score -= 40;
+  if (flagged('live')) score -= 50;
+  if (flagged('cover')) score -= 60;
+  if (has(cTitle, 'karaoke') || flagged('instrumental')) score -= 60;
+  if (has(cTitle, 'reaction') || has(cTitle, 'review') || has(cTitle, 'parody')) score -= 100;
+  if (has(cTitle, 'slowed') || has(cTitle, 'reverb') || cTitle.includes('bass boosted') || has(cTitle, 'nightcore') || cTitle.includes('8d audio')) score -= 80;
+  if (has(cTitle, 'teaser') || has(cTitle, 'trailer') || has(cTitle, 'snippet')) score -= 90;
+  if (flagged('clean')) score -= 25;
+  if (has(cTitle, 'censored')) score -= 40;
 
   return score;
 }
@@ -370,20 +387,17 @@ async function getMatchCandidates(track, limit = 5) {
     `${artist} ${title}`,
   ];
 
+  // The first two searches almost always fill the candidate list, so run them side by side
+  // (each is a yt-dlp process taking seconds); the broad search is only a fallback.
   const candidateMap = new Map();
-  for (const q of queries) {
-    try {
-      const results = await ytdlp.searchYouTube(q, 3);
-      if (results && results.length > 0) {
-        for (const item of results) {
-          if (item && item.id && !candidateMap.has(item.id)) {
-            candidateMap.set(item.id, item);
-          }
-        }
-      }
-      if (candidateMap.size >= 6) break;
-    } catch (_) {}
-  }
+  const addResults = (results) => {
+    for (const item of results || []) {
+      if (item && item.id && !candidateMap.has(item.id)) candidateMap.set(item.id, item);
+    }
+  };
+  const search = (q) => ytdlp.searchYouTube(q, 3).catch(() => []);
+  (await Promise.all(queries.slice(0, 2).map(search))).forEach(addResults);
+  if (candidateMap.size < 6) addResults(await search(queries[2]));
 
   const list = Array.from(candidateMap.values());
   if (list.length === 0) return [];
@@ -705,6 +719,7 @@ module.exports = {
   searchArtists,
   getArtistDiscography,
   classifyRelease,
+  scoreCandidate,
   getAlbumDetails,
   searchTracks,
   matchTrackToYouTube,

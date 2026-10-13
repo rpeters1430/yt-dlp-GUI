@@ -38,3 +38,19 @@ test('searchAlbums can return keyword results without searching or enriching an 
     global.fetch = originalFetch;
   }
 });
+
+test('scoreCandidate matches flag words whole and penalises other songs', () => {
+  const { scoreCandidate } = require('./music');
+  const studio = scoreCandidate({ title: 'Life Goes On', uploader: 'Oliver Tree - Topic', duration: 160 }, 'Oliver Tree', 'Life Goes On', 160);
+  const live = scoreCandidate({ title: 'Life Goes On (Live)', uploader: 'Oliver Tree', duration: 160 }, 'Oliver Tree', 'Life Goes On', 160);
+  assert.ok(studio > live);
+  // "Discover" and "Alive" are not "cover" and "live".
+  assert.ok(scoreCandidate({ title: 'Discover Alive', uploader: 'X - Topic', duration: 200 }, 'X', 'Alive', 200) >= 140);
+  // Same artist's Topic channel, same length, different song.
+  const right = scoreCandidate({ title: 'Wish You Were Here', uploader: 'Incubus - Topic', duration: 210 }, 'Incubus', 'Wish You Were Here', 210);
+  const wrong = scoreCandidate({ title: 'Nice to Know You', uploader: 'Incubus - Topic', duration: 211 }, 'Incubus', 'Wish You Were Here', 210);
+  assert.ok(right - wrong >= 80);
+  // A featured artist in the iTunes title doesn't count as a different song.
+  const feat = scoreCandidate({ title: 'Song Name', uploader: 'A - Topic', duration: 180 }, 'A', 'Song Name (feat. B)', 180);
+  assert.ok(feat >= 115);
+});

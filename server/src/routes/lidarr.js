@@ -109,6 +109,8 @@ router.get('/download', (req, res) => {
 const qbitRouter = express.Router();
 qbitRouter.use(express.urlencoded({ extended: true }));
 
+const MAX_MULTIPART_BYTES = 5 * 1024 * 1024;
+
 async function parseMultipartForm(req) {
   const ctype = req.headers['content-type'] || '';
   if (!ctype.toLowerCase().includes('multipart/form-data')) {
@@ -122,8 +124,12 @@ async function parseMultipartForm(req) {
   const boundary = boundaryMatch[1] || boundaryMatch[2];
   const boundaryBuf = Buffer.from(`--${boundary}`);
 
+  // Our .torrent files are a few hundred bytes; cap the buffered body well above that.
   const chunks = [];
+  let received = 0;
   for await (const chunk of req) {
+    received += chunk.length;
+    if (received > MAX_MULTIPART_BYTES) throw new Error('Upload too large');
     chunks.push(chunk);
   }
   const bodyBuf = Buffer.concat(chunks);
