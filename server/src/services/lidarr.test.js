@@ -37,7 +37,7 @@ describe('lidarr service', () => {
   it('generates Torznab caps XML with music capabilities', () => {
     const caps = lidarr.getCapsXml();
     assert.ok(caps.includes('<caps>'));
-    assert.ok(caps.includes('<music-search available="yes"'));
+    assert.ok(caps.includes('<audio-search available="yes"'));
     assert.ok(caps.includes('id="3000" name="Audio"'));
   });
 

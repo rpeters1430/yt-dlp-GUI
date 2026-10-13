@@ -245,13 +245,16 @@ async function searchAlbums(query, limit = 50, { includeArtist = true } = {}) {
 
 async function getAlbumDetails(collectionId) {
   if (!collectionId) throw new Error('Collection ID is required');
-  const url = `https://itunes.apple.com/lookup?id=${encodeURIComponent(collectionId)}&entity=song`;
+  const url = `https://itunes.apple.com/lookup?id=${encodeURIComponent(collectionId)}&entity=song&limit=200`;
   const data = await fetchJson(url);
   const items = data.results || [];
   if (items.length === 0) throw new Error('Album not found');
 
   const albumItem = items.find((i) => i.wrapperType === 'collection') || items[0];
   const songItems = items.filter((i) => i.wrapperType === 'track');
+  if (!songItems.length || (albumItem.trackCount && songItems.length < albumItem.trackCount)) {
+    throw new Error('Album track list incomplete');
+  }
 
   const album = {
     id: albumItem.collectionId,

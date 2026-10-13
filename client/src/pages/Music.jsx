@@ -2069,7 +2069,7 @@ export default function MusicPage() {
               </div>
             </div>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.5, margin: 0 }}>
-              Use this app as both an <strong>Indexer</strong> and <strong>Downloader</strong> for Lidarr. When Lidarr searches for an album or track, our Torznab indexer queries high-fidelity music releases and sends the download tasks directly to our queue via the built-in qBittorrent or SABnzbd client emulator. When downloads finish, Lidarr automatically imports and renames the files into your library!
+              Use this app as both an <strong>Indexer</strong> and <strong>Downloader</strong> for Lidarr. When Lidarr searches for an album or track, our Torznab indexer finds album metadata and sends downloads to our queue through the qBittorrent adapter. When downloads finish, Lidarr automatically imports and renames the files into your library!
             </p>
           </div>
 
@@ -2136,7 +2136,7 @@ export default function MusicPage() {
                   </div>
 
                   <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 4 }}>
-                    Categories: <code>3000, 3010, 3020, 3040</code> (Audio)
+                    Categories: <code>3000, 3010, 3040</code> (Audio)
                   </div>
                 </div>
               </div>
@@ -2170,7 +2170,7 @@ export default function MusicPage() {
                         readOnly
                         className="input"
                         style={{ fontSize: '0.82rem', padding: '6px 8px', width: '100%' }}
-                        value={window.location.port || '3000'}
+                        value={window.location.port || (window.location.protocol === 'https:' ? '443' : '80')}
                       />
                     </div>
                   </div>
@@ -2201,7 +2201,7 @@ export default function MusicPage() {
                     Username: anything (e.g. <code>lidarr</code>). Password: the API Key above. Category: <code>music</code>
                   </div>
                   <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 2 }}>
-                    Reported download path: <code>{lidarrConfig.musicFolder || '/downloads/Music'}</code>
+                    Use SSL: {window.location.protocol === 'https:' ? 'Yes' : 'No'}. Initial State: Start. Priorities: Last. Reported download path: <code>{lidarrConfig.musicFolder || '/downloads/Music'}</code>
                   </div>
 
                   <div style={{

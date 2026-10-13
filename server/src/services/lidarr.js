@@ -4,7 +4,7 @@ const path = require('path');
 const db = require('../db');
 const music = require('./music');
 const ytdlp = require('./ytdlp');
-const { MUSIC_DIR, resolveMusicDir } = require('./ytdlpPaths');
+const { resolveMusicDir } = require('./ytdlpPaths');
 
 // Bencoding for BitTorrent .torrent files
 function bencode(val) {
@@ -233,9 +233,7 @@ function normalizeMusicFolder(folder) {
   const basePrefix = downloadDir.startsWith('/') ? downloadDir : '/downloads';
 
   if (!folder || folder === 'Music') {
-    return MUSIC_DIR
-      ? MUSIC_DIR.replace(/\\/g, '/').replace(/\/+$/, '')
-      : `${basePrefix.replace(/\/+$/, '')}/Music`;
+    return `${basePrefix.replace(/\/+$/, '')}/Music`;
   }
 
   const str = String(folder).trim().replace(/\\/g, '/');
@@ -345,17 +343,15 @@ function getCapsXml() {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <caps>
   <server version="1.0" title="yt-dlp-music" strapline="yt-dlp Music Torznab Indexer for Lidarr"/>
-  <limits max="100" default="50"/>
+  <limits max="50" default="50"/>
   <registration available="no" open="no"/>
   <searching>
-    <search available="yes" supportedParams="q"/>
-    <music-search available="yes" supportedParams="q,artist,album,track,year"/>
+    <search available="yes" supportedParams="q" searchEngine="raw"/>
+    <audio-search available="yes" supportedParams="q,artist,album,track" searchEngine="raw"/>
   </searching>
   <categories>
     <category id="3000" name="Audio">
       <subcat id="3010" name="Audio/MP3"/>
-      <subcat id="3020" name="Audio/Video"/>
-      <subcat id="3030" name="Audio/Audiobook"/>
       <subcat id="3040" name="Audio/Lossless"/>
     </category>
   </categories>
@@ -376,7 +372,71 @@ function albumTitleMatches(name, wanted) {
   return normalizeTitle(name) === target || normalizeTitle(base) === target;
 }
 
-async function searchTorznab({ query = '', artist = '', album = '', track = '', year = '', limit = 50, offset = 0, hostUrl = '', apiKey = '' }) {
+// Lidarr's monitored catalog supplies compilations absent from the iTunes storefront.
+// Keep this source in the release ID so downloading uses the same track list as the grab.
+async function fetchLidarrResource(resource) {
+  const config = getLidarrConfig();
+  if (!config.url || !config.apiKey) throw new Error('Lidarr is not configured');
+  const res = await fetch(`${config.url.replace(/\/+$/, '')}/api/v1/${resource}`, {
+    headers: { 'X-Api-Key': config.apiKey, Accept: 'application/json' },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  return res.json();
+}
+
+async function searchLidarrAlbums({ artist, album, query }) {
+  if (!getLidarrConfig().apiKey) return [];
+  const artists = await fetchLidarrResource('artist');
+  const matches = artists.filter((a) => artist
+    ? normalizeTitle(a.artistName) === normalizeTitle(artist)
+    : normalizeTitle(query).startsWith(normalizeTitle(a.artistName)));
+  const catalogs = await Promise.all(matches.map(async (a) => {
+    const albums = await fetchLidarrResource(`album?artistId=${a.id}`);
+    return albums.filter((b) => album ? albumTitleMatches(b.title, album)
+      : normalizeTitle(query) === normalizeTitle(`${a.artistName} ${b.title}`))
+      .map((b) => ({
+        id: `lidarr-${b.id}`, name: b.title, artist: a.artistName,
+        releaseYear: b.releaseDate?.slice(0, 4), releaseDate: b.releaseDate,
+        trackCount: b.releases?.find((r) => r.monitored)?.trackCount || 10,
+      }));
+  }));
+  return catalogs.flat();
+}
+
+async function getLidarrAlbumDetails(id) {
+  if (!/^lidarr-\d+$/.test(String(id))) throw new Error('Invalid Lidarr album ID');
+  const albumId = String(id).slice(7);
+  const record = await fetchLidarrResource(`album/${albumId}`);
+  const release = record.releases?.find((r) => r.monitored);
+  if (!release) throw new Error('Album has no monitored release');
+  // TrackResource has no albumReleaseId; request the selected release explicitly.
+  const [artist, allTracks] = await Promise.all([
+    fetchLidarrResource(`artist/${record.artistId}`),
+    fetchLidarrResource(`track?albumReleaseId=${release.id}`),
+  ]);
+  const selected = allTracks.sort((a, b) => (a.mediumNumber || 1) - (b.mediumNumber || 1)
+      || Number(a.absoluteTrackNumber || a.trackNumber) - Number(b.absoluteTrackNumber || b.trackNumber));
+  if (!selected.length || (release.trackCount && selected.length !== release.trackCount)) {
+    throw new Error('Album track list incomplete');
+  }
+  const album = {
+    name: record.title, artist: artist.artistName,
+    releaseYear: record.releaseDate?.slice(0, 4), releaseDate: record.releaseDate,
+    genre: record.genres?.[0] || artist.genres?.[0],
+    artwork: record.images?.find((i) => i.coverType === 'cover')?.remoteUrl || null,
+    trackCount: selected.length,
+  };
+  const totalDiscs = Math.max(...selected.map((t) => t.mediumNumber || 1));
+  return { album, tracks: selected.map((t) => ({
+    title: t.title, artist: artist.artistName, albumArtist: artist.artistName,
+    album: album.name, trackNumber: Number(t.trackNumber) || t.absoluteTrackNumber,
+    discNumber: t.mediumNumber || 1, totalDiscs, totalTracks: selected.length,
+    duration: t.duration ? Math.round(t.duration / 1000) : null,
+  })) };
+}
+
+async function searchTorznab({ query = '', artist = '', album = '', track = '', year = '', limit = 50, offset = 0, categories = '', hostUrl = '', apiKey = '' }) {
   const config = getLidarrConfig();
   const releaseFormat = describeReleaseFormat(config.format, config.quality);
   // Lidarr fetches the .torrent from the link as-is, so it has to carry the key itself.
@@ -387,9 +447,14 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
   const cleanTrack = String(track || '').trim();
   const cleanQuery = String(query || '').trim();
 
-  const effectiveLimit = Math.min(50, Math.max(1, parseInt(limit, 10) || 30));
+  // Build the same candidate set on every page; limit only controls slicing.
+  const effectiveLimit = 50;
+  const allowedCategories = !categories || String(categories).split(',').some((c) =>
+    Number(c) === 3000 || Number(c) === releaseFormat.category);
 
-  if (cleanAlbum || (cleanArtist && !cleanTrack)) {
+  if (!allowedCategories) {
+    // Requested categories do not contain our configured audio format.
+  } else if (cleanAlbum || (cleanArtist && !cleanTrack)) {
     const q = cleanAlbum ? (cleanArtist ? `${cleanArtist} ${cleanAlbum}` : cleanAlbum) : cleanArtist;
     try {
       // iTunes keyword search ranks by popularity and often omits the wanted album entirely
@@ -407,11 +472,15 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
         seenIds.add(String(alb.id));
         return true;
       });
-      // Title tracks share the album's name ("Morning View - Single"), and Lidarr will happily
-      // grab that one-song release for the album. Once the full album is on offer, drop singles.
-      const isSingle = (alb) => (alb.releaseType || music.classifyRelease(alb.name, alb.trackCount)) === 'single';
-      if (cleanAlbum && albums.some((alb) => !isSingle(alb) && albumTitleMatches(alb.name, cleanAlbum))) {
-        albums = albums.filter((alb) => !isSingle(alb));
+      // Never expose a title-track single, live edition or unrelated keyword result
+      // as the requested album, even when the external catalog misses the full release.
+      if (cleanAlbum) {
+        albums = albums.filter((alb) => albumTitleMatches(alb.name, cleanAlbum)
+          && (!cleanArtist || normalizeTitle(alb.artist) === normalizeTitle(cleanArtist))
+          && Number(alb.trackCount) > 1);
+        if (!albums.length) {
+          albums = await searchLidarrAlbums({ artist: cleanArtist, album: cleanAlbum });
+        }
       }
       for (const alb of albums) {
         items.push({
@@ -451,36 +520,26 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
     }
   } else if (cleanQuery) {
     try {
-      const [albumRes, trackRes] = await Promise.all([
-        music.searchAlbums(cleanQuery, Math.floor(effectiveLimit / 2)).catch(() => ({ results: [] })),
-        music.searchTracks(cleanQuery, Math.floor(effectiveLimit / 2)).catch(() => []),
-      ]);
-
-      for (const alb of albumRes.results || []) {
+      const albumRes = await music.searchAlbums(cleanQuery, effectiveLimit);
+      // q-only searches are also used for album grabs. Returning songs here allows
+      // Lidarr to accept a title track from an entirely different album.
+      let albums = [...(albumRes.matchedArtist?.all || []), ...(albumRes.results || [])];
+      const seen = new Set();
+      albums = albums.filter((alb) => {
+        if (seen.has(String(alb.id)) || Number(alb.trackCount) <= 1) return false;
+        seen.add(String(alb.id));
+        const q = normalizeTitle(cleanQuery);
+        const a = normalizeTitle(alb.artist);
+        return q === a || albumTitleMatches(alb.name, cleanQuery)
+          || (a && q.startsWith(a) && albumTitleMatches(alb.name, q.slice(a.length)));
+      });
+      if (!albums.length) albums = await searchLidarrAlbums({ query: cleanQuery });
+      for (const alb of albums) {
         items.push({
-          type: 'album',
-          id: alb.id,
-          name: alb.name,
-          artist: alb.artist,
-          album: alb.name,
+          type: 'album', id: alb.id, name: alb.name, artist: alb.artist, album: alb.name,
           releaseYear: alb.releaseYear || null,
           releaseDate: alb.releaseDate || new Date().toISOString(),
-          trackCount: alb.trackCount || 10,
-          genre: alb.genre || 'Music',
-        });
-      }
-
-      for (const t of trackRes || []) {
-        items.push({
-          type: 'track',
-          id: t.collectionId ? `${t.collectionId}-${t.trackNumber}` : `tr-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          name: t.title,
-          artist: t.artist,
-          album: t.album || 'Single',
-          releaseYear: t.releaseYear || null,
-          releaseDate: t.releaseDate || new Date().toISOString(),
-          trackCount: 1,
-          genre: t.genre || 'Music',
+          trackCount: alb.trackCount || 10, genre: alb.genre || 'Music',
         });
       }
     } catch (err) {
@@ -510,7 +569,7 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
   }
 
   // A full catalog can exceed one page; honour offset so Lidarr's paging terminates.
-  const pageSize = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+  const pageSize = Math.min(50, Math.max(1, parseInt(limit, 10) || 50));
   const pageStart = Math.max(0, parseInt(offset, 10) || 0);
   const pageItems = items.slice(pageStart, pageStart + pageSize);
 
@@ -551,8 +610,9 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
   }).join('\n');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:torznab="http://torznab.com/schemas/2015/feed" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
   <channel>
+    <newznab:response offset="${pageStart}" total="${items.length}"/>
     <title>yt-dlp Music</title>
     <description>yt-dlp Music Torznab Indexer Feed for Lidarr</description>
     <link>${escapeXml(hostUrl)}</link>
@@ -577,7 +637,7 @@ const TRACK_MATCH_CONCURRENCY = 3;
 async function getAlbumDetailsWithRetry(id, delaysMs = ALBUM_LOOKUP_RETRY_DELAYS_MS) {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await music.getAlbumDetails(id);
+      return await (String(id).startsWith('lidarr-') ? getLidarrAlbumDetails(id) : music.getAlbumDetails(id));
     } catch (err) {
       if (attempt >= delaysMs.length || err.message === 'Album not found') throw err;
       await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
@@ -586,19 +646,21 @@ async function getAlbumDetailsWithRetry(id, delaysMs = ALBUM_LOOKUP_RETRY_DELAYS
 }
 
 async function handleDownloadAdd({ type = 'album', id, artist, album, track = null, hash = null, category = 'music', savePath = null }) {
+  if (!id || !['album', 'track'].includes(type)) return { ok: false, error: 'Invalid release' };
   const config = getLidarrConfig();
   const musicSettings = music.getMusicSettings();
   const targetFormat = config.format || musicSettings.musicFormat || 'mp3';
   const targetQuality = config.quality || musicSettings.musicQuality || '320k';
   const targetFolder = config.musicFolder || musicSettings.musicFolder || 'Music';
 
-  const resolvedBaseDir = resolveMusicDir(savePath || targetFolder);
+  const categoryPath = getQbitCategories()[category]?.savePath;
+  const resolvedBaseDir = resolveMusicDir(savePath || categoryPath || targetFolder);
 
   hash = String(hash || computeReleaseHash({ type, id, artist, album, track })).toLowerCase();
 
   const existing = db.prepare('SELECT * FROM lidarr_tasks WHERE hash = ?').get(hash);
   if (existing) {
-    return { ok: true, hash, existing: true };
+    return { ok: existing.status !== 'failed', hash, existing: true };
   }
 
   let albumDetails = null;
@@ -726,11 +788,11 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, track = nu
   return { ok: true, hash, title, contentPath };
 }
 
-function getQbitTorrents({ category, hashes } = {}) {
+function getQbitTorrents({ category, hashes, filter } = {}) {
   let tasks = db.prepare('SELECT * FROM lidarr_tasks ORDER BY created_at DESC').all();
 
   if (category && category !== 'all') {
-    tasks = tasks.filter((t) => !t.category || t.category === category);
+    tasks = tasks.filter((t) => (t.category ?? 'music') === category);
   }
 
   if (hashes) {
@@ -766,15 +828,15 @@ function getQbitTorrents({ category, hashes } = {}) {
     // job_ids is written once, together with the status change, after every track was enqueued.
     // (Older rows stayed 'downloading' but already have job_ids.)
     const enqueueDone = task.status !== 'downloading' || jobIds.length > 0;
-    const expected = enqueueDone ? jobIds.length : Math.max(task.total_tracks || 1, 1);
+    const expected = Math.max(task.total_tracks || 1, jobIds.length, 1);
+    if (enqueueDone) failedCount += Math.max(0, expected - jobIds.length);
     const allTerminal = enqueueDone && completedCount + failedCount >= expected;
 
     let progress = totalPercent / (Math.max(task.total_tracks || 1, expected, 1) * 100);
     let state;
-    if (allTerminal && completedCount > 0) {
-      // qBittorrent "seeding" state: tells Lidarr the download is finished and ready to import.
-      // Partial albums (some tracks failed) are still handed over so Lidarr can import or flag them.
-      state = 'uploading';
+    if (allTerminal && completedCount === expected && failedCount === 0) {
+      // The adapter has no swarm to seed. Paused + zero seed goal permits Lidarr cleanup.
+      state = 'pausedUP';
       progress = 1.0;
       if (task.status !== 'completed' && task.status !== 'imported') {
         const actualSize = listContentFiles(task).reduce((sum, f) => sum + f.size, 0);
@@ -794,7 +856,7 @@ function getQbitTorrents({ category, hashes } = {}) {
     const amountLeft = Math.max(0, Math.round(size * (1 - progress)));
     // SQLite datetime('now') is UTC without a zone suffix; without the Z it parses as local time.
     const addedOn = Math.floor(new Date(`${task.created_at}Z`).getTime() / 1000);
-    const completionOn = state === 'uploading' ? Math.floor(new Date(`${task.updated_at}Z`).getTime() / 1000) : -1;
+    const completionOn = state === 'pausedUP' ? Math.floor(new Date(`${task.updated_at}Z`).getTime() / 1000) : -1;
 
     result.push({
       hash: task.hash,
@@ -802,18 +864,21 @@ function getQbitTorrents({ category, hashes } = {}) {
       size,
       total_size: size,
       progress: Math.min(1.0, Math.max(0, progress)),
-      dlspeed: state === 'downloading' ? 1048576 : 0,
+      dlspeed: 0, // Aggregate transfer speed is unavailable during matching and tagging.
       upspeed: 0,
       priority: 0,
       num_seeds: 1,
       num_leechs: 0,
       num_incomplete: 0,
-      ratio: 1.0,
-      eta: state === 'downloading' ? 30 : 0,
+      ratio: 0,
+      ratio_limit: 0,
+      seeding_time: 0,
+      seeding_time_limit: 0,
+      eta: state === 'pausedUP' ? 0 : 8640000, // qBittorrent's unknown-ETA sentinel.
       state,
       seq_dl: true,
       f_l_piece_prio: false,
-      category: task.category || 'music',
+      category: task.category ?? 'music',
       super_seeding: false,
       force_start: false,
       save_path: normalizeMusicFolder(task.save_path).replace(/\\/g, '/'),
@@ -824,7 +889,23 @@ function getQbitTorrents({ category, hashes } = {}) {
     });
   }
 
-  return result;
+  return result.filter((torrent) => {
+    if (!filter || filter === 'all') return true;
+    if (filter === 'completed' || filter === 'paused') return torrent.state === 'pausedUP';
+    if (filter === 'downloading') return ['downloading', 'queuedDL'].includes(torrent.state);
+    if (filter === 'errored') return torrent.state === 'error';
+    if (filter === 'seeding') return false;
+    return true;
+  });
+}
+
+function setQbitTorrentCategory(hashes, category) {
+  if (category && !getQbitCategories()[category]) return false;
+  const list = String(hashes || '').toLowerCase().split('|').filter(Boolean);
+  if (!list.length) return false;
+  const update = db.prepare('UPDATE lidarr_tasks SET category = ? WHERE hash = ?');
+  for (const hash of list) update.run(category || '', hash);
+  return true;
 }
 
 // Files under the task's content folder, named relative to its save path the way qBittorrent
@@ -901,12 +982,12 @@ function getQbitTorrentProperties(hash) {
 // Lidarr removes a grab it gave up on (failed, blocklisted, or removed by the user): stop its
 // tracks that haven't finished so they don't keep downloading into the library. Finished files
 // stay where they are.
-function deleteQbitTorrents(hashes) {
+function deleteQbitTorrents(hashes, deleteFiles = false) {
   if (!hashes) return;
   const list = String(hashes).toLowerCase().split('|').filter(Boolean);
   if (list.length === 0) return;
   const placeholders = list.map(() => '?').join(',');
-  const tasks = db.prepare(`SELECT job_ids FROM lidarr_tasks WHERE hash IN (${placeholders})`).all(...list);
+  const tasks = db.prepare(`SELECT job_ids, content_path FROM lidarr_tasks WHERE hash IN (${placeholders})`).all(...list);
   db.prepare(`DELETE FROM lidarr_tasks WHERE hash IN (${placeholders})`).run(...list);
   const queue = require('./queue');
   for (const task of tasks) {
@@ -915,13 +996,24 @@ function deleteQbitTorrents(hashes) {
     for (const jobId of jobIds) {
       const job = queue.getJobSummary(jobId);
       if (job && (job.status === 'queued' || job.status === 'downloading')) queue.removeJob(jobId);
+      // Delete only finished files recorded for this grab, never an entire shared album folder.
+      if (deleteFiles && job?.filepath && job.status === 'completed' && task.content_path) {
+        try {
+          const root = fs.realpathSync(task.content_path);
+          const file = fs.realpathSync(job.filepath);
+          const relative = path.relative(root, file);
+          if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) fs.unlinkSync(file);
+        } catch (err) {
+          if (err.code !== 'ENOENT') console.error('[lidarr:qbit] Failed to delete downloaded file:', err.message);
+        }
+      }
     }
   }
 }
 
 function getSabQueue() {
   const torrents = getQbitTorrents();
-  const active = torrents.filter((t) => t.state !== 'uploading' && t.state !== 'completed');
+  const active = torrents.filter((t) => !['pausedUP', 'error'].includes(t.state));
   
   const slots = active.map((t, idx) => ({
     nzo_id: t.hash,
@@ -949,16 +1041,16 @@ function getSabQueue() {
 
 function getSabHistory() {
   const torrents = getQbitTorrents();
-  const finished = torrents.filter((t) => t.state === 'uploading');
+  const finished = torrents.filter((t) => ['pausedUP', 'error'].includes(t.state));
 
   const slots = finished.map((t) => ({
     nzo_id: t.hash,
     name: t.name,
-    status: 'COMPLETED',
+    status: t.state === 'error' ? 'Failed' : 'Completed',
     storage: t.content_path,
     category: t.category,
     bytes: t.size,
-    fail_message: '',
+    fail_message: t.state === 'error' ? 'One or more album tracks failed' : '',
   }));
 
   return {
@@ -1043,7 +1135,7 @@ async function getWantedMissing({ page = 1, pageSize = 30 } = {}) {
   if (!config.url || !config.apiKey) throw new Error('Lidarr is not configured');
 
   const targetUrl = config.url.trim().replace(/\/+$/, '');
-  const url = `${targetUrl}/api/v1/wanted/missing?page=${page}&pageSize=${pageSize}&sortKey=airDateUtc&sortDirection=descending`;
+  const url = `${targetUrl}/api/v1/wanted/missing?page=${page}&pageSize=${pageSize}`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10000);
@@ -1175,6 +1267,7 @@ module.exports = {
   getQbitTorrentFiles,
   getQbitTorrentProperties,
   deleteQbitTorrents,
+  setQbitTorrentCategory,
   describeReleaseFormat,
   estimateReleaseSize,
   getQbitCategories,

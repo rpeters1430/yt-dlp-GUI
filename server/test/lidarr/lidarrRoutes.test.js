@@ -42,7 +42,7 @@ test('Torznab indexer endpoint returns capabilities XML', async (t) => {
   assert.ok(res.headers.get('content-type').includes('xml'));
   const text = await res.text();
   assert.ok(text.includes('<caps>'));
-  assert.ok(text.includes('music-search'));
+  assert.ok(text.includes('audio-search'));
 });
 
 test('Torznab indexer endpoint responds on alias /api/torznab', async (t) => {
@@ -126,7 +126,7 @@ test('Mock qBittorrent Web API handles auth, version, and torrents/info', async 
   assert.equal(prefRes.status, 200);
   const pref = await prefRes.json();
   assert.ok(pref.save_path.startsWith('/'));
-  assert.equal(pref.queueing_enabled, true);
+  assert.equal(pref.queueing_enabled, false);
 
   const catRes = await fetch(`${base}/api/lidarr/qbit/api/v2/torrents/categories`, { headers });
   assert.equal(catRes.status, 200);
@@ -229,7 +229,7 @@ test('qBittorrent torrents/add reports the uploaded torrent under its real infoh
   const list = await (await fetch(`${base}/api/lidarr/qbit/api/v2/torrents/info?hashes=${infoHash.toUpperCase()}`, { headers })).json();
   assert.equal(list.length, 1);
   assert.equal(list[0].hash, infoHash);
-  assert.equal(list[0].state, 'uploading');
+  assert.equal(list[0].state, 'pausedUP');
   assert.equal(list[0].content_path, path.join(saveRoot, 'Incubus', 'Morning View'));
   assert.equal(list[0].size, 1234, 'reports the real size once finished');
 
@@ -284,7 +284,7 @@ test('album search finds the album in the artist catalog when keyword search mis
   const titles = (xml) => [...xml.matchAll(/<title>(.*?) \[/g)].map((m) => m[1]);
 
   const album = await (await fetch(`${base}/api/lidarr/torznab?t=music&artist=Incubus&album=8&apikey=${key}`)).text();
-  assert.deepEqual(titles(album), ['Incubus - 8 (2017)', '8-Bit Misfits - 8-Bit Versions of Incubus', 'Incubus - Morning View (Special Edition) (2001)']);
+  assert.deepEqual(titles(album), ['Incubus - 8 (2017)']);
   assert.deepEqual(searchCalls.map(({ options }) => options), [undefined, { includeArtist: false }]);
 
   const ep = await (await fetch(`${base}/api/lidarr/torznab?t=music&artist=Incubus&album=Drive&apikey=${key}`)).text();
@@ -360,4 +360,196 @@ test('an oversized torrents/add upload is refused with 413, not reported as queu
   form.append('torrents', new Blob([Buffer.alloc(6 * 1024 * 1024)], { type: 'application/x-bittorrent' }), 'big.torrent');
   const res = await fetch(`${base}/api/lidarr/qbit/api/v2/torrents/add`, { method: 'POST', body: form, headers: { Cookie: cookie } });
   assert.equal(res.status, 413);
+});
+
+test('album and q-only searches exclude live title tracks and unrelated releases', async (t) => {
+  const { base, key } = await startApp(t);
+  const music = require(path.join(SRC, 'services', 'music'));
+  const full = { id: 1, name: 'Make Yourself', artist: 'Incubus', trackCount: 13 };
+  const wrong = [
+    { id: 2, name: 'Make Yourself - Single', artist: 'Incubus', trackCount: 1 },
+    { id: 3, name: 'Make Yourself (Live)', artist: 'Incubus', trackCount: 1 },
+    { id: 4, name: 'Make Yourself (Live)', artist: 'Incubus', trackCount: 13 },
+  ];
+  let includeFull = true;
+  t.mock.method(music, 'searchAlbums', async () => ({ results: includeFull ? [...wrong, full] : wrong }));
+  t.mock.method(music, 'searchTracks', async () => { assert.fail('Album search must not return songs'); });
+  for (const params of ['artist=Incubus&album=Make+Yourself', 'q=Incubus+Make+Yourself']) {
+    const xml = await (await fetch(`${base}/api/lidarr/torznab?t=music&${params}&apikey=${key}`)).text();
+    assert.equal((xml.match(/<item>/g) || []).length, 1);
+    assert.ok(xml.includes('type=album&amp;id=1&amp;'));
+    assert.ok(!xml.includes('(Live)'));
+  }
+  includeFull = false;
+  const xml = await (await fetch(`${base}/api/lidarr/torznab?t=music&artist=Incubus&album=Make+Yourself&apikey=${key}`)).text();
+  assert.ok(!xml.includes('<item>'));
+});
+
+test('missing compilations use all monitored-release tracks across discs from Lidarr', async (t) => {
+  const { base, key, lidarr, db } = await startApp(t);
+  lidarr.updateLidarrConfig({ url: 'http://lidarr.test', apiKey: 'test-key' });
+  const music = require(path.join(SRC, 'services', 'music'));
+  t.mock.method(music, 'searchAlbums', async () => ({ results: [] }));
+  const record = {
+    id: 42, artistId: 9, title: 'The Essential Incubus', releaseDate: '2012-10-30',
+    releases: [{ id: 70, monitored: false, trackCount: 1 }, { id: 71, monitored: true, trackCount: 4 }],
+  };
+  const tracks = [
+    { title: 'Drive', trackNumber: '2', mediumNumber: 2, duration: 232000 },
+    { title: 'Pardon Me', trackNumber: '1', mediumNumber: 2, duration: 223000 },
+    { title: 'Make Yourself', trackNumber: '2', mediumNumber: 1, duration: 183000 },
+    { title: 'Privilege', trackNumber: '1', mediumNumber: 1, duration: 183000 },
+  ];
+  const realFetch = global.fetch;
+  t.mock.method(global, 'fetch', async (url, opts) => {
+    if (!String(url).startsWith('http://lidarr.test/')) return realFetch(url, opts);
+    assert.equal(opts.headers['X-Api-Key'], 'test-key');
+    const route = String(url).split('/api/v1/')[1];
+    const resources = {
+      artist: [{ id: 9, artistName: 'Incubus' }], 'artist/9': { id: 9, artistName: 'Incubus' },
+      'album?artistId=9': [record], 'album/42': record, 'track?albumReleaseId=71': tracks,
+    };
+    assert.ok(route in resources, route);
+    return { ok: true, json: async () => resources[route] };
+  });
+  for (const params of ['artist=Incubus&album=The+Essential+Incubus', 'q=Incubus+The+Essential+Incubus']) {
+    const xml = await (await fetch(`${base}/api/lidarr/torznab?t=music&${params}&apikey=${key}`)).text();
+    assert.ok(xml.includes('id=lidarr-42'));
+    assert.ok(xml.includes('Incubus - The Essential Incubus (2012)'));
+  }
+  const enqueued = [];
+  t.mock.method(music, 'enqueueMusicDownload', async (opts) => {
+    enqueued.push(opts.track);
+    return { jobId: `compilation-${enqueued.length}` };
+  });
+  const result = await lidarr.handleDownloadAdd({ type: 'album', id: 'lidarr-42', artist: 'Incubus', album: record.title });
+  for (let i = 0; i < 100 && db.prepare('SELECT status FROM lidarr_tasks WHERE hash = ?').get(result.hash)?.status === 'downloading'; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(enqueued.length, 4);
+  assert.deepEqual(enqueued.map((tr) => [tr.title, tr.discNumber, tr.trackNumber]), [
+    ['Privilege', 1, 1], ['Make Yourself', 1, 2], ['Pardon Me', 2, 1], ['Drive', 2, 2],
+  ]);
+  assert.ok(enqueued.every((tr) => tr.album === record.title && tr.totalDiscs === 2 && tr.totalTracks === 4));
+  assert.equal(enqueued[3].duration, 232);
+});
+
+test('wanted/missing omits the nonexistent Albums.AirDateUtc sort column', async (t) => {
+  const { lidarr } = await startApp(t);
+  lidarr.updateLidarrConfig({ url: 'http://lidarr.test', apiKey: 'test-key' });
+  t.mock.method(global, 'fetch', async (url) => {
+    assert.equal(String(url), 'http://lidarr.test/api/v1/wanted/missing?page=2&pageSize=10');
+    return { ok: true, json: async () => ({ records: [] }) };
+  });
+  assert.deepEqual(await lidarr.getWantedMissing({ page: 2, pageSize: 10 }), { records: [] });
+});
+
+test('Torznab caps and responses match Lidarr audio search, categories and paging', async (t) => {
+  const { base, key, lidarr } = await startApp(t);
+  const music = require(path.join(SRC, 'services', 'music'));
+  const catalog = Array.from({ length: 60 }, (_, i) => ({ id: i + 1, name: `Album ${i + 1}`, artist: 'Incubus', trackCount: 10 }));
+  t.mock.method(music, 'searchAlbums', async () => ({ results: [], matchedArtist: { all: catalog } }));
+  const caps = lidarr.getCapsXml();
+  assert.match(caps, /<audio-search available="yes" supportedParams="q,artist,album,track" searchEngine="raw"/);
+  assert.match(caps, /<limits max="50" default="50"/);
+  assert.ok(!caps.includes('music-search'));
+  assert.ok(!caps.includes('id="3020"'));
+  const query = `${base}/api/lidarr/torznab?t=music&artist=Incubus&apikey=${key}`;
+  const first = await (await fetch(`${query}&limit=2&offset=0&cat=3010`)).text();
+  assert.match(first, /<newznab:response offset="0" total="60"\/>/);
+  assert.equal((first.match(/<item>/g) || []).length, 2);
+  const second = await (await fetch(`${query}&limit=2&offset=2`)).text();
+  assert.ok(second.includes('Incubus - Album 3'));
+  assert.ok(!second.includes('Incubus - Album 1 ['));
+  const beyond = await (await fetch(`${query}&offset=100`)).text();
+  assert.ok(!beyond.includes('<item>'));
+  const wrongCategory = await (await fetch(`${query}&cat=5000`)).text();
+  assert.ok(!wrongCategory.includes('<item>'));
+  for (const bad of ['cat=wrong', 'limit=0', 'offset=-1']) {
+    assert.match(await (await fetch(`${query}&${bad}`)).text(), /error code="201"/);
+  }
+});
+
+test('a partial album is never exposed as completed and post-import categories persist', async (t) => {
+  const { db, base, key, lidarr } = await startApp(t);
+  db.prepare("INSERT INTO downloads (id, url, status, percent) VALUES ('one', 'x', 'completed', 100), ('two', 'x', 'failed', 20)").run();
+  const insert = db.prepare(`INSERT INTO lidarr_tasks (hash, title, total_tracks, job_ids, status, save_path, content_path, category)
+    VALUES (?, 'Artist - Album', ?, ?, 'enqueued', '/downloads', '/downloads/Artist/Album', 'music')`);
+  insert.run('partial', 2, '["one","two"]');
+  insert.run('unmatched', 2, '["one"]');
+  insert.run('complete', 1, '["one"]');
+  assert.equal(lidarr.getQbitTorrents({ hashes: 'partial' })[0].state, 'error');
+  assert.equal(lidarr.getQbitTorrents({ hashes: 'unmatched' })[0].state, 'error');
+  const completed = lidarr.getQbitTorrents({ hashes: 'complete' })[0];
+  assert.equal(completed.state, 'pausedUP');
+  assert.equal(completed.ratio_limit, 0);
+  assert.equal(completed.progress, 1);
+  assert.equal(lidarr.getQbitTorrents({ filter: 'completed' }).length, 1);
+  const cookie = await qbitLogin(base, key);
+  lidarr.addQbitCategory('imported', '/downloads');
+  const response = await fetch(`${base}/api/lidarr/qbit/api/v2/torrents/setCategory`, {
+    method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'hashes=COMPLETE&category=imported',
+  });
+  assert.equal(response.status, 200);
+  assert.equal(lidarr.getQbitTorrents({ category: 'imported' }).length, 1);
+  assert.equal(lidarr.getQbitTorrents({ category: 'music' }).length, 2);
+  const sync = await (await fetch(`${base}/api/lidarr/qbit/api/v2/sync/maindata`, { headers: { Cookie: cookie } })).json();
+  assert.equal(sync.torrents.complete.state, 'pausedUP');
+});
+
+test('qBittorrent rejects empty, foreign and paused adds instead of reporting success', async (t) => {
+  const { base, key } = await startApp(t);
+  const cookie = await qbitLogin(base, key);
+  for (const body of ['', 'urls=magnet%3A%3Fxt%3Durn%3Abtih%3A123', 'paused=true&urls=http%3A%2F%2Fx%2F%3Fid%3D42']) {
+    const response = await fetch(`${base}/api/lidarr/qbit/api/v2/torrents/add`, {
+      method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' }, body,
+    });
+    assert.equal(await response.text(), 'Fails.');
+  }
+  const unsupportedSab = await (await fetch(`${base}/api/lidarr/sab/api?mode=addfile&apikey=${key}`)).json();
+  assert.equal(unsupportedSab.status, false);
+});
+
+test('category save paths are used for grabs and deleteFiles removes only their recorded files', async (t) => {
+  const { db, lidarr } = await startApp(t);
+  const music = require(path.join(SRC, 'services', 'music'));
+  const saveRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lidarr-audit-'));
+  t.after(() => fs.rmSync(saveRoot, { recursive: true, force: true }));
+  const folder = path.join(saveRoot, 'Artist', 'Album');
+  fs.mkdirSync(folder, { recursive: true });
+  const downloaded = path.join(folder, '01 - Song.mp3');
+  const unrelated = path.join(folder, 'unrelated.mp3');
+  fs.writeFileSync(downloaded, 'song');
+  fs.writeFileSync(unrelated, 'keep');
+  lidarr.addQbitCategory('custom', saveRoot);
+  t.mock.method(music, 'enqueueMusicDownload', async (opts) => {
+    assert.equal(opts.musicFolder, saveRoot);
+    db.prepare("INSERT INTO downloads (id, url, status, percent, filepath) VALUES ('audit', 'x', 'completed', 100, ?)").run(downloaded);
+    return { jobId: 'audit' };
+  });
+  const result = await lidarr.handleDownloadAdd({ type: 'track', id: '42', artist: 'Artist', album: 'Album', track: 'Song', category: 'custom' });
+  for (let i = 0; i < 100 && db.prepare('SELECT status FROM lidarr_tasks WHERE hash = ?').get(result.hash)?.status === 'downloading'; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(lidarr.getQbitTorrents({ hashes: result.hash })[0].content_path, folder);
+  lidarr.deleteQbitTorrents(result.hash, true);
+  assert.equal(fs.existsSync(downloaded), false);
+  assert.equal(fs.existsSync(unrelated), true);
+});
+
+test('Lidarr default staging does not inherit the direct music library mount', async (t) => {
+  const previousMusic = process.env.MUSIC_DIR;
+  const previousDownload = process.env.DOWNLOAD_DIR;
+  process.env.MUSIC_DIR = '/music';
+  process.env.DOWNLOAD_DIR = '/downloads';
+  t.after(() => {
+    if (previousMusic === undefined) delete process.env.MUSIC_DIR; else process.env.MUSIC_DIR = previousMusic;
+    if (previousDownload === undefined) delete process.env.DOWNLOAD_DIR; else process.env.DOWNLOAD_DIR = previousDownload;
+  });
+  const { lidarr } = await startApp(t);
+  assert.equal(lidarr.normalizeMusicFolder('Music'), '/downloads/Music');
+  assert.equal(lidarr.getLidarrConfig().musicFolder, '/downloads/Music');
+  lidarr.updateLidarrConfig({ musicFolder: '/custom/incoming' });
+  assert.equal(lidarr.getLidarrConfig().musicFolder, '/custom/incoming');
 });

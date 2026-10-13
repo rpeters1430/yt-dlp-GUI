@@ -25,8 +25,9 @@ function getApiKey(req) {
 }
 
 async function handleTorznabRequest(req, res) {
-  const t = (req.query.t || '').toLowerCase();
-  const apikey = getApiKey(req);
+  const params = Object.fromEntries(Object.entries(req.query).map(([key, value]) => [key.toLowerCase(), value]));
+  const t = String(params.t || '').toLowerCase();
+  const apikey = params.apikey || getApiKey(req);
 
   if (!lidarr.validateTorznabApiKey(apikey)) {
     res.set('Content-Type', 'application/xml');
@@ -40,15 +41,25 @@ async function handleTorznabRequest(req, res) {
   }
 
   if (t === 'music' || t === 'search') {
+    const badCategory = params.cat !== undefined && !/^\d+(,\d+)*$/.test(String(params.cat));
+    const badNumber = (key, minimum) => params[key] !== undefined
+      && (!/^\d+$/.test(String(params[key])) || !Number.isSafeInteger(Number(params[key])) || Number(params[key]) < minimum);
+    if (badCategory || badNumber('limit', 1) || badNumber('offset', 0)) {
+      return res.type('application/xml').status(200).send('<error code="201" description="Incorrect parameter"/>');
+    }
+  }
+
+  if (t === 'music' || t === 'search') {
     try {
       const xml = await lidarr.searchTorznab({
-        query: req.query.q,
-        artist: req.query.artist,
-        album: req.query.album,
-        track: req.query.track,
-        year: req.query.year,
-        limit: req.query.limit,
-        offset: req.query.offset,
+        query: params.q,
+        artist: params.artist,
+        album: params.album,
+        track: params.track,
+        year: params.year,
+        limit: params.limit,
+        offset: params.offset,
+        categories: params.cat,
         hostUrl: getHostUrl(req),
         apiKey: apikey,
       });
@@ -62,9 +73,8 @@ async function handleTorznabRequest(req, res) {
     }
   }
 
-  // Default: return capabilities if no specific function was provided
-  res.set('Content-Type', 'application/xml');
-  return res.send(lidarr.getCapsXml());
+  res.type('application/xml');
+  return t ? res.send('<error code="202" description="No such function"/>') : res.send(lidarr.getCapsXml());
 }
 
 router.get('/torznab', handleTorznabRequest);
@@ -246,7 +256,7 @@ qbitRouter.get('/app/preferences', (req, res) => {
   res.json({
     save_path: savePath,
     temp_path: savePath,
-    queueing_enabled: true,
+    queueing_enabled: false,
     max_ratio_enabled: false,
     max_seeding_time_enabled: false,
     dht: true,
@@ -289,7 +299,8 @@ qbitRouter.post('/torrents/removeCategories', (req, res) => {
 });
 
 qbitRouter.post('/torrents/setCategory', (req, res) => {
-  res.type('text/plain').status(200).send('Ok.');
+  const ok = lidarr.setQbitTorrentCategory(req.body?.hashes, req.body?.category || '');
+  res.type('text/plain').status(ok ? 200 : 409).send(ok ? 'Ok.' : 'Invalid category or hashes');
 });
 
 qbitRouter.post('/torrents/setShareLimits', (req, res) => {
@@ -297,7 +308,7 @@ qbitRouter.post('/torrents/setShareLimits', (req, res) => {
 });
 
 qbitRouter.post('/torrents/topPrio', (req, res) => {
-  res.type('text/plain').status(200).send('Ok.');
+  res.type('text/plain').status(409).send('Priority changes are not supported by this adapter');
 });
 
 qbitRouter.post('/torrents/setForceStart', (req, res) => {
@@ -308,7 +319,7 @@ qbitRouter.get('/sync/maindata', (req, res) => {
   res.json({
     rid: 1,
     full_update: true,
-    torrents: {},
+    torrents: Object.fromEntries(lidarr.getQbitTorrents().map((torrent) => [torrent.hash, torrent])),
     categories: lidarr.getQbitCategories(),
     server_state: {
       connection_status: 'connected',
@@ -336,7 +347,7 @@ qbitRouter.post('/torrents/add', async (req, res) => {
     } catch (err) {
       console.error('[lidarr:qbit] Error parsing multipart upload:', err.message);
       // Answering "Ok." would tell Lidarr a grab was queued when nothing was.
-      if (err.status === 413) return res.type('text/plain').status(413).send('Upload too large');
+      return res.type('text/plain').status(err.status === 413 ? 413 : 400).send(err.status === 413 ? 'Upload too large' : 'Fails.');
     }
   }
 
@@ -344,12 +355,18 @@ qbitRouter.post('/torrents/add', async (req, res) => {
   const category = fields.category || req.query?.category || 'music';
   const savepath = fields.savepath || req.query?.savepath || null;
 
+  // Pausing is not implemented by the yt-dlp queue; don't silently start a paused grab.
+  if (String(fields.paused || fields.stopped).toLowerCase() === 'true') {
+    return res.type('text/plain').status(200).send('Fails.');
+  }
+  let accepted = 0;
+
   // 1. Process files (if Lidarr uploaded .torrent files)
   for (const file of files) {
     try {
       const torrentInfo = lidarr.parseTorrentBuffer(file.buffer);
       if (torrentInfo && torrentInfo.id) {
-        await lidarr.handleDownloadAdd({
+        const task = await lidarr.handleDownloadAdd({
           type: torrentInfo.type || 'album',
           id: torrentInfo.id,
           artist: torrentInfo.artist,
@@ -360,6 +377,7 @@ qbitRouter.post('/torrents/add', async (req, res) => {
           category,
           savePath: savepath,
         });
+        if (task.ok) accepted++;
       }
     } catch (err) {
       console.error('[lidarr:qbit] Failed to process uploaded torrent file:', file.filename, err.message);
@@ -379,7 +397,7 @@ qbitRouter.post('/torrents/add', async (req, res) => {
         const track = parsedUrl.searchParams.get('track');
 
         if (id) {
-          await lidarr.handleDownloadAdd({
+          const task = await lidarr.handleDownloadAdd({
             type,
             id,
             artist,
@@ -388,6 +406,7 @@ qbitRouter.post('/torrents/add', async (req, res) => {
             category,
             savePath: savepath,
           });
+          if (task.ok) accepted++;
         }
       } catch (err) {
         console.error('[lidarr:qbit] Failed to process torrent add url:', urlStr, err.message);
@@ -395,17 +414,17 @@ qbitRouter.post('/torrents/add', async (req, res) => {
     }
   }
 
-  res.type('text/plain').status(200).send('Ok.');
+  res.type('text/plain').status(200).send(accepted > 0 ? 'Ok.' : 'Fails.');
 });
 
 qbitRouter.post('/torrents/delete', (req, res) => {
   const hashes = req.body?.hashes || req.query?.hashes;
-  lidarr.deleteQbitTorrents(hashes);
+  lidarr.deleteQbitTorrents(hashes, String(req.body?.deleteFiles || req.query?.deleteFiles).toLowerCase() === 'true');
   res.type('text/plain').status(200).send('Ok.');
 });
 
 qbitRouter.post('/torrents/pause', (req, res) => {
-  res.type('text/plain').status(200).send('Ok.');
+  res.type('text/plain').status(409).send('Pause is not supported by this adapter');
 });
 
 qbitRouter.post('/torrents/resume', (req, res) => {
@@ -492,17 +511,17 @@ async function handleSabRequest(req, res) {
             track,
             category: cat,
           });
-          return res.json({ status: true, nzo_ids: [task.hash] });
+          return res.json(task.ok ? { status: true, nzo_ids: [task.hash] } : { status: false, error: task.error || 'Download rejected' });
         }
       }
     } catch (err) {
       console.error('[lidarr:sab] Addurl error:', err.message);
     }
-    return res.json({ status: true, nzo_ids: [] });
+    return res.json({ status: false, error: 'Download rejected' });
   }
 
-  // Default fallback for unrecognized SAB mode
-  res.json({ status: true });
+  // Torznab releases cannot be sent through Lidarr's native Usenet/SABnzbd pipeline.
+  res.json({ status: false, error: 'Unsupported SABnzbd operation; configure the qBittorrent adapter' });
 }
 
 router.get('/sab/api', handleSabRequest);
@@ -548,8 +567,8 @@ router.get('/status', requireAuth, (req, res) => {
   const config = lidarr.getLidarrConfig();
   res.json({
     config,
-    activeTasks: tasks.filter((t) => t.state !== 'uploading'),
-    completedTasks: tasks.filter((t) => t.state === 'uploading'),
+    activeTasks: tasks.filter((t) => t.state !== 'pausedUP'),
+    completedTasks: tasks.filter((t) => t.state === 'pausedUP'),
     totalTasks: tasks.length,
   });
 });

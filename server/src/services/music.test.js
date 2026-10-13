@@ -54,3 +54,22 @@ test('scoreCandidate matches flag words whole and penalises other songs', () => 
   const feat = scoreCandidate({ title: 'Song Name', uploader: 'A - Topic', duration: 180 }, 'A', 'Song Name (feat. B)', 180);
   assert.ok(feat >= 115);
 });
+
+test('getAlbumDetails requests all multi-disc tracks and rejects truncated metadata', async (t) => {
+  const { getAlbumDetails } = require('./music');
+  let count = 60;
+  t.mock.method(global, 'fetch', async (url) => {
+    assert.match(url, /entity=song&limit=200/);
+    return { ok: true, json: async () => ({ results: [
+      { wrapperType: 'collection', collectionName: 'Compilation', artistName: 'Artist', trackCount: 60, discCount: 2 },
+      ...Array.from({ length: count }, (_, i) => ({
+        wrapperType: 'track', trackName: `Song ${i + 1}`, trackNumber: i % 30 + 1, discNumber: i < 30 ? 1 : 2,
+      })),
+    ] }) };
+  });
+  const details = await getAlbumDetails(1);
+  assert.equal(details.tracks.length, 60);
+  assert.equal(details.tracks[30].discNumber, 2);
+  count = 50;
+  await assert.rejects(getAlbumDetails(1), /Album track list incomplete/);
+});
