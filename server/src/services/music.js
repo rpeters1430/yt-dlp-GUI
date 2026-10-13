@@ -478,25 +478,42 @@ async function saveCoverArt(targetDir, artworkUrl) {
   const coverPath = path.join(targetDir, 'cover.jpg');
   if (fs.existsSync(coverPath)) return;
 
+  const artwork = await fetchArtwork(artworkUrl);
+  if (!artwork || fs.existsSync(coverPath)) return;
   try {
-    const res = await fetch(artworkUrl);
-    if (!res.ok) return;
-    const arrayBuffer = await res.arrayBuffer();
-    fs.writeFileSync(coverPath, Buffer.from(arrayBuffer));
+    fs.writeFileSync(coverPath, artwork.data);
   } catch (err) {
     console.error(`[music] Failed to save cover art: ${err.message}`);
   }
 }
 
-async function fetchArtwork(url) {
-  if (!url) return null;
+// Every track of an album embeds the same artwork, and the album's tracks finish within
+// minutes of each other, so recent fetches are shared instead of downloaded per track.
+const ARTWORK_CACHE_TTL_MS = 15 * 60 * 1000;
+const ARTWORK_CACHE_MAX = 8;
+const artworkCache = new Map();
+
+function fetchArtwork(url) {
+  if (!url) return Promise.resolve(null);
+  const cached = artworkCache.get(url);
+  if (cached && cached.expires > Date.now()) return cached.promise;
+  artworkCache.delete(url);
+  const promise = fetchArtworkUncached(url);
+  if (artworkCache.size >= ARTWORK_CACHE_MAX) artworkCache.delete(artworkCache.keys().next().value);
+  artworkCache.set(url, { promise, expires: Date.now() + ARTWORK_CACHE_TTL_MS });
+  // A failed fetch isn't cached, so the next track tries again.
+  promise.then((art) => { if (!art) artworkCache.delete(url); });
+  return promise;
+}
+
+async function fetchArtworkUncached(url) {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
     if (!res.ok) return null;
     const mime = /png/i.test(res.headers.get('content-type') || '') ? 'image/png' : 'image/jpeg';
     return { data: Buffer.from(await res.arrayBuffer()), mime };
   } catch (err) {
-    console.error(`[music] Failed to fetch artwork for embedding: ${err.message}`);
+    console.error(`[music] Failed to fetch artwork: ${err.message}`);
     return null;
   }
 }
