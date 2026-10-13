@@ -376,6 +376,70 @@ function albumTitleMatches(name, wanted) {
   return normalizeTitle(name) === target || normalizeTitle(base) === target;
 }
 
+// Lidarr's monitored catalog supplies compilations absent from the iTunes storefront.
+// Keep this source in the release ID so downloading uses the same track list as the grab.
+async function fetchLidarrResource(resource) {
+  const config = getLidarrConfig();
+  if (!config.url || !config.apiKey) throw new Error('Lidarr is not configured');
+  const res = await fetch(`${config.url.replace(/\/+$/, '')}/api/v1/${resource}`, {
+    headers: { 'X-Api-Key': config.apiKey, Accept: 'application/json' },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  return res.json();
+}
+
+async function searchLidarrAlbums({ artist, album, query }) {
+  if (!getLidarrConfig().apiKey) return [];
+  const artists = await fetchLidarrResource('artist');
+  const matches = artists.filter((a) => artist
+    ? normalizeTitle(a.artistName) === normalizeTitle(artist)
+    : normalizeTitle(query).startsWith(normalizeTitle(a.artistName)));
+  const catalogs = await Promise.all(matches.map(async (a) => {
+    const albums = await fetchLidarrResource(`album?artistId=${a.id}`);
+    return albums.filter((b) => album ? albumTitleMatches(b.title, album)
+      : normalizeTitle(query) === normalizeTitle(`${a.artistName} ${b.title}`))
+      .map((b) => ({
+        id: `lidarr-${b.id}`, name: b.title, artist: a.artistName,
+        releaseYear: b.releaseDate?.slice(0, 4), releaseDate: b.releaseDate,
+        trackCount: b.releases?.find((r) => r.monitored)?.trackCount || 10,
+      }));
+  }));
+  return catalogs.flat();
+}
+
+async function getLidarrAlbumDetails(id) {
+  if (!/^lidarr-\d+$/.test(String(id))) throw new Error('Invalid Lidarr album ID');
+  const albumId = String(id).slice(7);
+  const record = await fetchLidarrResource(`album/${albumId}`);
+  const release = record.releases?.find((r) => r.monitored);
+  if (!release) throw new Error('Album has no monitored release');
+  // TrackResource has no albumReleaseId; request the selected release explicitly.
+  const [artist, allTracks] = await Promise.all([
+    fetchLidarrResource(`artist/${record.artistId}`),
+    fetchLidarrResource(`track?albumReleaseId=${release.id}`),
+  ]);
+  const selected = allTracks.sort((a, b) => (a.mediumNumber || 1) - (b.mediumNumber || 1)
+      || Number(a.absoluteTrackNumber || a.trackNumber) - Number(b.absoluteTrackNumber || b.trackNumber));
+  if (!selected.length || (release.trackCount && selected.length !== release.trackCount)) {
+    throw new Error('Album track list incomplete');
+  }
+  const album = {
+    name: record.title, artist: artist.artistName,
+    releaseYear: record.releaseDate?.slice(0, 4), releaseDate: record.releaseDate,
+    genre: record.genres?.[0] || artist.genres?.[0],
+    artwork: record.images?.find((i) => i.coverType === 'cover')?.remoteUrl || null,
+    trackCount: selected.length,
+  };
+  const totalDiscs = Math.max(...selected.map((t) => t.mediumNumber || 1));
+  return { album, tracks: selected.map((t) => ({
+    title: t.title, artist: artist.artistName, albumArtist: artist.artistName,
+    album: album.name, trackNumber: Number(t.trackNumber) || t.absoluteTrackNumber,
+    discNumber: t.mediumNumber || 1, totalDiscs, totalTracks: selected.length,
+    duration: t.duration ? Math.round(t.duration / 1000) : null,
+  })) };
+}
+
 async function searchTorznab({ query = '', artist = '', album = '', track = '', year = '', limit = 50, offset = 0, hostUrl = '', apiKey = '' }) {
   const config = getLidarrConfig();
   const releaseFormat = describeReleaseFormat(config.format, config.quality);
@@ -407,11 +471,15 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
         seenIds.add(String(alb.id));
         return true;
       });
-      // Title tracks share the album's name ("Morning View - Single"), and Lidarr will happily
-      // grab that one-song release for the album. Once the full album is on offer, drop singles.
-      const isSingle = (alb) => (alb.releaseType || music.classifyRelease(alb.name, alb.trackCount)) === 'single';
-      if (cleanAlbum && albums.some((alb) => !isSingle(alb) && albumTitleMatches(alb.name, cleanAlbum))) {
-        albums = albums.filter((alb) => !isSingle(alb));
+      // Never expose a title-track single, live edition or unrelated keyword result
+      // as the requested album, even when the external catalog misses the full release.
+      if (cleanAlbum) {
+        albums = albums.filter((alb) => albumTitleMatches(alb.name, cleanAlbum)
+          && (!cleanArtist || normalizeTitle(alb.artist) === normalizeTitle(cleanArtist))
+          && Number(alb.trackCount) > 1);
+        if (!albums.length) {
+          albums = await searchLidarrAlbums({ artist: cleanArtist, album: cleanAlbum });
+        }
       }
       for (const alb of albums) {
         items.push({
@@ -451,36 +519,26 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
     }
   } else if (cleanQuery) {
     try {
-      const [albumRes, trackRes] = await Promise.all([
-        music.searchAlbums(cleanQuery, Math.floor(effectiveLimit / 2)).catch(() => ({ results: [] })),
-        music.searchTracks(cleanQuery, Math.floor(effectiveLimit / 2)).catch(() => []),
-      ]);
-
-      for (const alb of albumRes.results || []) {
+      const albumRes = await music.searchAlbums(cleanQuery, effectiveLimit);
+      // q-only searches are also used for album grabs. Returning songs here allows
+      // Lidarr to accept a title track from an entirely different album.
+      let albums = [...(albumRes.matchedArtist?.all || []), ...(albumRes.results || [])];
+      const seen = new Set();
+      albums = albums.filter((alb) => {
+        if (seen.has(String(alb.id)) || Number(alb.trackCount) <= 1) return false;
+        seen.add(String(alb.id));
+        const q = normalizeTitle(cleanQuery);
+        const a = normalizeTitle(alb.artist);
+        return q === a || albumTitleMatches(alb.name, cleanQuery)
+          || (a && q.startsWith(a) && albumTitleMatches(alb.name, q.slice(a.length)));
+      });
+      if (!albums.length) albums = await searchLidarrAlbums({ query: cleanQuery });
+      for (const alb of albums) {
         items.push({
-          type: 'album',
-          id: alb.id,
-          name: alb.name,
-          artist: alb.artist,
-          album: alb.name,
+          type: 'album', id: alb.id, name: alb.name, artist: alb.artist, album: alb.name,
           releaseYear: alb.releaseYear || null,
           releaseDate: alb.releaseDate || new Date().toISOString(),
-          trackCount: alb.trackCount || 10,
-          genre: alb.genre || 'Music',
-        });
-      }
-
-      for (const t of trackRes || []) {
-        items.push({
-          type: 'track',
-          id: t.collectionId ? `${t.collectionId}-${t.trackNumber}` : `tr-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          name: t.title,
-          artist: t.artist,
-          album: t.album || 'Single',
-          releaseYear: t.releaseYear || null,
-          releaseDate: t.releaseDate || new Date().toISOString(),
-          trackCount: 1,
-          genre: t.genre || 'Music',
+          trackCount: alb.trackCount || 10, genre: alb.genre || 'Music',
         });
       }
     } catch (err) {
@@ -577,7 +635,7 @@ const TRACK_MATCH_CONCURRENCY = 3;
 async function getAlbumDetailsWithRetry(id, delaysMs = ALBUM_LOOKUP_RETRY_DELAYS_MS) {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await music.getAlbumDetails(id);
+      return await (String(id).startsWith('lidarr-') ? getLidarrAlbumDetails(id) : music.getAlbumDetails(id));
     } catch (err) {
       if (attempt >= delaysMs.length || err.message === 'Album not found') throw err;
       await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
@@ -1043,7 +1101,7 @@ async function getWantedMissing({ page = 1, pageSize = 30 } = {}) {
   if (!config.url || !config.apiKey) throw new Error('Lidarr is not configured');
 
   const targetUrl = config.url.trim().replace(/\/+$/, '');
-  const url = `${targetUrl}/api/v1/wanted/missing?page=${page}&pageSize=${pageSize}&sortKey=airDateUtc&sortDirection=descending`;
+  const url = `${targetUrl}/api/v1/wanted/missing?page=${page}&pageSize=${pageSize}`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10000);

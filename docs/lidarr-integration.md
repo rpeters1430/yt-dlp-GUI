@@ -104,3 +104,13 @@ Lidarr links a finished download to the release it grabbed by the torrent's info
 Downloads grabbed **before** the fix keep the old hash. For each one, either use **Manual Import** in Lidarr's Activity → Queue, or remove it from the queue (with "Remove from Client") and search for the album again.
 
 "Automatically notify Lidarr when downloads finish" only applies to music you download from the app yourself. Lidarr imports its own grabs through the download client, so the app no longer sends a separate scan for those, and it waits for an album folder to stop changing (60 seconds) before asking Lidarr to scan it.
+
+### Album search downloads only the title song, or a compilation has no results
+
+Album searches now return matching album releases, rather than individual songs or similarly named live releases. Explicit `track` searches still support individual songs.
+
+If an album is missing from the iTunes catalog, the indexer can use the album already added to Lidarr and download the complete track list from its selected (monitored) release. This requires the **Lidarr Server URL** and **Lidarr API Key** in Music → Lidarr to be configured. Multi-disc releases retain their disc and track numbers. Incomplete track lists fail rather than silently downloading a partial album.
+
+After updating the container, remove the incorrect grab from Lidarr's Activity → Queue with **Remove from Client**, then search the album again. An older `Make Yourself (Live)` grab from `HQ Live` will not turn into the studio album when the app updates.
+
+The Wanted/Missing page now uses Lidarr's default sorting instead of requesting `airDateUtc`, which causes `no such column: Albums.AirDateUtc` on Lidarr 3.1.6.
