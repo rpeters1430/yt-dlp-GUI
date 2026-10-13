@@ -41,6 +41,8 @@ export const api = {
   stopDownload: (id) => request(`/downloads/${id}/stop`, { method: 'POST' }),
   retryDownload: (id) => request(`/downloads/${id}/retry`, { method: 'POST' }),
   clearFailedDownloads: () => request('/downloads/clear-failed', { method: 'POST' }),
+  retryFailedDownloads: () => request('/downloads/retry-failed', { method: 'POST' }),
+  checkDuplicates: (items) => request('/downloads/check-duplicates', { method: 'POST', body: JSON.stringify({ items }) }),
   toggleDownloadProtect: (id, protectedFlag) => request(`/downloads/${id}/protect`, { method: 'PATCH', body: JSON.stringify({ protected: protectedFlag }) }),
 
   listWatches: () => request('/watches'),
