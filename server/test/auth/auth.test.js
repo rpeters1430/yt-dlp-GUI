@@ -105,8 +105,10 @@ test('changing the password signs out other sessions but keeps the current one',
   await phone('POST', '/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
   await laptop('POST', '/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
 
-  assert.equal((await laptop('POST', '/auth/change-password', { newPassword: 'short' })).status, 400);
-  assert.equal((await laptop('POST', '/auth/change-password', { newPassword: NEW_PASSWORD })).status, 200);
+  assert.equal((await laptop('POST', '/auth/change-password', { currentPassword: ADMIN_PASSWORD, newPassword: 'short' })).status, 400);
+  assert.equal((await laptop('POST', '/auth/change-password', { newPassword: NEW_PASSWORD })).status, 403, 'needs the current password');
+  assert.equal((await laptop('POST', '/auth/change-password', { currentPassword: 'wrong', newPassword: NEW_PASSWORD })).status, 403);
+  assert.equal((await laptop('POST', '/auth/change-password', { currentPassword: ADMIN_PASSWORD, newPassword: NEW_PASSWORD })).status, 200);
 
   assert.equal((await laptop('GET', '/private')).status, 200, 'the session that changed it stays signed in');
   assert.equal((await phone('GET', '/private')).status, 401, 'other sessions are signed out');

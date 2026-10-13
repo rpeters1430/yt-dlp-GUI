@@ -6,6 +6,7 @@ import NotificationSettings from '../components/NotificationSettings.jsx';
 import PlexSettings from '../components/PlexSettings.jsx';
 
 export default function Settings() {
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState('');
@@ -100,8 +101,9 @@ export default function Settings() {
       return;
     }
     try {
-      await api.changePassword(newPassword);
+      await api.changePassword(currentPassword, newPassword);
       setMessage('Password updated.');
+      setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
     } catch (err) {
@@ -394,6 +396,15 @@ export default function Settings() {
         </div>
         <form onSubmit={handleChangePassword} className="settings-form">
           <label className="field-label">
+            Current password
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+          </label>
+          <label className="field-label">
             New password
             <input
               type="password"
@@ -414,7 +425,7 @@ export default function Settings() {
             />
           </label>
           <div>
-            <button type="submit" disabled={!newPassword || !confirmPassword}>Update password</button>
+            <button type="submit" disabled={!currentPassword || !newPassword || !confirmPassword}>Update password</button>
           </div>
           {message && <div className="alert alert-success"><CheckCircle2 size={15} />{message}</div>}
           {error && <div className="alert alert-error"><AlertCircle size={15} />{error}</div>}

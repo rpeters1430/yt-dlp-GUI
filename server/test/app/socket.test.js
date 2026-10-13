@@ -91,7 +91,7 @@ test('a password change disconnects other sessions’ open sockets but keeps the
   const phoneSocket = await phone.open();
   const laptopSocket = await laptop.open();
 
-  assert.equal(await laptop.call('POST', '/api/auth/change-password', { newPassword: NEW_PASSWORD }), 200);
+  assert.equal(await laptop.call('POST', '/api/auth/change-password', { currentPassword: ADMIN_PASSWORD, newPassword: NEW_PASSWORD }), 200);
   await until(() => phoneSocket.disconnectReason);
   assert.equal(phoneSocket.disconnectReason, 'io server disconnect');
   await new Promise((r) => setTimeout(r, 100));

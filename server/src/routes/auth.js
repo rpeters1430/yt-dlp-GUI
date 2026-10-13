@@ -49,10 +49,14 @@ router.get('/me', (req, res) => {
   res.json({ username: user.username });
 });
 
-router.post('/change-password', auth.requireAuth, (req, res) => {
-  const { newPassword } = req.body || {};
+router.post('/change-password', loginLimiter, auth.requireAuth, (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
   if (!newPassword || newPassword.length < 8) {
     return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+  // A session alone (say, a browser left signed in) must not be enough to lock the owner out.
+  if (!currentPassword || !auth.verifyPassword(req.session.userId, currentPassword)) {
+    return res.status(403).json({ error: 'Current password is incorrect' });
   }
   const newVersion = auth.changePassword(req.session.userId, newPassword);
   // Keep the session that made the change itself alive — only *other* sessions (issued
