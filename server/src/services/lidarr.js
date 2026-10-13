@@ -4,7 +4,7 @@ const path = require('path');
 const db = require('../db');
 const music = require('./music');
 const ytdlp = require('./ytdlp');
-const { MUSIC_DIR, resolveMusicDir } = require('./ytdlpPaths');
+const { resolveMusicDir } = require('./ytdlpPaths');
 
 // Bencoding for BitTorrent .torrent files
 function bencode(val) {
@@ -233,9 +233,7 @@ function normalizeMusicFolder(folder) {
   const basePrefix = downloadDir.startsWith('/') ? downloadDir : '/downloads';
 
   if (!folder || folder === 'Music') {
-    return MUSIC_DIR
-      ? MUSIC_DIR.replace(/\\/g, '/').replace(/\/+$/, '')
-      : `${basePrefix.replace(/\/+$/, '')}/Music`;
+    return `${basePrefix.replace(/\/+$/, '')}/Music`;
   }
 
   const str = String(folder).trim().replace(/\\/g, '/');
@@ -345,17 +343,15 @@ function getCapsXml() {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <caps>
   <server version="1.0" title="yt-dlp-music" strapline="yt-dlp Music Torznab Indexer for Lidarr"/>
-  <limits max="100" default="50"/>
+  <limits max="50" default="50"/>
   <registration available="no" open="no"/>
   <searching>
-    <search available="yes" supportedParams="q"/>
-    <music-search available="yes" supportedParams="q,artist,album,track,year"/>
+    <search available="yes" supportedParams="q" searchEngine="raw"/>
+    <audio-search available="yes" supportedParams="q,artist,album,track" searchEngine="raw"/>
   </searching>
   <categories>
     <category id="3000" name="Audio">
       <subcat id="3010" name="Audio/MP3"/>
-      <subcat id="3020" name="Audio/Video"/>
-      <subcat id="3030" name="Audio/Audiobook"/>
       <subcat id="3040" name="Audio/Lossless"/>
     </category>
   </categories>
@@ -440,7 +436,7 @@ async function getLidarrAlbumDetails(id) {
   })) };
 }
 
-async function searchTorznab({ query = '', artist = '', album = '', track = '', year = '', limit = 50, offset = 0, hostUrl = '', apiKey = '' }) {
+async function searchTorznab({ query = '', artist = '', album = '', track = '', year = '', limit = 50, offset = 0, categories = '', hostUrl = '', apiKey = '' }) {
   const config = getLidarrConfig();
   const releaseFormat = describeReleaseFormat(config.format, config.quality);
   // Lidarr fetches the .torrent from the link as-is, so it has to carry the key itself.
@@ -451,9 +447,14 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
   const cleanTrack = String(track || '').trim();
   const cleanQuery = String(query || '').trim();
 
-  const effectiveLimit = Math.min(50, Math.max(1, parseInt(limit, 10) || 30));
+  // Build the same candidate set on every page; limit only controls slicing.
+  const effectiveLimit = 50;
+  const allowedCategories = !categories || String(categories).split(',').some((c) =>
+    Number(c) === 3000 || Number(c) === releaseFormat.category);
 
-  if (cleanAlbum || (cleanArtist && !cleanTrack)) {
+  if (!allowedCategories) {
+    // Requested categories do not contain our configured audio format.
+  } else if (cleanAlbum || (cleanArtist && !cleanTrack)) {
     const q = cleanAlbum ? (cleanArtist ? `${cleanArtist} ${cleanAlbum}` : cleanAlbum) : cleanArtist;
     try {
       // iTunes keyword search ranks by popularity and often omits the wanted album entirely
@@ -568,7 +569,7 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
   }
 
   // A full catalog can exceed one page; honour offset so Lidarr's paging terminates.
-  const pageSize = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+  const pageSize = Math.min(50, Math.max(1, parseInt(limit, 10) || 50));
   const pageStart = Math.max(0, parseInt(offset, 10) || 0);
   const pageItems = items.slice(pageStart, pageStart + pageSize);
 
@@ -609,8 +610,9 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
   }).join('\n');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:torznab="http://torznab.com/schemas/2015/feed" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
   <channel>
+    <newznab:response offset="${pageStart}" total="${items.length}"/>
     <title>yt-dlp Music</title>
     <description>yt-dlp Music Torznab Indexer Feed for Lidarr</description>
     <link>${escapeXml(hostUrl)}</link>
@@ -644,19 +646,21 @@ async function getAlbumDetailsWithRetry(id, delaysMs = ALBUM_LOOKUP_RETRY_DELAYS
 }
 
 async function handleDownloadAdd({ type = 'album', id, artist, album, track = null, hash = null, category = 'music', savePath = null }) {
+  if (!id || !['album', 'track'].includes(type)) return { ok: false, error: 'Invalid release' };
   const config = getLidarrConfig();
   const musicSettings = music.getMusicSettings();
   const targetFormat = config.format || musicSettings.musicFormat || 'mp3';
   const targetQuality = config.quality || musicSettings.musicQuality || '320k';
   const targetFolder = config.musicFolder || musicSettings.musicFolder || 'Music';
 
-  const resolvedBaseDir = resolveMusicDir(savePath || targetFolder);
+  const categoryPath = getQbitCategories()[category]?.savePath;
+  const resolvedBaseDir = resolveMusicDir(savePath || categoryPath || targetFolder);
 
   hash = String(hash || computeReleaseHash({ type, id, artist, album, track })).toLowerCase();
 
   const existing = db.prepare('SELECT * FROM lidarr_tasks WHERE hash = ?').get(hash);
   if (existing) {
-    return { ok: true, hash, existing: true };
+    return { ok: existing.status !== 'failed', hash, existing: true };
   }
 
   let albumDetails = null;
@@ -784,11 +788,11 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, track = nu
   return { ok: true, hash, title, contentPath };
 }
 
-function getQbitTorrents({ category, hashes } = {}) {
+function getQbitTorrents({ category, hashes, filter } = {}) {
   let tasks = db.prepare('SELECT * FROM lidarr_tasks ORDER BY created_at DESC').all();
 
   if (category && category !== 'all') {
-    tasks = tasks.filter((t) => !t.category || t.category === category);
+    tasks = tasks.filter((t) => (t.category ?? 'music') === category);
   }
 
   if (hashes) {
@@ -824,15 +828,15 @@ function getQbitTorrents({ category, hashes } = {}) {
     // job_ids is written once, together with the status change, after every track was enqueued.
     // (Older rows stayed 'downloading' but already have job_ids.)
     const enqueueDone = task.status !== 'downloading' || jobIds.length > 0;
-    const expected = enqueueDone ? jobIds.length : Math.max(task.total_tracks || 1, 1);
+    const expected = Math.max(task.total_tracks || 1, jobIds.length, 1);
+    if (enqueueDone) failedCount += Math.max(0, expected - jobIds.length);
     const allTerminal = enqueueDone && completedCount + failedCount >= expected;
 
     let progress = totalPercent / (Math.max(task.total_tracks || 1, expected, 1) * 100);
     let state;
-    if (allTerminal && completedCount > 0) {
-      // qBittorrent "seeding" state: tells Lidarr the download is finished and ready to import.
-      // Partial albums (some tracks failed) are still handed over so Lidarr can import or flag them.
-      state = 'uploading';
+    if (allTerminal && completedCount === expected && failedCount === 0) {
+      // The adapter has no swarm to seed. Paused + zero seed goal permits Lidarr cleanup.
+      state = 'pausedUP';
       progress = 1.0;
       if (task.status !== 'completed' && task.status !== 'imported') {
         const actualSize = listContentFiles(task).reduce((sum, f) => sum + f.size, 0);
@@ -852,7 +856,7 @@ function getQbitTorrents({ category, hashes } = {}) {
     const amountLeft = Math.max(0, Math.round(size * (1 - progress)));
     // SQLite datetime('now') is UTC without a zone suffix; without the Z it parses as local time.
     const addedOn = Math.floor(new Date(`${task.created_at}Z`).getTime() / 1000);
-    const completionOn = state === 'uploading' ? Math.floor(new Date(`${task.updated_at}Z`).getTime() / 1000) : -1;
+    const completionOn = state === 'pausedUP' ? Math.floor(new Date(`${task.updated_at}Z`).getTime() / 1000) : -1;
 
     result.push({
       hash: task.hash,
@@ -860,18 +864,21 @@ function getQbitTorrents({ category, hashes } = {}) {
       size,
       total_size: size,
       progress: Math.min(1.0, Math.max(0, progress)),
-      dlspeed: state === 'downloading' ? 1048576 : 0,
+      dlspeed: 0, // Aggregate transfer speed is unavailable during matching and tagging.
       upspeed: 0,
       priority: 0,
       num_seeds: 1,
       num_leechs: 0,
       num_incomplete: 0,
-      ratio: 1.0,
-      eta: state === 'downloading' ? 30 : 0,
+      ratio: 0,
+      ratio_limit: 0,
+      seeding_time: 0,
+      seeding_time_limit: 0,
+      eta: state === 'pausedUP' ? 0 : 8640000, // qBittorrent's unknown-ETA sentinel.
       state,
       seq_dl: true,
       f_l_piece_prio: false,
-      category: task.category || 'music',
+      category: task.category ?? 'music',
       super_seeding: false,
       force_start: false,
       save_path: normalizeMusicFolder(task.save_path).replace(/\\/g, '/'),
@@ -882,7 +889,23 @@ function getQbitTorrents({ category, hashes } = {}) {
     });
   }
 
-  return result;
+  return result.filter((torrent) => {
+    if (!filter || filter === 'all') return true;
+    if (filter === 'completed' || filter === 'paused') return torrent.state === 'pausedUP';
+    if (filter === 'downloading') return ['downloading', 'queuedDL'].includes(torrent.state);
+    if (filter === 'errored') return torrent.state === 'error';
+    if (filter === 'seeding') return false;
+    return true;
+  });
+}
+
+function setQbitTorrentCategory(hashes, category) {
+  if (category && !getQbitCategories()[category]) return false;
+  const list = String(hashes || '').toLowerCase().split('|').filter(Boolean);
+  if (!list.length) return false;
+  const update = db.prepare('UPDATE lidarr_tasks SET category = ? WHERE hash = ?');
+  for (const hash of list) update.run(category || '', hash);
+  return true;
 }
 
 // Files under the task's content folder, named relative to its save path the way qBittorrent
@@ -959,12 +982,12 @@ function getQbitTorrentProperties(hash) {
 // Lidarr removes a grab it gave up on (failed, blocklisted, or removed by the user): stop its
 // tracks that haven't finished so they don't keep downloading into the library. Finished files
 // stay where they are.
-function deleteQbitTorrents(hashes) {
+function deleteQbitTorrents(hashes, deleteFiles = false) {
   if (!hashes) return;
   const list = String(hashes).toLowerCase().split('|').filter(Boolean);
   if (list.length === 0) return;
   const placeholders = list.map(() => '?').join(',');
-  const tasks = db.prepare(`SELECT job_ids FROM lidarr_tasks WHERE hash IN (${placeholders})`).all(...list);
+  const tasks = db.prepare(`SELECT job_ids, content_path FROM lidarr_tasks WHERE hash IN (${placeholders})`).all(...list);
   db.prepare(`DELETE FROM lidarr_tasks WHERE hash IN (${placeholders})`).run(...list);
   const queue = require('./queue');
   for (const task of tasks) {
@@ -973,13 +996,24 @@ function deleteQbitTorrents(hashes) {
     for (const jobId of jobIds) {
       const job = queue.getJobSummary(jobId);
       if (job && (job.status === 'queued' || job.status === 'downloading')) queue.removeJob(jobId);
+      // Delete only finished files recorded for this grab, never an entire shared album folder.
+      if (deleteFiles && job?.filepath && job.status === 'completed' && task.content_path) {
+        try {
+          const root = fs.realpathSync(task.content_path);
+          const file = fs.realpathSync(job.filepath);
+          const relative = path.relative(root, file);
+          if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) fs.unlinkSync(file);
+        } catch (err) {
+          if (err.code !== 'ENOENT') console.error('[lidarr:qbit] Failed to delete downloaded file:', err.message);
+        }
+      }
     }
   }
 }
 
 function getSabQueue() {
   const torrents = getQbitTorrents();
-  const active = torrents.filter((t) => t.state !== 'uploading' && t.state !== 'completed');
+  const active = torrents.filter((t) => !['pausedUP', 'error'].includes(t.state));
   
   const slots = active.map((t, idx) => ({
     nzo_id: t.hash,
@@ -1007,16 +1041,16 @@ function getSabQueue() {
 
 function getSabHistory() {
   const torrents = getQbitTorrents();
-  const finished = torrents.filter((t) => t.state === 'uploading');
+  const finished = torrents.filter((t) => ['pausedUP', 'error'].includes(t.state));
 
   const slots = finished.map((t) => ({
     nzo_id: t.hash,
     name: t.name,
-    status: 'COMPLETED',
+    status: t.state === 'error' ? 'Failed' : 'Completed',
     storage: t.content_path,
     category: t.category,
     bytes: t.size,
-    fail_message: '',
+    fail_message: t.state === 'error' ? 'One or more album tracks failed' : '',
   }));
 
   return {
@@ -1233,6 +1267,7 @@ module.exports = {
   getQbitTorrentFiles,
   getQbitTorrentProperties,
   deleteQbitTorrents,
+  setQbitTorrentCategory,
   describeReleaseFormat,
   estimateReleaseSize,
   getQbitCategories,
