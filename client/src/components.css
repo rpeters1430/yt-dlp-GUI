@@ -554,8 +554,10 @@ button.command-go { flex: none; }
 .staged-body .notice { margin-top: 6px; align-self: flex-start; }
 .staged-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 @media (max-width: 560px) {
-  .staged-art { width: 100%; }
+  .staged-art { width: 112px; }
+  .staged-body { flex-basis: calc(100% - 140px); }
   .staged-actions { width: 100%; justify-content: space-between; }
+  .tray-foot .btn-primary { width: 100%; }
 }
 .tray-foot {
   display: flex;
@@ -915,3 +917,69 @@ select.value-chip {
   color: var(--text);
 }
 select.value-chip:focus { border-color: var(--accent); }
+
+/* ---------------------------------------------------------------------- */
+/* Older controls restyled into the new vocabulary (Twitch, Music, Sites, */
+/* WatchModal and the other pages that still use them)                    */
+/* ---------------------------------------------------------------------- */
+
+.segmented,
+.segmented-choice {
+  background: var(--segment-track);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 4px;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.segmented button,
+.segmented-choice button {
+  color: var(--text-4);
+  font-weight: 600;
+  font-size: 14px;
+  padding: 7px 14px;
+  border-radius: 9px;
+}
+.segmented button:hover:not(:disabled),
+.segmented-choice button:hover:not(:disabled):not(.active) { background: none; color: var(--text); }
+.segmented button.active,
+.segmented button.active:hover,
+.segmented-choice button.active { background: var(--segment-active); color: var(--text); box-shadow: none; }
+
+.tag { font-family: var(--font-mono); font-size: 11px; font-weight: 600; border-radius: 6px; }
+
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 20px;
+}
+
+.btn-music-active,
+.btn-music-active:hover:not(:disabled) { background: var(--accent) !important; color: #fff !important; box-shadow: none !important; }
+
+.music-hub-container { display: flex; flex-direction: column; gap: 22px; }
+.music-hub-container > * { margin-bottom: 0 !important; }
+
+.sites-table th {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+.sites-table td { font-size: 14px; }
+.sites-table tbody tr:hover { background: var(--surface-hover); }
+.table-wrapper { overflow-x: auto; }
+
+.modal-backdrop { background: var(--overlay); }
+.modal-container {
+  background: var(--drawer-bg);
+  border: 1px solid var(--drawer-border);
+  border-radius: 18px;
+  box-shadow: var(--shadow-lg);
+}
+
+.empty-state { color: var(--text-4); }
+.spinner { border-top-color: var(--accent); }

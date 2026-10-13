@@ -287,10 +287,19 @@ export default function Twitch() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1><Tv className="header-icon" size={24} style={{ color: '#a855f7', marginRight: 8, verticalAlign: -4 }} /> Twitch Hub</h1>
-          <p>Record live streams, download VODs & highlights, clip time slices, and track active captures.</p>
+      <div className="page-title-row">
+        <h1>Twitch</h1>
+        <div className="pill-tabs" role="tablist">
+          {[
+            ['record', 'Record live'],
+            ['vods', channelData?.vods?.length ? `VODs · ${channelData.vods.length}` : 'VODs'],
+            ['direct', 'Direct URL'],
+            ['settings', 'Settings'],
+          ].map(([id, label]) => (
+            <button key={id} type="button" role="tab" aria-selected={activeTab === id} className={activeTab === id ? 'active' : ''} onClick={() => setActiveTab(id)}>
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -411,38 +420,6 @@ export default function Twitch() {
           </div>
         )}
       </section>
-
-      {/* Main Tabs Navigation */}
-      <div className="twitch-tabs">
-        <button
-          type="button"
-          className={`twitch-tab-btn ${activeTab === 'record' ? 'active' : ''}`}
-          onClick={() => setActiveTab('record')}
-        >
-          <Radio size={15} /> Live Stream Recorder
-        </button>
-        <button
-          type="button"
-          className={`twitch-tab-btn ${activeTab === 'vods' ? 'active' : ''}`}
-          onClick={() => setActiveTab('vods')}
-        >
-          <Film size={15} /> Channel VODs & Highlights {channelData?.vods?.length ? `(${channelData.vods.length})` : ''}
-        </button>
-        <button
-          type="button"
-          className={`twitch-tab-btn ${activeTab === 'direct' ? 'active' : ''}`}
-          onClick={() => setActiveTab('direct')}
-        >
-          <Scissors size={15} /> Direct VOD / Clip Trimmer
-        </button>
-        <button
-          type="button"
-          className={`twitch-tab-btn ${activeTab === 'settings' ? 'active' : ''}`}
-          onClick={() => setActiveTab('settings')}
-        >
-          <Key size={15} /> Twitch Settings & OAuth
-        </button>
-      </div>
 
       {/* Tab 1: Live Stream Recorder */}
       {activeTab === 'record' && (

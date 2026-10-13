@@ -1060,84 +1060,28 @@ export default function MusicPage() {
   const albumMissingCount = (selectedAlbum?.tracks?.length || 0) - albumOwnedCount;
 
   return (
-    <div className="music-hub-container" style={{ maxWidth: 1200, margin: '0 auto', paddingBottom: 60 }}>
-      {/* Top Header Banner */}
-      <div className="card" style={{ marginBottom: 20, background: 'linear-gradient(135deg, var(--accent-music-soft) 0%, var(--accent-cyan-soft) 100%)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm), var(--card-highlight)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div style={{
-              width: 48,
-              height: 48,
-              borderRadius: 12,
-              background: 'linear-gradient(135deg, var(--accent-music) 0%, var(--accent-cyan) 100%)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#fff',
-              boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
-            }}>
-              <Disc3 size={28} />
-            </div>
-            <div>
-              <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700 }}>Music Hub & Watcher</h1>
-              <p style={{ margin: '3px 0 0 0', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
-                Discover albums, download YouTube tracks in pristine high-fidelity audio (native OPUS, 320k MP3, M4A) with embedded metadata & artwork, and monitor artists.
-              </p>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+    <div className="music-hub-container">
+      <div className="page-title-row music-title-row">
+        <h1>Music</h1>
+        <div className="pill-tabs" role="tablist">
+          {[
+            ['search', 'Search'],
+            ['direct', 'Direct URL'],
+            ['watches', 'Watches'],
+            ['lidarr', lidarrWanted.totalRecords > 0 ? `Lidarr · ${lidarrWanted.totalRecords}` : 'Lidarr'],
+            ['settings', 'Settings'],
+          ].map(([id, label]) => (
             <button
+              key={id}
               type="button"
-              className={`btn btn-sm ${activeTab === 'search' ? 'btn-music-active' : 'btn-secondary'}`}
-              onClick={() => { setActiveTab('search'); setSelectedAlbum(null); }}
+              role="tab"
+              aria-selected={activeTab === id}
+              className={activeTab === id ? 'active' : ''}
+              onClick={() => { setActiveTab(id); if (id === 'search') setSelectedAlbum(null); }}
             >
-              <Search size={15} />
-              Albums & Songs
+              {label}
             </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${activeTab === 'direct' ? 'btn-music-active' : 'btn-secondary'}`}
-              onClick={() => setActiveTab('direct')}
-            >
-              <FileAudio size={15} />
-              Direct URL
-            </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${activeTab === 'watches' ? 'btn-music-active' : 'btn-secondary'}`}
-              onClick={() => setActiveTab('watches')}
-            >
-              <Radar size={15} />
-              Music Watches
-            </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${activeTab === 'lidarr' ? 'btn-music-active' : 'btn-secondary'}`}
-              onClick={() => setActiveTab('lidarr')}
-            >
-              <Radio size={15} />
-              Lidarr
-            </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${activeTab === 'settings' ? 'btn-music-active' : 'btn-secondary'}`}
-              onClick={() => setActiveTab('settings')}
-            >
-              <Settings size={15} />
-              Settings
-            </button>
-
-            <Link
-              to={`/library?folder=${encodeURIComponent(settings.musicFolder || 'Music')}`}
-              className="btn btn-sm btn-ghost"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-              title="Open downloaded music in Library"
-            >
-              <Library size={15} />
-              Library
-            </Link>
-          </div>
+          ))}
         </div>
       </div>
 
@@ -1147,8 +1091,8 @@ export default function MusicPage() {
           marginBottom: 20,
           padding: '12px 18px',
           borderRadius: 'var(--radius-md, 10px)',
-          background: 'linear-gradient(90deg, rgba(91, 109, 248, 0.12), rgba(16, 185, 129, 0.12))',
-          border: '1px solid rgba(91, 109, 248, 0.3)',
+          background: 'var(--bg-elevated)',
+          border: '1px solid var(--border)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
