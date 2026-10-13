@@ -633,11 +633,33 @@ function removeJob(id) {
   return true;
 }
 
+// Queues a failed job again with the same URL and options. A Watch-linked job takes its
+// Watch item back to queued too (via notifyWatchItem).
+function retryJob(id) {
+  const job = getJobSummary(id);
+  if (!job || job.status !== 'failed') return false;
+  updateJob(id, { status: 'queued', error: null, percent: 0, speed: null, eta: null, stage: null, pid: null });
+  processNext();
+  return true;
+}
+
+// Drops every failed job from the history (their Watch items keep their own failure record).
+function clearFailedJobs() {
+  const ids = db.transaction(() => {
+    const rows = db.prepare("SELECT id FROM downloads WHERE status = 'failed'").all().map((r) => r.id);
+    db.prepare("DELETE FROM downloads WHERE status = 'failed'").run();
+    return rows;
+  })();
+  if (io) for (const id of ids) io.emit('job:removed', { id });
+  if (ids.length) emitCounts();
+  return ids.length;
+}
+
 function getActiveCount() {
   return activeCount;
 }
 
 module.exports = {
   init, enqueue, createQueuedJob, startQueuedJobs, setWatchItemListener, listJobs, searchJobs, getStatusCounts,
-  getJobLog, getJob, getJobSummary, listColumns, announceJob, stopJob, removeJob, getActiveCount,
+  getJobLog, getJob, getJobSummary, listColumns, announceJob, stopJob, removeJob, retryJob, clearFailedJobs, getActiveCount,
 };

@@ -39,6 +39,8 @@ export const api = {
   getDownloadLog: (id) => request(`/downloads/${id}/log`),
   deleteDownload: (id) => request(`/downloads/${id}`, { method: 'DELETE' }),
   stopDownload: (id) => request(`/downloads/${id}/stop`, { method: 'POST' }),
+  retryDownload: (id) => request(`/downloads/${id}/retry`, { method: 'POST' }),
+  clearFailedDownloads: () => request('/downloads/clear-failed', { method: 'POST' }),
   toggleDownloadProtect: (id, protectedFlag) => request(`/downloads/${id}/protect`, { method: 'PATCH', body: JSON.stringify({ protected: protectedFlag }) }),
 
   listWatches: () => request('/watches'),

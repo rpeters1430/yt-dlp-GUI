@@ -233,6 +233,17 @@ router.get('/:id/log', (req, res) => {
   res.json(row);
 });
 
+router.post('/clear-failed', (req, res) => {
+  res.json({ removed: queue.clearFailedJobs() });
+});
+
+router.post('/:id/retry', (req, res) => {
+  const job = queue.getJobSummary(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Download not found' });
+  if (!queue.retryJob(job.id)) return res.status(409).json({ error: 'Only a failed download can be retried' });
+  res.json(queue.getJobSummary(job.id));
+});
+
 router.delete('/:id', (req, res) => {
   // Idempotent: removing a row that's already gone (e.g. from another tab) is still ok.
   queue.removeJob(req.params.id);
