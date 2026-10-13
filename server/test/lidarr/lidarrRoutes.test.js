@@ -293,6 +293,14 @@ test('album search finds the album in the artist catalog when keyword search mis
   const specialEdition = await (await fetch(`${base}/api/lidarr/torznab?t=music&artist=Incubus&album=Morning+View&apikey=${key}`)).text();
   assert.deepEqual(titles(specialEdition), ['Incubus - Morning View (Special Edition) (2001)']);
 
+  catalog.push({ id: 7, name: 'Morning View - Single', artist: 'Incubus', releaseYear: '2001', trackCount: 1, releaseType: 'single' });
+  const withSingle = await (await fetch(`${base}/api/lidarr/torznab?t=music&artist=Incubus&album=Morning+View&apikey=${key}`)).text();
+  assert.deepEqual(titles(withSingle), ['Incubus - Morning View (Special Edition) (2001)']);
+
+  const onlySingle = await (await fetch(`${base}/api/lidarr/torznab?t=music&artist=Incubus&album=Drive&apikey=${key}`)).text();
+  assert.equal(titles(onlySingle)[0], 'Incubus - Drive - EP (2001)');
+  catalog.pop();
+
   const artist = await (await fetch(`${base}/api/lidarr/torznab?t=music&artist=Incubus&apikey=${key}`)).text();
   assert.equal(titles(artist).length, 5);
 

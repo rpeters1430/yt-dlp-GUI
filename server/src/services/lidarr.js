@@ -402,11 +402,17 @@ async function searchTorznab({ query = '', artist = '', album = '', track = '', 
       let catalog = artistRes?.matchedArtist?.all || [];
       if (cleanAlbum) catalog = catalog.filter((alb) => albumTitleMatches(alb.name, cleanAlbum));
       const seenIds = new Set();
-      const albums = [...catalog, ...((albumRes || artistRes)?.results || [])].filter((alb) => {
+      let albums = [...catalog, ...((albumRes || artistRes)?.results || [])].filter((alb) => {
         if (seenIds.has(String(alb.id))) return false;
         seenIds.add(String(alb.id));
         return true;
       });
+      // Title tracks share the album's name ("Morning View - Single"), and Lidarr will happily
+      // grab that one-song release for the album. Once the full album is on offer, drop singles.
+      const isSingle = (alb) => (alb.releaseType || music.classifyRelease(alb.name, alb.trackCount)) === 'single';
+      if (cleanAlbum && albums.some((alb) => !isSingle(alb) && albumTitleMatches(alb.name, cleanAlbum))) {
+        albums = albums.filter((alb) => !isSingle(alb));
+      }
       for (const alb of albums) {
         items.push({
           type: 'album',
