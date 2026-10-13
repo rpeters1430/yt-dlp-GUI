@@ -4,7 +4,7 @@ const path = require('path');
 const db = require('../db');
 const music = require('./music');
 const ytdlp = require('./ytdlp');
-const { MUSIC_DIR, resolveMusicDir } = require('./ytdlpPaths');
+const { resolveMusicDir } = require('./ytdlpPaths');
 
 // Bencoding for BitTorrent .torrent files
 function bencode(val) {
@@ -232,10 +232,10 @@ function normalizeMusicFolder(folder) {
   const downloadDir = (process.env.DOWNLOAD_DIR || ytdlp.DOWNLOAD_DIR || '/downloads').replace(/\\/g, '/');
   const basePrefix = downloadDir.startsWith('/') ? downloadDir : '/downloads';
 
+  // Deliberately not MUSIC_DIR: Lidarr needs grabs in a staging folder apart from its library
+  // root so it can import and move them (see docs/lidarr-integration.md).
   if (!folder || folder === 'Music') {
-    return MUSIC_DIR
-      ? MUSIC_DIR.replace(/\\/g, '/').replace(/\/+$/, '')
-      : `${basePrefix.replace(/\/+$/, '')}/Music`;
+    return `${basePrefix.replace(/\/+$/, '')}/Music`;
   }
 
   const str = String(folder).trim().replace(/\\/g, '/');

@@ -250,7 +250,7 @@ Everything below is optional — set it in `.env` (or `environment:` in `docker-
 |---|---|---|
 | `DOWNLOAD_DIR` | `/downloads` in Docker, `./downloads` otherwise | Where downloaded files are written. |
 | `VIDEO_DIR` | `DOWNLOAD_DIR` | Default base folder for video downloads (YouTube, Twitch, …). Overridable in **Settings → File naming → Video folder**. |
-| `MUSIC_DIR` | `DOWNLOAD_DIR/Music` | Default folder for Music-tab, music Watch and Lidarr downloads. Overridable in **Music → Settings**; a saved folder of `Music` (the old default) also maps here. |
+| `MUSIC_DIR` | `DOWNLOAD_DIR/Music` | Default folder for Music-tab and music Watch downloads (Lidarr grabs stay in its own staging folder, `/downloads/Music` by default). Overridable in **Music → Settings**; a saved folder of `Music` (the old default) also maps here. |
 | `CONFIG_DIR` | `/config` in Docker, `./config` otherwise | Where the database, sessions, and cookies are stored. |
 
 ## File naming
@@ -366,7 +366,7 @@ Dependency updates are skipped while downloads are active, so they never interru
 |---|---|---|
 | `./downloads` | `/downloads` | Downloaded media (a subfolder per uploader/channel by default — see [File naming](#file-naming)), plus `.nfo`/poster files |
 | `./videos` (optional) | `/videos` (`VIDEO_DIR`) | Video downloads, when `VIDEO_DIR` is set |
-| `./music` (optional) | `/music` (`MUSIC_DIR`) | Music-tab, music Watch and Lidarr downloads, when `MUSIC_DIR` is set |
+| `./music` (optional) | `/music` (`MUSIC_DIR`) | Music-tab and music Watch downloads, when `MUSIC_DIR` is set |
 | `./config` | `/config` | SQLite database (`app.db`), sessions, saved cookies, and app-managed tool builds |
 
 **Back up `./config`** to keep your history, Watches, and settings. Everything in it can be restored by copying the folder back before starting the container.
