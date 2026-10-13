@@ -336,17 +336,29 @@ test('a music track that fails to download retries with its next YouTube match',
   const q = loadQueue(t);
   q.queue.init(q.io);
   q.state.download = async (url) => {
-    if (url === URL_A) throw new Error('ERROR: Video unavailable');
+    if (url === URL_A) throw new Error('ERROR: [youtube] aaaaaaaaaaa: Video unavailable');
+    if (url === URL_B) throw new Error('ERROR: [youtube] bbbbbbbbbbb: Sign in to confirm your age');
     return { filepath: '/music/a.mp3' };
   };
 
   const id = q.queue.enqueue(URL_A, { audioOnly: true, optionsJson: { fallbackUrls: [URL_B, URL_C] } });
-  await waitFor(() => statusOf(q, id) === 'completed', { label: 'retry to complete' });
+  await waitFor(() => statusOf(q, id) === 'completed', { label: 'retries to complete' });
 
-  assert.deepEqual(q.state.downloadCalls.map((c) => c.url), [URL_A, URL_B]);
+  assert.deepEqual(q.state.downloadCalls.map((c) => c.url), [URL_A, URL_B, URL_C]);
   const job = q.queue.getJob(id);
-  assert.equal(job.url, URL_B);
-  assert.deepEqual(JSON.parse(job.options_json).fallbackUrls, [URL_C]);
-  assert.match(job.log, /Previous match https:\/\/www\.youtube\.com\/watch\?v=a+ failed: ERROR: Video unavailable/);
+  assert.equal(job.url, URL_C);
+  assert.deepEqual(JSON.parse(job.options_json).fallbackUrls, []);
+  assert.match(job.log, /Previous match https:\/\/www\.youtube\.com\/watch\?v=a+ failed: .*Video unavailable/);
+  assert.match(job.log, /Previous match https:\/\/www\.youtube\.com\/watch\?v=b+ failed: .*confirm your age/);
   assert.equal(q.failed.mock.callCount(), 0);
+});
+
+test('a music track failing for any other reason does not try its other matches', async (t) => {
+  const q = loadQueue(t);
+  q.queue.init(q.io);
+  q.state.download = async () => { throw new Error('ERROR: Postprocessing: ffmpeg exited with code 1'); };
+
+  const id = q.queue.enqueue(URL_A, { audioOnly: true, optionsJson: { fallbackUrls: [URL_B] } });
+  await waitFor(() => statusOf(q, id) === 'failed', { label: 'job to fail' });
+  assert.deepEqual(q.state.downloadCalls.map((c) => c.url), [URL_A]);
 });

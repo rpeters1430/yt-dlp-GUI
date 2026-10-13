@@ -302,7 +302,7 @@ async function runJob(job) {
   const ffmpegDir = ytdlp.getFfmpegDir();
 
   appendLog(`Download job started`);
-  if (extraOptions.previousAttempt) appendLog(`Previous match ${extraOptions.previousAttempt}`);
+  for (const attempt of extraOptions.previousAttempts || []) appendLog(`Previous match ${attempt}`);
   appendLog(`URL: ${job.url}`);
   if (ffmpegDir) {
     appendLog(`FFmpeg path: ${ffmpegDir}`);
@@ -574,16 +574,17 @@ async function runJob(job) {
       console.log(`[queue] [job:${job.id}] Removed during download (${err.message})`);
       return;
     }
-    // A music track matched by search can fall back to the next YouTube match. A bot check
-    // would block those too, so it fails straight away.
+    // A music track matched by search can fall back to the next YouTube match, but only when
+    // this video can't be had: that fails before anything is written, while a disk, ffmpeg or
+    // network failure would hit the next match too (and could leave a .part file it resumes).
     const fallbackUrls = Array.isArray(extraOptions.fallbackUrls) ? extraOptions.fallbackUrls : [];
-    if (fallbackUrls.length && !ytdlp.isBotCheckError(err.message)) {
+    if (fallbackUrls.length && ytdlp.isVideoUnavailableError(err.message)) {
       const [nextUrl, ...rest] = fallbackUrls;
       appendLog(`ERROR: ${err.message}`);
       appendLog(`Retrying with the next YouTube match: ${nextUrl}`);
       console.warn(`[queue] [job:${job.id}] Failed (${err.message}); retrying with ${nextUrl}`);
       db.prepare('UPDATE downloads SET url = ?, options_json = ? WHERE id = ?')
-        .run(nextUrl, JSON.stringify({ ...extraOptions, fallbackUrls: rest, previousAttempt: `${job.url} failed: ${err.message}` }), job.id);
+        .run(nextUrl, JSON.stringify({ ...extraOptions, fallbackUrls: rest, previousAttempts: [...(extraOptions.previousAttempts || []), `${job.url} failed: ${err.message}`] }), job.id);
       updateJob(job.id, {
         status: 'queued', percent: 0, speed: null, eta: null, stage: 'Retrying with another match…', pid: null, log: logLines.join('\n'),
       });

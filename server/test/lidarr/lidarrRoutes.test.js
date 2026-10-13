@@ -352,3 +352,12 @@ test('removing a grab in Lidarr stops its unfinished tracks', async (t) => {
   assert.ok(queue.getJob('done'), 'finished tracks are kept');
   assert.equal(queue.getJob('waiting'), undefined);
 });
+
+test('an oversized torrents/add upload is refused with 413, not reported as queued', async (t) => {
+  const { base, key } = await startApp(t);
+  const cookie = await qbitLogin(base, key);
+  const form = new FormData();
+  form.append('torrents', new Blob([Buffer.alloc(6 * 1024 * 1024)], { type: 'application/x-bittorrent' }), 'big.torrent');
+  const res = await fetch(`${base}/api/lidarr/qbit/api/v2/torrents/add`, { method: 'POST', body: form, headers: { Cookie: cookie } });
+  assert.equal(res.status, 413);
+});

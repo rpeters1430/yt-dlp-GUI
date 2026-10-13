@@ -129,7 +129,7 @@ async function parseMultipartForm(req) {
   let received = 0;
   for await (const chunk of req) {
     received += chunk.length;
-    if (received > MAX_MULTIPART_BYTES) throw new Error('Upload too large');
+    if (received > MAX_MULTIPART_BYTES) throw Object.assign(new Error('Upload too large'), { status: 413 });
     chunks.push(chunk);
   }
   const bodyBuf = Buffer.concat(chunks);
@@ -335,6 +335,8 @@ qbitRouter.post('/torrents/add', async (req, res) => {
       files = parsed.files;
     } catch (err) {
       console.error('[lidarr:qbit] Error parsing multipart upload:', err.message);
+      // Answering "Ok." would tell Lidarr a grab was queued when nothing was.
+      if (err.status === 413) return res.type('text/plain').status(413).send('Upload too large');
     }
   }
 
