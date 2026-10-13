@@ -331,3 +331,22 @@ test('a watch-linked job reports its status to the watch listener', async (t) =>
   await waitFor(() => finished(q, id));
   assert.deepEqual(seen, [[77, 'downloading'], [77, 'completed']]);
 });
+
+test('a music track that fails to download retries with its next YouTube match', async (t) => {
+  const q = loadQueue(t);
+  q.queue.init(q.io);
+  q.state.download = async (url) => {
+    if (url === URL_A) throw new Error('ERROR: Video unavailable');
+    return { filepath: '/music/a.mp3' };
+  };
+
+  const id = q.queue.enqueue(URL_A, { audioOnly: true, optionsJson: { fallbackUrls: [URL_B, URL_C] } });
+  await waitFor(() => statusOf(q, id) === 'completed', { label: 'retry to complete' });
+
+  assert.deepEqual(q.state.downloadCalls.map((c) => c.url), [URL_A, URL_B]);
+  const job = q.queue.getJob(id);
+  assert.equal(job.url, URL_B);
+  assert.deepEqual(JSON.parse(job.options_json).fallbackUrls, [URL_C]);
+  assert.match(job.log, /Previous match https:\/\/www\.youtube\.com\/watch\?v=a+ failed: ERROR: Video unavailable/);
+  assert.equal(q.failed.mock.callCount(), 0);
+});

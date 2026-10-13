@@ -573,6 +573,7 @@ function musicContentPath(baseDir, artist, album) {
 
 // iTunes rate-limits lookups (403/429), most often while Lidarr grabs several albums at once.
 const ALBUM_LOOKUP_RETRY_DELAYS_MS = [2000, 5000];
+const TRACK_MATCH_CONCURRENCY = 3;
 async function getAlbumDetailsWithRetry(id, delaysMs = ALBUM_LOOKUP_RETRY_DELAYS_MS) {
   for (let attempt = 0; ; attempt++) {
     try {
@@ -679,30 +680,36 @@ async function handleDownloadAdd({ type = 'album', id, artist, album, track = nu
     estSizeBytes
   );
 
-  // Enqueue downloads asynchronously
+  // Enqueue downloads asynchronously. Matching a track runs YouTube searches that take
+  // seconds each, so a few tracks are matched side by side; job order follows the album.
   (async () => {
-    const jobIds = [];
-    for (const tr of tracksToDownload) {
-      // Lidarr removed the grab while its tracks were still being matched.
-      if (!getTaskByHash(hash)) break;
-      try {
-        const job = await music.enqueueMusicDownload({
-          track: tr,
-          audioFormat: targetFormat,
-          audioQuality: targetQuality,
-          // Same base dir as the reported save/content path (Lidarr may send its own savepath).
-          musicFolder: resolvedBaseDir,
-          saveCover: true,
-          // Lidarr imports these itself via the download client; skip the per-track scan.
-          extraOptions: { lidarrHash: hash },
-        });
-        if (job && job.jobId) {
-          jobIds.push(job.jobId);
+    const slots = new Array(tracksToDownload.length).fill(null);
+    let next = 0;
+    const worker = async () => {
+      while (next < tracksToDownload.length) {
+        const index = next++;
+        const tr = tracksToDownload[index];
+        // Lidarr removed the grab while its tracks were still being matched.
+        if (!getTaskByHash(hash)) return;
+        try {
+          const job = await music.enqueueMusicDownload({
+            track: tr,
+            audioFormat: targetFormat,
+            audioQuality: targetQuality,
+            // Same base dir as the reported save/content path (Lidarr may send its own savepath).
+            musicFolder: resolvedBaseDir,
+            saveCover: true,
+            // Lidarr imports these itself via the download client; skip the per-track scan.
+            extraOptions: { lidarrHash: hash },
+          });
+          if (job && job.jobId) slots[index] = job.jobId;
+        } catch (err) {
+          console.error(`[lidarr] Failed to enqueue track "${tr.title}":`, err.message);
         }
-      } catch (err) {
-        console.error(`[lidarr] Failed to enqueue track "${tr.title}":`, err.message);
       }
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(TRACK_MATCH_CONCURRENCY, tracksToDownload.length) }, worker));
+    const jobIds = slots.filter(Boolean);
 
     // Leaving 'downloading' marks the batch as fully enqueued, so getQbitTorrents knows how
     // many jobs to wait for even if some tracks couldn't be matched.

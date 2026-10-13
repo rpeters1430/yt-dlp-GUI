@@ -421,7 +421,14 @@ async function matchTrackToYouTube(track) {
     throw new Error(`Could not find a YouTube match for "${track.artist || ''} - ${track.title || ''}"`);
   }
   const best = candidates[0];
+  // Close runners-up, tried in turn if the best match won't download (age-restricted,
+  // blocked in this country, removed since the search).
+  const fallbackUrls = candidates.slice(1)
+    .filter((c) => c.youtubeUrl && c.score > 0 && c.score >= best.score - 60)
+    .slice(0, 2)
+    .map((c) => c.youtubeUrl);
   return {
+    fallbackUrls,
     youtubeUrl: best.youtubeUrl,
     videoId: best.videoId,
     title: best.title,
@@ -681,6 +688,7 @@ async function enqueueMusicDownload({
     quality: null,
     optionsJson: {
       ...extraOptions,
+      ...(matchedInfo?.fallbackUrls?.length ? { fallbackUrls: matchedInfo.fallbackUrls } : {}),
       audioQuality: audioQuality || '320k',
       outputTemplate,
       sponsorblockRemove: 'music_offtopic',

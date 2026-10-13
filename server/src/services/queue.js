@@ -302,6 +302,7 @@ async function runJob(job) {
   const ffmpegDir = ytdlp.getFfmpegDir();
 
   appendLog(`Download job started`);
+  if (extraOptions.previousAttempt) appendLog(`Previous match ${extraOptions.previousAttempt}`);
   appendLog(`URL: ${job.url}`);
   if (ffmpegDir) {
     appendLog(`FFmpeg path: ${ffmpegDir}`);
@@ -579,6 +580,21 @@ async function runJob(job) {
   } catch (err) {
     if (!getJob(job.id)) {
       console.log(`[queue] [job:${job.id}] Removed during download (${err.message})`);
+      return;
+    }
+    // A music track matched by search can fall back to the next YouTube match. A bot check
+    // would block those too, so it fails straight away.
+    const fallbackUrls = Array.isArray(extraOptions.fallbackUrls) ? extraOptions.fallbackUrls : [];
+    if (fallbackUrls.length && !ytdlp.isBotCheckError(err.message)) {
+      const [nextUrl, ...rest] = fallbackUrls;
+      appendLog(`ERROR: ${err.message}`);
+      appendLog(`Retrying with the next YouTube match: ${nextUrl}`);
+      console.warn(`[queue] [job:${job.id}] Failed (${err.message}); retrying with ${nextUrl}`);
+      db.prepare('UPDATE downloads SET url = ?, options_json = ? WHERE id = ?')
+        .run(nextUrl, JSON.stringify({ ...extraOptions, fallbackUrls: rest, previousAttempt: `${job.url} failed: ${err.message}` }), job.id);
+      updateJob(job.id, {
+        status: 'queued', percent: 0, speed: null, eta: null, stage: 'Retrying with another match…', pid: null, log: logLines.join('\n'),
+      });
       return;
     }
     const errorMsg = ytdlp.isBotCheckError(err.message)
