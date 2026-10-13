@@ -30,8 +30,18 @@ export function jobQualityLine(job) {
   return parts.join(' · ');
 }
 
+// A live job started early to wait for a scheduled or offline stream: yt-dlp is polling,
+// nothing is being recorded yet (see queue.js, 'Waiting for stream to go live…').
+export function isWaitingForLive(job) {
+  return isLiveJob(job) && /^waiting for stream/i.test(job.stage || '');
+}
+
+export function isRecording(job) {
+  return isLiveJob(job) && job.status === 'downloading' && !isWaitingForLive(job);
+}
+
 export function useLiveElapsed(job) {
-  const live = isLiveJob(job) && job.status === 'downloading';
+  const live = isRecording(job);
   const now = useNow(live);
   const since = parseUtc(job.created_at);
   return live && since ? formatDuration((now - since.getTime()) / 1000) : null;
@@ -56,7 +66,7 @@ export default function NowDownloading({ job, onRemoved }) {
     );
   }
 
-  const live = isLiveJob(job);
+  const live = isRecording(job);
   const pct = Math.min(100, Math.max(0, job.percent || 0));
   const finalizing = live && /finaliz|post-processing|merging|split/i.test(job.stage || '');
   const meta = [job.extractor ? siteName(job.extractor) : null, jobQualityLine(job)].filter(Boolean).join(' · ');

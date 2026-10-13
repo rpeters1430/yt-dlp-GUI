@@ -233,8 +233,11 @@ test('POST /retry-failed requeues every failed download', async (t) => {
   insertJob(q.db, { id: 'bad2', status: 'failed', url: 'https://www.youtube.com/watch?v=bbbbbbbbbbb' });
   insertJob(q.db, { id: 'ok', status: 'completed', url: 'https://www.youtube.com/watch?v=ccccccccccc' });
 
+  const updatesBefore = q.io.of('job:update').length;
   const res = await call('POST', '/retry-failed');
   assert.deepEqual(res.body, { retried: 2 });
+  assert.equal(q.io.of('jobs:init').length, 1, 'clients get one list refresh, not a job:update per row');
+  assert.ok(q.io.of('job:update').slice(updatesBefore).every((j) => j.status !== 'queued'));
   await waitFor(() => q.queue.getJob('bad').status === 'completed' && q.queue.getJob('bad2').status === 'completed', { label: 'retried jobs to finish' });
   await settle();
   assert.deepEqual((await call('POST', '/retry-failed')).body, { retried: 0 });

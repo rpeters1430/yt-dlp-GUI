@@ -4,7 +4,7 @@ import Art from '../Art.jsx';
 import ConfirmDialog from '../ConfirmDialog.jsx';
 import { api } from '../../api.js';
 import { siteName } from '../../format.js';
-import { isLiveJob, jobOptions, jobQualityLine, useLiveElapsed } from './NowDownloading.jsx';
+import { isLiveJob, isRecording, isWaitingForLive, jobOptions, jobQualityLine, useLiveElapsed } from './NowDownloading.jsx';
 
 function chunkLabel(job) {
   const o = jobOptions(job);
@@ -17,14 +17,16 @@ function UpNextCard({ job, onRemoved }) {
   const [confirm, setConfirm] = useState(null);
   const [stopping, setStopping] = useState(false);
   const elapsed = useLiveElapsed(job);
-  const live = isLiveJob(job) && job.status === 'downloading';
-  const running = job.status === 'downloading' && !live;
+  const live = isRecording(job);
+  const waiting = isWaitingForLive(job);
+  const running = job.status === 'downloading' && !isLiveJob(job);
   const pct = Math.min(100, Math.max(0, job.percent || 0));
   const site = siteName(job.extractor);
   const finalizing = live && (stopping || /finaliz|post-processing|merging|split/i.test(job.stage || ''));
 
   let meta;
-  if (live) meta = [site, jobQualityLine(job).split(' · ')[0], chunkLabel(job)].filter(Boolean).join(' · ');
+  if (waiting) meta = ['Waiting for live', site, chunkLabel(job)].filter(Boolean).join(' · ');
+  else if (live) meta = [site, jobQualityLine(job).split(' · ')[0], chunkLabel(job)].filter(Boolean).join(' · ');
   else if (running) meta = [`${Math.round(pct)}%`, job.speed].filter(Boolean).join(' · ');
   else meta = ['Queued', site, jobQualityLine(job).replace(' · ', ' ')].filter(Boolean).join(' · ');
 
@@ -76,8 +78,8 @@ function UpNextCard({ job, onRemoved }) {
 export default function UpNext({ jobs, onRemoved }) {
   if (jobs.length === 0) return null;
   const running = jobs.filter((j) => j.status === 'downloading' && !isLiveJob(j)).length;
-  const recording = jobs.filter((j) => j.status === 'downloading' && isLiveJob(j)).length;
-  const waiting = jobs.filter((j) => j.status === 'queued').length;
+  const recording = jobs.filter(isRecording).length;
+  const waiting = jobs.filter((j) => j.status === 'queued' || isWaitingForLive(j)).length;
   const summary = [
     running ? `${running} more running` : null,
     recording ? `${recording} recording` : null,

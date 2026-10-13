@@ -52,9 +52,13 @@ export default function DownloadsSettings() {
 
   function changeChunks(value) {
     const prev = chunkMins;
+    const prevDefaults = defaults;
     setChunkMins(value);
     setDefaults({ ...defaults, splitLiveChunks: value > 0, liveChunkDuration: value > 0 ? value : defaults.liveChunkDuration });
-    save({ default_live_chunk_mins: String(value) }, value ? `Live recordings split every ${value} min` : 'Live recordings stay one file', () => setChunkMins(prev));
+    save({ default_live_chunk_mins: String(value) }, value ? `Live recordings split every ${value} min` : 'Live recordings stay one file', () => {
+      setChunkMins(prev);
+      setDefaults(prevDefaults);
+    });
   }
 
   const audio = !!defaults.audioOnly;

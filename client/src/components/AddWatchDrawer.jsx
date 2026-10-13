@@ -42,7 +42,10 @@ export default function AddWatchDrawer({ open, onClose, onCreated, onAdvanced })
     setSaving(true);
     setError('');
     try {
-      const info = await api.inspectWatch(target).catch(() => null);
+      const info = await api.inspectWatch(target);
+      if (!info?.isChannel && !info?.isPlaylist) {
+        throw new Error('That link is a single video, not a channel or playlist. Paste it on Home to download it.');
+      }
       const created = await api.addWatch({
         url: target,
         name: info?.title || null,

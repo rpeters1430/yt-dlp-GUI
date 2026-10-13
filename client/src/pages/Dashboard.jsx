@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ClipboardPaste } from 'lucide-react';
 import StagingTray from '../components/home/StagingTray.jsx';
 import OptionsDrawer from '../components/home/OptionsDrawer.jsx';
-import NowDownloading, { isLiveJob } from '../components/home/NowDownloading.jsx';
+import NowDownloading, { isLiveJob, isWaitingForLive } from '../components/home/NowDownloading.jsx';
 import UpNext from '../components/home/UpNext.jsx';
 import RecentlyFinished from '../components/home/RecentlyFinished.jsx';
 import { useDownloads } from '../context/DownloadsContext.jsx';
@@ -83,15 +83,16 @@ export default function Dashboard() {
   }
 
   const hero = useMemo(
-    () => downloadingJobs.find((j) => !isLiveJob(j)) || downloadingJobs[0] || null,
+    () => downloadingJobs.find((j) => !isLiveJob(j)) || downloadingJobs.find((j) => !isWaitingForLive(j)) || null,
     [downloadingJobs]
   );
   const upNext = useMemo(() => {
     const others = downloadingJobs.filter((j) => j !== hero);
     return [
       ...others.filter((j) => !isLiveJob(j)),
-      ...others.filter((j) => isLiveJob(j)),
+      ...others.filter((j) => isLiveJob(j) && !isWaitingForLive(j)),
       ...queuedJobs,
+      ...others.filter(isWaitingForLive),
     ];
   }, [downloadingJobs, queuedJobs, hero]);
   const recentFinished = useMemo(
@@ -133,8 +134,8 @@ export default function Dashboard() {
           <button type="submit" className="btn-primary command-go" disabled={!text.trim()}>Analyze</button>
         </form>
         <div className="stats-inline">
-          <Stat value={dash ?? downloadingJobs.length} label="active" />
-          <Stat value={dash ?? queuedJobs.length} label="waiting" />
+          <Stat value={dash ?? downloadingJobs.filter((j) => !isWaitingForLive(j)).length} label="active" />
+          <Stat value={dash ?? queuedJobs.length + downloadingJobs.filter(isWaitingForLive).length} label="waiting" />
           <Stat value={dash ?? completedCount.toLocaleString()} label="done" />
           <Stat value={dash ?? failedCount.toLocaleString()} label="failed" to="/history?status=failed" accent={failedCount > 0} />
         </div>

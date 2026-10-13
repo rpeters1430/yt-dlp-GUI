@@ -37,9 +37,9 @@ function subLine(job) {
 }
 
 export default function History() {
+  // The filter lives in the URL (?status=failed), so nav links and back/forward change it.
   const [params, setParams] = useSearchParams();
-  const initial = params.get('status');
-  const [statusFilter, setStatusFilter] = useState(VALID.has(initial) ? initial : 'all');
+  const statusFilter = VALID.has(params.get('status')) ? params.get('status') : 'all';
   const [jobs, setJobs] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -60,7 +60,6 @@ export default function History() {
   }, [query]);
 
   function chooseFilter(value) {
-    setStatusFilter(value);
     setExpandedId(null);
     setParams(value === 'all' ? {} : { status: value }, { replace: true });
   }

@@ -655,12 +655,23 @@ function retryJob(id) {
 }
 
 // Queues every failed job again (see retryJob). Returns how many were requeued.
+// One bulk update and one list broadcast, so a large failure backlog doesn't send every
+// client a job:update per row.
 function retryFailedJobs() {
-  const ids = db.prepare("SELECT id FROM downloads WHERE status = 'failed' ORDER BY created_at ASC, rowid ASC").all().map((r) => r.id);
-  for (const id of ids) {
-    updateJob(id, { status: 'queued', error: null, percent: 0, speed: null, eta: null, stage: null, pid: null });
-  }
-  if (ids.length) processNext();
+  const ids = db.transaction(() => {
+    const rows = db.prepare("SELECT id FROM downloads WHERE status = 'failed'").all().map((r) => r.id);
+    db.prepare(`
+      UPDATE downloads SET status = 'queued', error = NULL, percent = 0, speed = NULL, eta = NULL,
+        stage = NULL, pid = NULL, updated_at = datetime('now')
+      WHERE status = 'failed'
+    `).run();
+    return rows;
+  })();
+  if (ids.length === 0) return 0;
+  for (const id of ids) notifyWatchItem(getJobSummary(id));
+  if (io) io.emit('jobs:init', listJobs());
+  emitCounts();
+  processNext();
   return ids.length;
 }
 
