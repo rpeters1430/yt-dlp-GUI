@@ -226,3 +226,38 @@ test('POST /:id/retry requeues a failed download; POST /clear-failed drops faile
   assert.ok(q.queue.getJob('ok'));
   assert.ok(q.io.of('job:removed').some((e) => e.id === 'bad2'));
 });
+
+test('POST /retry-failed requeues every failed download', async (t) => {
+  const { q, call, settle } = await startApp(t);
+  insertJob(q.db, { id: 'bad', status: 'failed', url: 'https://www.youtube.com/watch?v=aaaaaaaaaaa' });
+  insertJob(q.db, { id: 'bad2', status: 'failed', url: 'https://www.youtube.com/watch?v=bbbbbbbbbbb' });
+  insertJob(q.db, { id: 'ok', status: 'completed', url: 'https://www.youtube.com/watch?v=ccccccccccc' });
+
+  const res = await call('POST', '/retry-failed');
+  assert.deepEqual(res.body, { retried: 2 });
+  await waitFor(() => q.queue.getJob('bad').status === 'completed' && q.queue.getJob('bad2').status === 'completed', { label: 'retried jobs to finish' });
+  await settle();
+  assert.deepEqual((await call('POST', '/retry-failed')).body, { retried: 0 });
+});
+
+test('POST /check-duplicates matches completed downloads by URL or video ID', async (t) => {
+  const { q, call } = await startApp(t);
+  insertJob(q.db, { id: 'done', status: 'completed', title: 'Done', extractor: 'youtube', url: 'https://www.youtube.com/watch?v=aaaaaaaaaaa' });
+  q.db.prepare("UPDATE downloads SET video_id = 'aaaaaaaaaaa' WHERE id = 'done'").run();
+  insertJob(q.db, { id: 'failed', status: 'failed', url: 'https://www.youtube.com/watch?v=bbbbbbbbbbb' });
+
+  assert.equal((await call('POST', '/check-duplicates', {})).status, 400);
+  const res = await call('POST', '/check-duplicates', {
+    items: [
+      { url: 'www.youtube.com/watch?v=aaaaaaaaaaa' },
+      { url: 'https://youtu.be/aaaaaaaaaaa', id: 'aaaaaaaaaaa', extractor: 'youtube' },
+      { url: 'https://vimeo.com/1', id: 'aaaaaaaaaaa', extractor: 'vimeo' },
+      { url: 'https://www.youtube.com/watch?v=bbbbbbbbbbb' },
+      null,
+    ],
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(Object.keys(res.body.duplicates).sort(), ['https://youtu.be/aaaaaaaaaaa', 'www.youtube.com/watch?v=aaaaaaaaaaa']);
+  assert.equal(res.body.duplicates['https://youtu.be/aaaaaaaaaaa'].id, 'done');
+  assert.equal(res.body.duplicates['https://youtu.be/aaaaaaaaaaa'].title, 'Done');
+});

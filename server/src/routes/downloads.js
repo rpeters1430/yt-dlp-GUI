@@ -86,6 +86,7 @@ router.post('/info', async (req, res) => {
 
     res.json({
       isPlaylist: false,
+      id: info.id || null,
       title: info.title,
       uploader: info.uploader || info.channel || null,
       duration: info.duration,
@@ -235,6 +236,28 @@ router.get('/:id/log', (req, res) => {
 
 router.post('/clear-failed', (req, res) => {
   res.json({ removed: queue.clearFailedJobs() });
+});
+
+router.post('/retry-failed', (req, res) => {
+  res.json({ retried: queue.retryFailedJobs() });
+});
+
+// Which of these links were already downloaded: body { items: [{ url, id?, extractor? }] }
+// -> { duplicates: { [url]: { id, title, completedAt } } }.
+router.post('/check-duplicates', (req, res) => {
+  const { items } = req.body || {};
+  if (!Array.isArray(items)) return res.status(400).json({ error: 'items must be an array' });
+  if (items.length > 200) return res.status(400).json({ error: 'Too many links (max 200)' });
+  const valid = items.filter((it) => it && typeof it.url === 'string' && it.url.trim());
+  const normalized = valid.map((it) => ({ ...it, url: ytdlp.normalizeUrl(it.url) }));
+  const found = queue.findCompletedDuplicates(normalized);
+  // Answer under the URL the client sent, which may lack the https:// the lookup added.
+  const duplicates = {};
+  valid.forEach((it, i) => {
+    const match = found[normalized[i].url];
+    if (match) duplicates[it.url] = match;
+  });
+  res.json({ duplicates });
 });
 
 router.post('/:id/retry', (req, res) => {

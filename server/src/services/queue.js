@@ -21,7 +21,17 @@ function isNfoEnabled() {
   return !row || row.value !== '0'; // opt-out, defaults to enabled
 }
 
-const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_DOWNLOADS || '2', 10);
+const ENV_MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_DOWNLOADS || '2', 10) || 2;
+const MAX_CONCURRENT_LIMIT = 10;
+
+// How many downloads run at once: the Settings value when one is saved, else the
+// MAX_CONCURRENT_DOWNLOADS env var (default 2).
+function getMaxConcurrent() {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'max_concurrent_downloads'").get();
+  const saved = row ? parseInt(row.value, 10) : NaN;
+  if (saved >= 1 && saved <= MAX_CONCURRENT_LIMIT) return saved;
+  return ENV_MAX_CONCURRENT;
+}
 
 let io = null;
 let activeCount = 0;
@@ -257,7 +267,7 @@ function processNext() {
 
   // Only read as many queued rows as there are free slots; a big playlist backfill can
   // leave thousands queued, and this runs every time a download finishes.
-  const free = MAX_CONCURRENT - activeCount;
+  const free = getMaxConcurrent() - activeCount;
   if (free <= 0) return;
   const next = db.prepare(`
     SELECT * FROM downloads WHERE status = 'queued' AND NOT coalesce(${WAIT_FOR_LIVE_SQL}, 0)
@@ -644,6 +654,40 @@ function retryJob(id) {
   return true;
 }
 
+// Queues every failed job again (see retryJob). Returns how many were requeued.
+function retryFailedJobs() {
+  const ids = db.prepare("SELECT id FROM downloads WHERE status = 'failed' ORDER BY created_at ASC, rowid ASC").all().map((r) => r.id);
+  for (const id of ids) {
+    updateJob(id, { status: 'queued', error: null, percent: 0, speed: null, eta: null, stage: null, pid: null });
+  }
+  if (ids.length) processNext();
+  return ids.length;
+}
+
+// Completed downloads matching any of the given links, by URL or by (extractor, video ID),
+// so the UI can flag a link that's already in the library before it's queued again.
+// `items` is [{ url, id, extractor }]; returns { [url]: { id, title, completedAt } }.
+function findCompletedDuplicates(items) {
+  const byUrl = db.prepare(`
+    SELECT id, title, updated_at FROM downloads
+    WHERE status = 'completed' AND url = ? ORDER BY updated_at DESC LIMIT 1
+  `);
+  const byVideoId = db.prepare(`
+    SELECT id, title, updated_at FROM downloads
+    WHERE status = 'completed' AND video_id = ? AND (? IS NULL OR extractor IS NULL OR lower(extractor) = lower(?))
+    ORDER BY updated_at DESC LIMIT 1
+  `);
+  const found = {};
+  for (const item of items || []) {
+    if (!item || typeof item.url !== 'string' || !item.url) continue;
+    const extractor = typeof item.extractor === 'string' && item.extractor ? item.extractor : null;
+    const row = byUrl.get(item.url)
+      || (item.id ? byVideoId.get(String(item.id), extractor, extractor) : null);
+    if (row) found[item.url] = { id: row.id, title: row.title, completedAt: row.updated_at };
+  }
+  return found;
+}
+
 // Drops every failed job from the history (their Watch items keep their own failure record).
 function clearFailedJobs() {
   const ids = db.transaction(() => {
@@ -662,5 +706,6 @@ function getActiveCount() {
 
 module.exports = {
   init, enqueue, createQueuedJob, startQueuedJobs, setWatchItemListener, listJobs, searchJobs, getStatusCounts,
-  getJobLog, getJob, getJobSummary, listColumns, announceJob, stopJob, removeJob, retryJob, clearFailedJobs, getActiveCount,
+  getJobLog, getJob, getJobSummary, listColumns, announceJob, stopJob, removeJob, retryJob, retryFailedJobs,
+  clearFailedJobs, findCompletedDuplicates, getActiveCount, getMaxConcurrent, processNext, MAX_CONCURRENT_LIMIT,
 };
