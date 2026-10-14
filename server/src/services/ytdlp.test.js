@@ -47,22 +47,31 @@ test('getDownloadIdleTimeoutMs still uses the playlist watchdog for playlist URL
   );
 });
 
-test('getDenoBin resolves binary name correctly', () => {
-  const { getDenoBin } = require('./ytdlp');
-  const bin = getDenoBin();
+test('getQuickjsBin resolves binary name correctly', () => {
+  const { getQuickjsBin } = require('./ytdlp');
+  const bin = getQuickjsBin();
   assert.ok(typeof bin === 'string' && bin.length > 0);
 });
 
-test('getVersions returns deno version property', async () => {
+test('buildDownloadArgs uses QuickJS-ng instead of the default Deno runtime', () => {
+  const { buildDownloadArgs } = require('./ytdlp');
+  const args = buildDownloadArgs('https://www.youtube.com/watch?v=dQw4w9WgXcQ', {});
+  const clear = args.indexOf('--no-js-runtimes');
+  const enable = args.indexOf('--js-runtimes');
+  assert.ok(clear !== -1 && enable > clear);
+  assert.match(args[enable + 1], /^quickjs(:|$)/);
+});
+
+test('getVersions returns quickjs version property', async () => {
   const { getVersions } = require('./ytdlp');
   const versions = await getVersions();
-  assert.ok('deno' in versions);
+  assert.ok('quickjs' in versions);
   assert.ok('node' in versions);
 });
 
-test('dependencyUpdater exports updateDenoNightly function', () => {
+test('dependencyUpdater exports updateQuickjsNightly function', () => {
   const updater = require('./dependencyUpdater');
-  assert.equal(typeof updater.updateDenoNightly, 'function');
+  assert.equal(typeof updater.updateQuickjsNightly, 'function');
 });
 
 test('isYouTube correctly identifies YouTube and non-YouTube sources', () => {

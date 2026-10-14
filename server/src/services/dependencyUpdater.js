@@ -5,12 +5,12 @@ const ytdlp = require('./ytdlp');
 
 const YTDLP_UPDATE_CRON = process.env.YTDLP_UPDATE_CRON || '0 3 * * *';
 const FFMPEG_UPDATE_CRON = process.env.FFMPEG_UPDATE_CRON || '30 3 * * *';
-const DENO_UPDATE_CRON = process.env.DENO_UPDATE_CRON || '45 3 * * *';
+const QUICKJS_UPDATE_CRON = process.env.QUICKJS_UPDATE_CRON || '45 3 * * *';
 const STARTUP_DELAY_MS = Math.max(0, parseInt(process.env.DEPENDENCY_UPDATE_STARTUP_DELAY_MS || '30000', 10));
 
 let ytdlpUpdateRunning = false;
 let ffmpegUpdateRunning = false;
-let denoUpdateRunning = false;
+let quickjsUpdateRunning = false;
 
 function cronOptions() {
   return process.env.TZ ? { timezone: process.env.TZ } : undefined;
@@ -62,20 +62,20 @@ async function updateFfmpegNightly() {
   }
 }
 
-async function updateDenoNightly() {
+async function updateQuickjsNightly() {
   if (downloadsAreActive()) {
-    console.log('[dependency-updater] Skipping Deno nightly check while downloads are active');
+    console.log('[dependency-updater] Skipping QuickJS nightly check while downloads are active');
     return { skipped: 'active-downloads' };
   }
-  if (denoUpdateRunning) return { skipped: 'already-running' };
+  if (quickjsUpdateRunning) return { skipped: 'already-running' };
 
-  denoUpdateRunning = true;
+  quickjsUpdateRunning = true;
   try {
-    const result = await ytdlp.updateDenoIfAvailable();
-    console.log(`[dependency-updater] Deno nightly check complete (${result.updated ? 'updated' : 'already current'})`);
+    const result = await ytdlp.updateQuickjsIfAvailable();
+    console.log(`[dependency-updater] QuickJS nightly check complete (${result.updated ? 'updated' : 'already current'})`);
     return result;
   } finally {
-    denoUpdateRunning = false;
+    quickjsUpdateRunning = false;
   }
 }
 
@@ -92,8 +92,8 @@ function start() {
     updateFfmpegNightly().catch((error) => logFailure('FFmpeg nightly update', error));
   }, cronOptions());
 
-  cron.schedule(DENO_UPDATE_CRON, () => {
-    updateDenoNightly().catch((error) => logFailure('Deno nightly update', error));
+  cron.schedule(QUICKJS_UPDATE_CRON, () => {
+    updateQuickjsNightly().catch((error) => logFailure('QuickJS nightly update', error));
   }, cronOptions());
 
   // A rebuilt/recreated container starts with the image's stable pip package. Re-apply a
@@ -104,7 +104,7 @@ function start() {
   }, STARTUP_DELAY_MS);
   if (startupTimer.unref) startupTimer.unref();
 
-  console.log(`[dependency-updater] Scheduled yt-dlp (${YTDLP_UPDATE_CRON}), FFmpeg (${FFMPEG_UPDATE_CRON}), and Deno (${DENO_UPDATE_CRON}) checks`);
+  console.log(`[dependency-updater] Scheduled yt-dlp (${YTDLP_UPDATE_CRON}), FFmpeg (${FFMPEG_UPDATE_CRON}), and QuickJS (${QUICKJS_UPDATE_CRON}) checks`);
 }
 
-module.exports = { start, updateNightlyYtdlp, updateFfmpegNightly, updateDenoNightly, selectedYtdlpChannel };
+module.exports = { start, updateNightlyYtdlp, updateFfmpegNightly, updateQuickjsNightly, selectedYtdlpChannel };
