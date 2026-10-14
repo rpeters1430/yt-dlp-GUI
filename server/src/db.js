@@ -115,6 +115,8 @@ ensureColumn('downloads', 'pid', 'INTEGER');
 ensureColumn('downloads', 'stage', 'TEXT');
 ensureColumn('downloads', 'live_chunk_mins', 'INTEGER DEFAULT 0');
 ensureColumn('downloads', 'split_parts', 'TEXT');
+ensureColumn('downloads', 'filesize', 'INTEGER');
+ensureColumn('downloads', 'has_poster', 'INTEGER DEFAULT 0');
 ensureColumn('users', 'session_version', 'INTEGER DEFAULT 1');
 ensureColumn('watches', 'last_status', "TEXT DEFAULT 'ok'");
 ensureColumn('watches', 'last_error', 'TEXT');
@@ -214,6 +216,7 @@ CREATE INDEX IF NOT EXISTS idx_downloads_watch_item ON downloads (watch_item_id)
 CREATE INDEX IF NOT EXISTS idx_downloads_watch ON downloads (watch_id, status);
 CREATE INDEX IF NOT EXISTS idx_downloads_created ON downloads (created_at);
 CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_downloads_library_size ON downloads (status, filesize);
 `);
 
 // The channel tab a watch item was found on (NULL for playlists and older items), so a tab

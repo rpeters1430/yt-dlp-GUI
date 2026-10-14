@@ -232,14 +232,69 @@ function deleteDownloadFile(id, filepath, title, reason) {
   if (!removeMediaFiles(id, filepath)) return false;
 
   console.log(`[cleanup] Deleted "${title || filepath}" (${reason})`);
-  db.prepare("UPDATE downloads SET status = 'deleted', filepath = NULL WHERE id = ?").run(id);
+  db.prepare("UPDATE downloads SET status = 'deleted', filepath = NULL, filesize = NULL, has_poster = 0 WHERE id = ?").run(id);
   emitJobUpdate(id);
   return true;
+}
+
+// Nightly SQLite maintenance: prunes old watch_runs (keeping the newest 100 per watch),
+// removes expired connect-sqlite3 sessions, and runs PRAGMA optimize + WAL checkpoint when idle.
+function runDbMaintenance({ maxRunsPerWatch = 100, maxRunAgeDays = 30 } = {}) {
+  let prunedRuns = 0;
+  let expiredSessions = 0;
+  let walCheckpointed = false;
+
+  try {
+    const daysParam = `-${Math.max(1, parseInt(maxRunAgeDays, 10) || 30)} days`;
+    const keepCount = Math.max(10, parseInt(maxRunsPerWatch, 10) || 100);
+    prunedRuns = db.prepare(`
+      DELETE FROM watch_runs
+      WHERE finished_at IS NOT NULL
+        AND finished_at < datetime('now', ?)
+        AND id NOT IN (
+          SELECT id FROM (
+            SELECT id, ROW_NUMBER() OVER (PARTITION BY watch_id ORDER BY id DESC) AS rn
+            FROM watch_runs
+          ) WHERE rn <= ?
+        )
+    `).run(daysParam, keepCount).changes;
+  } catch (err) {
+    console.error(`[cleanup] watch_runs maintenance failed: ${err.message}`);
+  }
+
+  try {
+    const hasSessions = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sessions'").get();
+    if (hasSessions) {
+      expiredSessions = db.prepare('DELETE FROM sessions WHERE expired < ?').run(Date.now()).changes;
+    }
+  } catch (err) {
+    console.error(`[cleanup] session table cleanup failed: ${err.message}`);
+  }
+
+  try {
+    if (typeof db.pragma === 'function') {
+      db.pragma('optimize');
+      let active = 0;
+      try {
+        const q = require('./queue');
+        active = q.getActiveCount ? q.getActiveCount() : 0;
+      } catch (_) {}
+      if (active === 0) {
+        db.pragma('wal_checkpoint(TRUNCATE)');
+        walCheckpointed = true;
+      }
+    }
+  } catch (err) {
+    console.error(`[cleanup] SQLite pragma maintenance failed: ${err.message}`);
+  }
+
+  return { prunedRuns, expiredSessions, walCheckpointed };
 }
 
 async function runCleanup() {
   const config = getCleanupConfig();
   if (!config.ageEnabled && !config.jellyfinEnabled && !config.plexEnabled) {
+    runDbMaintenance();
     console.log('[cleanup] Auto-delete is disabled, skipping run');
     return { deleted: 0, checked: 0, kept: 0 };
   }
@@ -254,6 +309,7 @@ async function runCleanup() {
     }
   }
 
+  runDbMaintenance();
   console.log(`[cleanup] Nightly run finished: ${deleted} file(s) deleted`);
   return { deleted, checked: plan.checked, kept: plan.toKeep.length };
 }
@@ -271,6 +327,7 @@ module.exports = {
   init,
   start,
   runCleanup,
+  runDbMaintenance,
   computeCleanupPlan,
   getCleanupConfig,
   deleteDownloadFile,

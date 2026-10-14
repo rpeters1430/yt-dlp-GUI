@@ -1,5 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
+const path = require('path');
 const db = require('../db');
 const ytdlp = require('./ytdlp');
 const siteProfiles = require('./siteProfiles');
@@ -9,6 +10,38 @@ const plexSync = require('./plexSync');
 const outputTemplate = require('./outputTemplate');
 const notify = require('./notify');
 const liveSplitter = require('./liveSplitter');
+
+// Computes total byte size across a completed download (or its split chunks) and checks for
+// a sidecar poster image so /api/library can sort and filter in SQL without statting every file.
+function measureDownloadSize(filepath, splitParts = null) {
+  const paths = Array.isArray(splitParts) && splitParts.length > 1
+    ? splitParts
+    : (filepath ? [filepath] : []);
+  let total = 0;
+  let found = false;
+  for (const p of paths) {
+    if (!p) continue;
+    try {
+      const st = fs.statSync(p);
+      if (st.isFile()) {
+        total += st.size;
+        found = true;
+      }
+    } catch (_) {}
+  }
+  return found ? total : null;
+}
+
+function hasSidecarPoster(filepath) {
+  if (!filepath) return 0;
+  const ext = path.extname(filepath);
+  const poster = `${filepath.slice(0, filepath.length - ext.length)}.jpg`;
+  try {
+    return fs.statSync(poster).isFile() ? 1 : 0;
+  } catch (_) {
+    return 0;
+  }
+}
 
 // The channel's own page, for its name, description, avatar and banner (TV-layout show
 // artwork). One entry per tab is enough; only the channel-level fields are used.
@@ -519,12 +552,16 @@ async function runJob(job) {
 
     appendLog(completionMsg);
     console.log(`[queue] [job:${job.id}] ${completionMsg}`);
+    const filesize = measureDownloadSize(result.filepath, result.splitParts);
+    const hasPoster = hasSidecarPoster(result.filepath);
     updateJob(job.id, {
       status: 'completed',
       percent: 100,
       stage: result.splitParts && result.splitParts.length > 1 ? `Split into ${result.splitParts.length} chunks` : 'Completed',
       filepath: result.filepath || null,
       split_parts: result.splitParts ? JSON.stringify(result.splitParts) : null,
+      filesize,
+      has_poster: hasPoster,
       pid: null,
       log: logLines.join('\n'),
     });
@@ -539,6 +576,11 @@ async function runJob(job) {
         const targetPath = filesToTag[i];
         const partInfo = filesToTag.length > 1 ? { ...nfoInfo, title: `${nfoInfo.title} (Part ${i + 1})` } : nfoInfo;
         nfo.writeSidecarFiles(targetPath, partInfo, { fetchChannelInfo: fetchChannelListing })
+          .then(() => {
+            if (i === 0 && hasSidecarPoster(result.filepath)) {
+              db.prepare('UPDATE downloads SET has_poster = 1 WHERE id = ?').run(job.id);
+            }
+          })
           .catch((e) => console.error(`[queue] [job:${job.id}] Failed to write .nfo/poster for ${targetPath}: ${e.message}`));
       }
     }
@@ -722,4 +764,5 @@ module.exports = {
   init, enqueue, createQueuedJob, startQueuedJobs, setWatchItemListener, listJobs, searchJobs, getStatusCounts,
   getJobLog, getJob, getJobSummary, listColumns, announceJob, stopJob, removeJob, retryJob, retryFailedJobs,
   clearFailedJobs, findCompletedDuplicates, getActiveCount, getMaxConcurrent, processNext, MAX_CONCURRENT_LIMIT,
+  measureDownloadSize, hasSidecarPoster,
 };

@@ -38,6 +38,47 @@ const EMPTY_AGGREGATE = {
   queued_count: 0, downloading_count: 0, completed_count: 0, failed_count: 0, excluded_count: 0,
 };
 
+// Joins watches with a single-pass GROUP BY over watch_items and the latest watch_runs row
+// per watch, replacing 2N+1 per-watch queries in listWatches() with a single query.
+const WATCH_DECORATED_SELECT = `
+  SELECT
+    w.*,
+    COALESCE(agg.cataloged_count, 0) AS cataloged_count,
+    COALESCE(agg.baseline_count, 0) AS baseline_count,
+    COALESCE(agg.new_count, 0) AS new_count,
+    COALESCE(agg.backfill_count, 0) AS backfill_count,
+    COALESCE(agg.pending_count, 0) AS pending_count,
+    COALESCE(agg.queued_count, 0) AS queued_count,
+    COALESCE(agg.downloading_count, 0) AS downloading_count,
+    COALESCE(agg.completed_count, 0) AS completed_count,
+    COALESCE(agg.failed_count, 0) AS failed_count,
+    COALESCE(agg.excluded_count, 0) AS excluded_count,
+    COALESCE(agg.cataloged_count, 0) AS seen_count,
+    COALESCE(agg.completed_count, 0) AS download_count,
+    r.id AS latest_run_id,
+    r.status AS latest_run_status,
+    r.trigger AS latest_run_trigger,
+    r.error AS latest_run_error,
+    r.started_at AS latest_run_started_at,
+    r.finished_at AS latest_run_finished_at,
+    COALESCE(r.scanned_count, 0) AS latest_scanned_count,
+    COALESCE(r.baseline_count, 0) AS latest_baseline_count,
+    COALESCE(r.new_count, 0) AS latest_new_count,
+    COALESCE(r.backfill_count, 0) AS latest_backfill_count,
+    COALESCE(r.matched_count, 0) AS latest_matched_count,
+    COALESCE(r.queued_count, 0) AS latest_queued_count,
+    COALESCE(r.pending_count, 0) AS latest_pending_count
+  FROM watches w
+  LEFT JOIN (
+    SELECT watch_id, ${AGGREGATE_COLUMNS}
+    FROM watch_items
+    GROUP BY watch_id
+  ) agg ON agg.watch_id = w.id
+  LEFT JOIN watch_runs r ON r.id = (
+    SELECT MAX(r2.id) FROM watch_runs r2 WHERE r2.watch_id = w.id
+  )
+`;
+
 function createRepository(db, { now = () => new Date() } = {}) {
   const nowSql = () => toSqlTime(now());
 
@@ -96,6 +137,10 @@ function createRepository(db, { now = () => new Date() } = {}) {
     `),
     latestRun: db.prepare('SELECT * FROM watch_runs WHERE watch_id = ? ORDER BY id DESC LIMIT 1'),
     aggregate: db.prepare(`SELECT ${AGGREGATE_COLUMNS} FROM watch_items WHERE watch_id = ?`),
+    getDecoratedWatch: db.prepare(`${WATCH_DECORATED_SELECT} WHERE w.id = ?`),
+    listAllDecoratedWatches: db.prepare(`${WATCH_DECORATED_SELECT} ORDER BY w.created_at DESC`),
+    listMusicDecoratedWatches: db.prepare(`${WATCH_DECORATED_SELECT} WHERE w.is_music = 1 ORDER BY w.created_at DESC`),
+    listVideoDecoratedWatches: db.prepare(`${WATCH_DECORATED_SELECT} WHERE COALESCE(w.is_music, 0) = 0 ORDER BY w.created_at DESC`),
   };
 
   function createRun(watchId, trigger) {
@@ -232,40 +277,14 @@ function createRepository(db, { now = () => new Date() } = {}) {
     return { ...EMPTY_AGGREGATE, ...stmts.aggregate.get(watchId) };
   }
 
-  function decorate(watch) {
-    if (!watch) return watch;
-    const agg = aggregateWatch(watch.id);
-    const run = stmts.latestRun.get(watch.id);
-    return {
-      ...watch,
-      ...agg,
-      // Kept while the UI transitions: "seen" was everything discovered, "download_count"
-      // is now only completed downloads (it used to count queued and failed jobs too).
-      seen_count: agg.cataloged_count,
-      download_count: agg.completed_count,
-      latest_run_id: run ? run.id : null,
-      latest_run_status: run ? run.status : null,
-      latest_run_trigger: run ? run.trigger : null,
-      latest_run_error: run ? run.error : null,
-      latest_run_started_at: run ? run.started_at : null,
-      latest_run_finished_at: run ? run.finished_at : null,
-      latest_scanned_count: run ? run.scanned_count : 0,
-      latest_baseline_count: run ? run.baseline_count : 0,
-      latest_new_count: run ? run.new_count : 0,
-      latest_backfill_count: run ? run.backfill_count : 0,
-      latest_matched_count: run ? run.matched_count : 0,
-      latest_queued_count: run ? run.queued_count : 0,
-      latest_pending_count: run ? run.pending_count : 0,
-    };
-  }
-
   function getWatch(watchId) {
-    return decorate(db.prepare('SELECT * FROM watches WHERE id = ?').get(watchId));
+    return stmts.getDecoratedWatch.get(watchId);
   }
 
   function listWatches({ music = null } = {}) {
-    const where = music === true ? 'WHERE is_music = 1' : music === false ? 'WHERE COALESCE(is_music, 0) = 0' : '';
-    return db.prepare(`SELECT * FROM watches ${where} ORDER BY created_at DESC`).all().map(decorate);
+    if (music === true) return stmts.listMusicDecoratedWatches.all();
+    if (music === false) return stmts.listVideoDecoratedWatches.all();
+    return stmts.listAllDecoratedWatches.all();
   }
 
   function listItems(watchId, { status = 'all', limit = 100, offset = 0 } = {}) {

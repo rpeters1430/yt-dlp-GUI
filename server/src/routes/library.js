@@ -8,17 +8,20 @@ const cleanup = require('../services/cleanup');
 const router = express.Router();
 router.use(requireAuth);
 
-const AUDIO_EXTS = new Set(['mp3', 'm4a', 'aac', 'flac', 'opus', 'ogg', 'oga', 'wav', 'alac', 'wma']);
+const AUDIO_EXT_LIST = ['mp3', 'm4a', 'aac', 'flac', 'opus', 'ogg', 'oga', 'wav', 'alac', 'wma'];
+const AUDIO_EXTS = new Set(AUDIO_EXT_LIST);
+const AUDIO_EXT_SQL = `(${AUDIO_EXT_LIST.map((ext) => `lower(d.filepath) LIKE '%.${ext}'`).join(' OR ')})`;
+
 // Containers browsers can generally play in a <video>/<audio> element. MKV plays in
 // Chromium-based browsers for common codecs, so it's attempted; anything else (e.g. .ts)
 // is offered as a download instead.
 const PLAYABLE_EXTS = new Set(['mp4', 'm4v', 'webm', 'mov', 'mkv', 'mp3', 'm4a', 'aac', 'flac', 'opus', 'ogg', 'oga', 'wav']);
 
-const SORTS = {
-  newest: (a, b) => (b.created_at || '').localeCompare(a.created_at || ''),
-  oldest: (a, b) => (a.created_at || '').localeCompare(b.created_at || ''),
-  title: (a, b) => (a.title || a.url || '').localeCompare(b.title || b.url || '', undefined, { sensitivity: 'base' }),
-  size: (a, b) => (b.size || 0) - (a.size || 0),
+const ORDER_BY_SQL = {
+  newest: 'd.created_at DESC, d.rowid DESC',
+  oldest: 'd.created_at ASC, d.rowid ASC',
+  title: "COALESCE(d.title, d.url, '') COLLATE NOCASE ASC, d.created_at DESC",
+  size: 'COALESCE(d.filesize, 0) DESC, d.created_at DESC',
 };
 
 function extOf(filepath) {
@@ -51,30 +54,61 @@ function parseSplitParts(raw) {
 
 function withFileInfo(row) {
   const parts = parseSplitParts(row.split_parts);
+  let size = null;
+  let exists = false;
   if (parts && parts.length > 1) {
     let totalSize = 0;
-    let anyExists = false;
     for (const partPath of parts) {
       const st = statFile(partPath);
       if (st) {
         totalSize += st.size;
-        anyExists = true;
+        exists = true;
       }
     }
-    return {
-      ...row,
-      size: anyExists ? totalSize : null,
-      exists: anyExists,
-      hasPoster: !!statFile(posterPath(row.filepath)),
-    };
+    if (exists) size = totalSize;
+  } else {
+    const st = statFile(row.filepath);
+    if (st) {
+      size = st.size;
+      exists = true;
+    }
   }
-  const st = statFile(row.filepath);
+  const hasPoster = !!statFile(posterPath(row.filepath));
+
+  // Keep persisted filesize / has_poster in sync when inspected on the current page.
+  if (exists && (row.filesize !== size || Boolean(row.has_poster) !== hasPoster)) {
+    try {
+      db.prepare('UPDATE downloads SET filesize = ?, has_poster = ? WHERE id = ?')
+        .run(size, hasPoster ? 1 : 0, row.id);
+    } catch (_) {}
+  }
+
   return {
     ...row,
-    size: st ? st.size : null,
-    exists: !!st,
-    hasPoster: !!statFile(posterPath(row.filepath)),
+    size,
+    exists,
+    hasPoster,
   };
+}
+
+// Backfills persisted filesize for any pre-existing completed rows that predated the column,
+// so SQL sorting by size works accurately without scanning the disk on every request.
+function backfillMissingFileSizes() {
+  const missing = db.prepare(`
+    SELECT id, filepath, split_parts, filesize, has_poster FROM downloads
+    WHERE status = 'completed' AND filepath IS NOT NULL AND filesize IS NULL
+    LIMIT 500
+  `).all();
+  if (missing.length === 0) return;
+  const update = db.prepare('UPDATE downloads SET filesize = ?, has_poster = ? WHERE id = ?');
+  db.transaction(() => {
+    for (const row of missing) {
+      const info = withFileInfo(row);
+      if (info.exists) {
+        update.run(info.size, info.hasPoster ? 1 : 0, row.id);
+      }
+    }
+  })();
 }
 
 function toItem(row) {
@@ -105,7 +139,8 @@ function toItem(row) {
 function getCompletedRow(id) {
   return db.prepare(`
     SELECT d.id, d.url, d.title, d.thumbnail, d.extractor, d.filepath, d.created_at,
-      d.watch_id, d.protected, d.split_parts, w.name AS watch_name, w.channel_name AS watch_channel_name
+      d.watch_id, d.protected, d.split_parts, d.filesize, d.has_poster,
+      w.name AS watch_name, w.channel_name AS watch_channel_name
     FROM downloads d LEFT JOIN watches w ON w.id = d.watch_id
     WHERE d.id = ? AND d.status = 'completed' AND d.filepath IS NOT NULL
   `).get(id);
@@ -141,37 +176,65 @@ router.get('/', (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
   const source = String(req.query.source || 'all');
   const kind = ['video', 'audio'].includes(req.query.kind) ? req.query.kind : 'all';
-  const sort = SORTS[req.query.sort] ? req.query.sort : 'newest';
+  const sort = ORDER_BY_SQL[req.query.sort] ? req.query.sort : 'newest';
   const pageSize = Math.min(100, Math.max(6, parseInt(req.query.pageSize, 10) || 24));
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
 
-  let rows = db.prepare(`
-    SELECT d.id, d.url, d.title, d.thumbnail, d.extractor, d.filepath, d.created_at,
-      d.watch_id, d.protected, d.split_parts, w.name AS watch_name, w.channel_name AS watch_channel_name
-    FROM downloads d LEFT JOIN watches w ON w.id = d.watch_id
-    WHERE d.status = 'completed' AND d.filepath IS NOT NULL
-  `).all();
+  if (sort === 'size') {
+    backfillMissingFileSizes();
+  }
 
-  if (source === 'manual') rows = rows.filter((r) => !r.watch_id);
-  else if (source.startsWith('watch:')) {
+  const where = ["d.status = 'completed'", 'd.filepath IS NOT NULL'];
+  const params = [];
+
+  if (source === 'manual') {
+    where.push('d.watch_id IS NULL');
+  } else if (source.startsWith('watch:')) {
     const watchId = parseInt(source.slice(6), 10);
-    rows = rows.filter((r) => r.watch_id === watchId);
-  }
-  if (kind !== 'all') {
-    rows = rows.filter((r) => (AUDIO_EXTS.has(extOf(r.filepath)) ? 'audio' : 'video') === kind);
-  }
-  if (q) {
-    rows = rows.filter((r) => [r.title, r.url, r.extractor, r.watch_name, r.watch_channel_name, path.basename(r.filepath)]
-      .some((v) => v && String(v).toLowerCase().includes(q)));
+    where.push('d.watch_id = ?');
+    params.push(Number.isFinite(watchId) ? watchId : -1);
   }
 
-  // Sizes come from disk, so only stat the whole result set when sorting by size;
-  // otherwise just the page being returned.
-  if (sort === 'size') rows = rows.map(withFileInfo);
-  rows.sort(SORTS[sort]);
-  const total = rows.length;
-  const pageRows = rows.slice((page - 1) * pageSize, page * pageSize);
-  const items = pageRows.map((r) => toItem(sort === 'size' ? r : withFileInfo(r)));
+  if (kind === 'audio') {
+    where.push(AUDIO_EXT_SQL);
+  } else if (kind === 'video') {
+    where.push(`NOT ${AUDIO_EXT_SQL}`);
+  }
+
+  if (q) {
+    where.push(`(
+      instr(lower(coalesce(d.title, '')), ?) > 0 OR
+      instr(lower(coalesce(d.url, '')), ?) > 0 OR
+      instr(lower(coalesce(d.extractor, '')), ?) > 0 OR
+      instr(lower(coalesce(w.name, '')), ?) > 0 OR
+      instr(lower(coalesce(w.channel_name, '')), ?) > 0 OR
+      instr(lower(coalesce(d.filepath, '')), ?) > 0
+    )`);
+    params.push(q, q, q, q, q, q);
+  }
+
+  const whereSql = `WHERE ${where.join(' AND ')}`;
+  const orderSql = ORDER_BY_SQL[sort];
+  const offset = (page - 1) * pageSize;
+
+  const total = db.prepare(`
+    SELECT COUNT(*) AS c
+    FROM downloads d LEFT JOIN watches w ON w.id = d.watch_id
+    ${whereSql}
+  `).get(...params).c;
+
+  const pageRows = db.prepare(`
+    SELECT d.id, d.url, d.title, d.thumbnail, d.extractor, d.filepath, d.created_at,
+      d.watch_id, d.protected, d.split_parts, d.filesize, d.has_poster,
+      w.name AS watch_name, w.channel_name AS watch_channel_name
+    FROM downloads d LEFT JOIN watches w ON w.id = d.watch_id
+    ${whereSql}
+    ORDER BY ${orderSql}
+    LIMIT ? OFFSET ?
+  `).all(...params, pageSize, offset);
+
+  // Only stat the rows on the current page.
+  const items = pageRows.map((r) => toItem(withFileInfo(r)));
 
   const sources = db.prepare(`
     SELECT w.id, COALESCE(w.name, w.channel_name, w.url) AS name, COUNT(d.id) AS count

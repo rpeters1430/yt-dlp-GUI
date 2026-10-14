@@ -153,3 +153,23 @@ test('a deletion announces the updated row and counts over the socket', (t) => {
   assert.ok(!('log' in update));
   assert.equal(s.q.io.of('jobs:counts').at(-1).deleted, 1);
 });
+
+test('runDbMaintenance prunes old watch_runs past the per-watch keep limit and removes expired sessions', (t) => {
+  const s = setup(t);
+  const w = s.addWatch('chan');
+  const oldTime = new Date(Date.now() - 45 * 86400000).toISOString().replace('T', ' ').slice(0, 19);
+  const insertRun = s.q.db.prepare(
+    "INSERT INTO watch_runs (watch_id, trigger, status, started_at, finished_at) VALUES (?, 'scheduled', 'completed', ?, ?)"
+  );
+  for (let i = 0; i < 15; i++) insertRun.run(w, oldTime, oldTime);
+
+  s.q.db.exec('CREATE TABLE IF NOT EXISTS sessions (sid TEXT PRIMARY KEY, expired NUMERIC, sess TEXT)');
+  s.q.db.prepare('INSERT INTO sessions (sid, expired, sess) VALUES (?, ?, ?)').run('expired-1', Date.now() - 10000, '{}');
+  s.q.db.prepare('INSERT INTO sessions (sid, expired, sess) VALUES (?, ?, ?)').run('valid-1', Date.now() + 60000, '{}');
+
+  const maint = s.cleanup.runDbMaintenance({ maxRunsPerWatch: 10, maxRunAgeDays: 30 });
+  assert.equal(maint.prunedRuns, 5);
+  assert.equal(maint.expiredSessions, 1);
+  assert.equal(s.q.db.prepare('SELECT COUNT(*) AS c FROM watch_runs WHERE watch_id = ?').get(w).c, 10);
+  assert.equal(s.q.db.prepare('SELECT COUNT(*) AS c FROM sessions').get().c, 1);
+});

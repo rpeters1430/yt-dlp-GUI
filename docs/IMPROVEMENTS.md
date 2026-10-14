@@ -75,8 +75,10 @@ delete them) as they land.
 ### Bugs / risks
 - [ ] **No socket.io handshake test.** The auth check is one call to the tested
   `validateSession`, but an end-to-end socket test would need `socket.io-client` on the server.
-- [ ] **`GET /api/library` loads every completed row** and filters/sorts in JS before paging.
-  Fine for thousands of rows; move filtering/sorting into SQL if libraries get much larger.
+- [x] **`GET /api/library` filters, sorts, and pages in SQLite** using persisted file sizes,
+  and stats only the current page. Also batch qBittorrent download status lookups and fetch
+  watch aggregates/latest runs in one query; nightly cleanup prunes old watch runs/sessions
+  and runs SQLite maintenance.
 
 ### Downloads & queue
 - [ ] **Clear completed** bulk action in History.
