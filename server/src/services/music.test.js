@@ -73,3 +73,35 @@ test('getAlbumDetails requests all multi-disc tracks and rejects truncated metad
   count = 50;
   await assert.rejects(getAlbumDetails(1), /Album track list incomplete/);
 });
+
+test('resolveArtistChannel prefers Topic channel URL and falls back to @handle URL', async (t) => {
+  const ytdlp = require('./ytdlp');
+  const { resolveArtistChannel } = require('./music');
+
+  t.mock.method(ytdlp, 'searchYouTube', async (query) => {
+    if (query.includes('Topic')) {
+      return [
+        {
+          id: 'v1',
+          title: 'Drive',
+          uploader: 'Incubus - Topic',
+          channelId: 'UC123456',
+          channelUrl: 'https://www.youtube.com/channel/UC123456',
+        },
+      ];
+    }
+    return [];
+  });
+
+  const resolved = await resolveArtistChannel('Incubus');
+  assert.deepEqual(resolved, {
+    url: 'https://www.youtube.com/channel/UC123456',
+    uploader: 'Incubus - Topic',
+    isTopic: true,
+  });
+
+  t.mock.method(ytdlp, 'searchYouTube', async () => []);
+  const fallback = await resolveArtistChannel('Some Unknown Band!');
+  assert.equal(fallback.url, 'https://www.youtube.com/@SomeUnknownBand');
+  assert.equal(fallback.isTopic, false);
+});

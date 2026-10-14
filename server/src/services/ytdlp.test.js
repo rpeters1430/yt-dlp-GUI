@@ -431,3 +431,41 @@ test('non-live downloads fetch fragments concurrently; live captures do not', ()
   assert.ok(buildDownloadArgs('https://www.youtube.com/watch?v=abc123', {}).includes('--concurrent-fragments'));
   assert.equal(buildDownloadArgs('https://www.youtube.com/watch?v=abc123', { isLive: true }).includes('--concurrent-fragments'), false);
 });
+
+test('WebM video downloads prefer WebM/Opus streams and merge to webm', () => {
+  const { buildFormatSelector, buildDownloadArgs } = require('./ytdlp');
+  assert.equal(buildFormatSelector({ container: 'webm' }), 'bestvideo*[ext=webm]+bestaudio[ext=webm]/bestvideo*+bestaudio/best');
+  assert.equal(
+    buildFormatSelector({ quality: '1080', container: 'webm' }),
+    'bestvideo*[height<=1080][ext=webm]+bestaudio[ext=webm]/bestvideo*[height<=1080]+bestaudio/best[height<=1080]',
+  );
+  const args = buildDownloadArgs('https://www.youtube.com/watch?v=abc123', { container: 'webm' });
+  const mergeIdx = args.indexOf('--merge-output-format');
+  assert.notEqual(mergeIdx, -1);
+  assert.equal(args[mergeIdx + 1], 'webm');
+});
+
+test('cleanupPartialFiles removes .part, .ytdl, and stream fragment files next to destFile', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { cleanupPartialFiles } = require('./ytdlp');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-partial-'));
+  try {
+    const dest = path.join(dir, 'My Video [abc123].mp4');
+    const part = `${dest}.part`;
+    const ytdl = `${dest}.ytdl`;
+    const frag = path.join(dir, 'My Video [abc123].f137.mp4.part');
+    const unrelated = path.join(dir, 'Other Video [xyz].mp4');
+    for (const f of [part, ytdl, frag, unrelated]) fs.writeFileSync(f, 'x');
+
+    cleanupPartialFiles(dest);
+
+    assert.equal(fs.existsSync(part), false);
+    assert.equal(fs.existsSync(ytdl), false);
+    assert.equal(fs.existsSync(frag), false);
+    assert.equal(fs.existsSync(unrelated), true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

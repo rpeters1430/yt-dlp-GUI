@@ -216,13 +216,26 @@ export default function MusicPage() {
     appToast(text, { error: type === 'error' });
   }
 
-  function getTrackJobStatus(trackTitle) {
+  function getTrackJobStatus(trackTitle, trackArtist = null, albumName = null) {
     if (!trackTitle || !jobs) return null;
     const titLower = trackTitle.toLowerCase().trim();
+    const artLower = trackArtist ? trackArtist.toLowerCase().trim() : null;
+    const albLower = albumName ? albumName.toLowerCase().trim() : null;
     return jobs.find((j) => {
-      const metaTitle = j.options.musicMetadata?.title;
-      if (metaTitle && metaTitle.toLowerCase().trim() === titLower) return true;
-      if (j.title && j.title.toLowerCase().includes(titLower)) return true;
+      const meta = j.options?.musicMetadata;
+      const metaTitle = meta?.title;
+      if (metaTitle && metaTitle.toLowerCase().trim() === titLower) {
+        if (albLower && meta?.album && meta.album.toLowerCase().trim() !== albLower) return false;
+        if (artLower) {
+          const mArt = (meta?.artist || meta?.albumArtist || "").toLowerCase().trim();
+          if (mArt && !mArt.includes(artLower) && !artLower.includes(mArt)) return false;
+        }
+        return true;
+      }
+      if (!metaTitle && j.title && j.title.toLowerCase().includes(titLower)) {
+        if (artLower && !j.title.toLowerCase().includes(artLower)) return false;
+        return true;
+      }
       return false;
     });
   }
@@ -679,12 +692,21 @@ export default function MusicPage() {
     );
   }
 
-  // Opens the Music Watch form prefilled to follow an artist's new releases.
-  function openArtistWatch(name) {
-    setNewWatchName(`${name} Releases`);
-    setNewWatchUrl(`https://www.youtube.com/results?search_query=${encodeURIComponent(`${name} official audio`)}`);
+  // Opens the Music Watch form prefilled to follow an artist's new releases,
+  // resolving their canonical YouTube / Topic channel URL asynchronously.
+  async function openArtistWatch(name) {
+    const cleanName = String(name || "").trim();
+    const fallbackHandle = cleanName.replace(/[^a-zA-Z0-9._-]/g, "") || "music";
+    setNewWatchName(`${cleanName} Releases`);
+    setNewWatchUrl(`https://www.youtube.com/@${fallbackHandle}`);
     setActiveTab('watches');
     setShowAddWatchModal(true);
+    try {
+      const resolved = await api.resolveMusicArtistChannel(cleanName);
+      if (resolved && resolved.url) {
+        setNewWatchUrl(resolved.url);
+      }
+    } catch (_) {}
   }
 
   // View album details
@@ -1274,9 +1296,10 @@ export default function MusicPage() {
                     {tracks.map((t) => {
                       const isSelected = selectedTracks.has(t.trackNumber);
                       const customMatch = trackMatches[t.trackNumber];
-                      const job = getTrackJobStatus(t.title);
+                      const job = getTrackJobStatus(t.title, t.artist || selectedAlbum?.album?.artist, t.album || selectedAlbum?.album?.name);
                       const inJellyfin = !!libraryTracks[libraryTrackKey(t)];
-                      const state = job?.status === 'downloading' ? (job.progress || 'downloading')
+                      const state = job?.status === 'downloading'
+                        ? (typeof job.percent === 'number' && job.percent > 0 ? `${Math.round(job.percent)}%` : 'downloading')
                         : job?.status === 'queued' ? 'queued'
                           : job?.status === 'completed' ? 'done' : null;
                       return (
@@ -2465,42 +2488,64 @@ export default function MusicPage() {
               </h3>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {[...(lidarrStatus.activeTasks || []), ...(lidarrStatus.completedTasks || [])].map((task) => (
-                  <div
-                    key={task.hash}
-                    style={{
-                      padding: '10px 14px',
-                      borderRadius: 8,
-                      background: 'var(--surface-hover)',
-                      border: '1px solid var(--border)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 6,
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                      <span style={{ fontWeight: 600, fontSize: '0.88rem' }}>{task.name}</span>
-                      <span className="badge" style={{
-                        fontSize: '0.72rem',
-                        background: task.state === 'uploading' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(91, 109, 248, 0.15)',
-                        color: task.state === 'uploading' ? 'var(--success)' : 'var(--accent)',
-                      }}>
-                        {task.state === 'uploading' ? 'Ready for Lidarr Import' : `${Math.round(task.progress * 100)}% Downloading`}
-                      </span>
-                    </div>
+                {[...(lidarrStatus.activeTasks || []), ...(lidarrStatus.completedTasks || [])].map((task) => {
+                  const isReady = task.state === 'pausedUP' || task.state === 'uploading';
+                  const isError = task.state === 'error';
+                  const pct = Math.round((task.progress || 0) * 100);
+                  const badgeBg = isReady
+                    ? 'rgba(16, 185, 129, 0.15)'
+                    : isError
+                      ? 'rgba(239, 68, 68, 0.15)'
+                      : 'rgba(91, 109, 248, 0.15)';
+                  const badgeColor = isReady
+                    ? 'var(--success)'
+                    : isError
+                      ? 'var(--danger)'
+                      : 'var(--accent)';
+                  const badgeLabel = isReady
+                    ? 'Ready for Lidarr Import'
+                    : isError
+                      ? 'Failed'
+                      : task.state === 'queuedDL' && pct === 0
+                        ? 'Queued'
+                        : `${pct}% Downloading`;
+                  return (
+                    <div
+                      key={task.hash}
+                      style={{
+                        padding: '10px 14px',
+                        borderRadius: 8,
+                        background: 'var(--surface-hover)',
+                        border: '1px solid var(--border)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 6,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                        <span style={{ fontWeight: 600, fontSize: '0.88rem' }}>{task.name}</span>
+                        <span className="badge" style={{
+                          fontSize: '0.72rem',
+                          background: badgeBg,
+                          color: badgeColor,
+                        }}>
+                          {badgeLabel}
+                        </span>
+                      </div>
 
-                    <div style={{ width: '100%', height: 4, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
-                      <div
-                        style={{
-                          width: `${Math.round(task.progress * 100)}%`,
-                          height: '100%',
-                          background: task.state === 'uploading' ? 'var(--success)' : 'var(--accent)',
-                          transition: 'width 0.3s ease',
-                        }}
-                      />
+                      <div style={{ width: '100%', height: 4, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
+                        <div
+                          style={{
+                            width: `${pct}%`,
+                            height: '100%',
+                            background: badgeColor,
+                            transition: 'width 0.3s ease',
+                          }}
+                        />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

@@ -41,11 +41,29 @@ function Artwork({ item, className }) {
 function PlayerOverlay({ item, onClose, onToggleProtect, onDelete }) {
   const containerRef = useModalA11y(!!item, onClose);
   const [errorFor, setErrorFor] = useState(null);
+  const [partIndex, setPartIndex] = useState(0);
 
   if (!item) return null;
-  const playError = errorFor === item.id;
-  const src = api.libraryStreamUrl(item.id);
-  const meta = [item.watchName || siteName(item.extractor) || 'Added by hand', formatDate(item.createdAt), item.size !== null ? formatBytes(item.size) : null, item.ext?.toUpperCase()].filter(Boolean).join(' · ');
+  const parts = Array.isArray(item.splitParts) && item.splitParts.length > 1 ? item.splitParts : null;
+  const activePart = parts ? Math.min(partIndex, parts.length - 1) : null;
+  const errorKey = activePart !== null ? `${item.id}:${activePart}` : item.id;
+  const playError = errorFor === errorKey;
+  const src = api.libraryStreamUrl(item.id, activePart);
+  const fileUrl = api.libraryFileUrl(item.id, activePart);
+  const activePath = parts ? parts[activePart] : item.filepath;
+  const meta = [
+    item.watchName || siteName(item.extractor) || 'Added by hand',
+    formatDate(item.createdAt),
+    item.size !== null ? formatBytes(item.size) : null,
+    parts ? `${parts.length} parts` : null,
+    item.ext?.toUpperCase(),
+  ].filter(Boolean).join(' · ');
+
+  const handleEnded = () => {
+    if (parts && activePart < parts.length - 1) {
+      setPartIndex(activePart + 1);
+    }
+  };
 
   return (
     <div className="player-backdrop" onClick={onClose}>
@@ -67,24 +85,49 @@ function PlayerOverlay({ item, onClose, onToggleProtect, onDelete }) {
           ) : item.kind === 'audio' ? (
             <div className="player-audio">
               <Artwork key={item.id} item={item} className="player-audio-art" />
-              <audio controls autoPlay src={src} onError={() => setErrorFor(item.id)} />
+              <audio
+                key={errorKey}
+                controls
+                autoPlay
+                src={src}
+                onEnded={handleEnded}
+                onError={() => setErrorFor(errorKey)}
+              />
             </div>
           ) : (
             <video
+              key={errorKey}
               controls
               autoPlay
               playsInline
               preload="metadata"
               src={src}
               poster={item.hasPoster ? api.libraryPosterUrl(item.id) : item.thumbnail || undefined}
-              onError={() => setErrorFor(item.id)}
+              onEnded={handleEnded}
+              onError={() => setErrorFor(errorKey)}
             />
           )}
         </div>
         <div className="player-info">
           <h2 className="player-title">{item.title}</h2>
           <div className="mono-meta">{meta}</div>
-          <div className="mono-meta player-path" title={item.filepath}>{item.filepath}</div>
+          {parts && (
+            <div className="chip-row" role="tablist" aria-label="Recording parts" style={{ marginTop: 8 }}>
+              {parts.map((partPath, idx) => (
+                <button
+                  key={partPath || idx}
+                  type="button"
+                  role="tab"
+                  aria-selected={activePart === idx}
+                  className={`chip${activePart === idx ? ' active' : ''}`}
+                  onClick={() => setPartIndex(idx)}
+                >
+                  Part {idx + 1}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="mono-meta player-path" title={activePath}>{activePath}</div>
           <div className="btn-row player-actions">
             {item.watchId && (
               <button type="button" className="btn-ghost" onClick={() => onToggleProtect(item)}>
@@ -96,7 +139,9 @@ function PlayerOverlay({ item, onClose, onToggleProtect, onDelete }) {
             )}
             <button type="button" className="btn-ghost" onClick={() => onDelete(item)}>Delete file</button>
             <span className="btn-row-spacer" />
-            <a className="btn-primary" href={api.libraryFileUrl(item.id)} download>Download file</a>
+            <a className="btn-primary" href={fileUrl} download>
+              {parts ? `Download part ${activePart + 1}` : 'Download file'}
+            </a>
             <button type="button" className="btn-ghost" onClick={onClose}>Close</button>
           </div>
         </div>
@@ -257,12 +302,20 @@ export default function Library() {
                   ) : (
                     <span className="badge badge-dark badge-tl">FILE MISSING</span>
                   )}
+                  {item.exists && item.splitParts?.length > 1 && (
+                    <span className="badge badge-dark badge-tl">{item.splitParts.length} PARTS</span>
+                  )}
                   {item.ext && <span className="badge badge-dark badge-bl">{item.ext.toUpperCase()}</span>}
                   {item.protected && <span className="badge badge-success badge-tr">KEPT</span>}
                 </button>
                 <div className="tile-title" title={item.title}>{item.title}</div>
                 <div className="tile-meta mono-meta">
-                  {[item.watchName ? `Watch · ${item.watchName}` : (siteName(item.extractor) || 'Added by hand'), formatDate(item.createdAt), item.size !== null ? formatBytes(item.size) : null].filter(Boolean).join(' · ')}
+                  {[
+                    item.watchName ? `Watch · ${item.watchName}` : (siteName(item.extractor) || 'Added by hand'),
+                    formatDate(item.createdAt),
+                    item.splitParts?.length > 1 ? `${item.splitParts.length} parts` : null,
+                    item.size !== null ? formatBytes(item.size) : null,
+                  ].filter(Boolean).join(' · ')}
                 </div>
               </article>
             ))}
@@ -283,6 +336,7 @@ export default function Library() {
       )}
 
       <PlayerOverlay
+        key={playing?.id || 'none'}
         item={playing}
         onClose={() => setPlaying(null)}
         onToggleProtect={toggleProtect}

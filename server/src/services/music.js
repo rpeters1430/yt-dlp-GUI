@@ -443,6 +443,34 @@ async function matchTrackToYouTube(track) {
   };
 }
 
+// Resolves an artist name to a canonical YouTube channel URL (preferring their Topic or
+// official channel) so Music Watches use a valid yt-dlp channel URL instead of a /results?search_query= page.
+async function resolveArtistChannel(artistName) {
+  const artist = String(artistName || '').trim();
+  if (!artist) throw new Error('Artist name is required');
+
+  const queries = [`${artist} - Topic`, `${artist} official`];
+  const results = (await Promise.all(
+    queries.map((q) => ytdlp.searchYouTube(q, 5).catch(() => []))
+  )).flat();
+
+  const artLower = artist.toLowerCase();
+  const topicMatch = results.find((r) => r && r.channelUrl && (r.uploader || '').toLowerCase() === `${artLower} - topic`);
+  if (topicMatch) return { url: topicMatch.channelUrl, uploader: topicMatch.uploader, isTopic: true };
+
+  const anyTopic = results.find((r) => r && r.channelUrl && (r.uploader || '').toLowerCase().includes('topic') && (r.uploader || '').toLowerCase().includes(artLower));
+  if (anyTopic) return { url: anyTopic.channelUrl, uploader: anyTopic.uploader, isTopic: true };
+
+  const exactUploader = results.find((r) => r && r.channelUrl && (r.uploader || '').toLowerCase() === artLower);
+  if (exactUploader) return { url: exactUploader.channelUrl, uploader: exactUploader.uploader, isTopic: false };
+
+  const firstWithChannel = results.find((r) => r && r.channelUrl);
+  if (firstWithChannel) return { url: firstWithChannel.channelUrl, uploader: firstWithChannel.uploader || artist, isTopic: false };
+
+  const handle = artist.replace(/[^a-zA-Z0-9._-]/g, '');
+  return { url: `https://www.youtube.com/@${handle || 'music'}`, uploader: artist, isTopic: false };
+}
+
 async function inspectUrl(url) {
   ytdlp.assertPublicUrl(url);
   const info = await ytdlp.getInfo(url, { flatPlaylist: true });
@@ -752,6 +780,7 @@ module.exports = {
   searchTracks,
   matchTrackToYouTube,
   getMatchCandidates,
+  resolveArtistChannel,
   inspectUrl,
   saveCoverArt,
   tagMusicFile,

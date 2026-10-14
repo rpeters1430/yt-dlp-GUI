@@ -39,7 +39,35 @@ function statFile(filepath) {
   }
 }
 
+function parseSplitParts(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function withFileInfo(row) {
+  const parts = parseSplitParts(row.split_parts);
+  if (parts && parts.length > 1) {
+    let totalSize = 0;
+    let anyExists = false;
+    for (const partPath of parts) {
+      const st = statFile(partPath);
+      if (st) {
+        totalSize += st.size;
+        anyExists = true;
+      }
+    }
+    return {
+      ...row,
+      size: anyExists ? totalSize : null,
+      exists: anyExists,
+      hasPoster: !!statFile(posterPath(row.filepath)),
+    };
+  }
   const st = statFile(row.filepath);
   return {
     ...row,
@@ -51,6 +79,7 @@ function withFileInfo(row) {
 
 function toItem(row) {
   const ext = extOf(row.filepath);
+  const splitParts = parseSplitParts(row.split_parts);
   return {
     id: row.id,
     title: row.title || path.basename(row.filepath),
@@ -69,7 +98,7 @@ function toItem(row) {
     size: row.size,
     exists: row.exists,
     hasPoster: row.hasPoster,
-    splitParts: row.split_parts ? (() => { try { return JSON.parse(row.split_parts); } catch (_) { return null; } })() : null,
+    splitParts,
   };
 }
 
@@ -83,14 +112,24 @@ function getCompletedRow(id) {
 }
 
 // Files are only ever served by download id, from the path yt-dlp reported when that job
-// completed — never from a client-supplied path.
+// completed (or a validated index into its split_parts list) — never from a client-supplied path.
 function resolveExistingFile(req, res) {
   const row = getCompletedRow(req.params.id);
   if (!row) {
     res.status(404).json({ error: 'Not found in library' });
     return null;
   }
-  const abs = path.resolve(row.filepath);
+  let targetPath = row.filepath;
+  if (req.query.part !== undefined && req.query.part !== '') {
+    const parts = parseSplitParts(row.split_parts);
+    const partIndex = Number(req.query.part);
+    if (!parts || !Number.isInteger(partIndex) || partIndex < 0 || partIndex >= parts.length) {
+      res.status(404).json({ error: 'Part not found' });
+      return null;
+    }
+    targetPath = parts[partIndex];
+  }
+  const abs = path.resolve(targetPath);
   if (!statFile(abs)) {
     res.status(404).json({ error: 'File is missing on disk' });
     return null;

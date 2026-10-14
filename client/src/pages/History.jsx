@@ -48,7 +48,8 @@ export default function History() {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [expandedId, setExpandedId] = useState(null);
-  const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
+  const [pendingDelete, setPendingDelete] = useState(null); // { id, label, hasFile }
+  const [deleteDiskFile, setDeleteDiskFile] = useState(false);
   const [reload, setReload] = useState(0);
   const [retryingAll, setRetryingAll] = useState(false);
   const { failedCount } = useDownloads();
@@ -104,9 +105,11 @@ export default function History() {
   }
 
   async function confirmDelete() {
-    const { id } = pendingDelete;
+    const { id, hasFile } = pendingDelete;
+    const shouldDeleteFile = !!(hasFile && deleteDiskFile);
     setPendingDelete(null);
-    await api.deleteDownload(id);
+    setDeleteDiskFile(false);
+    await api.deleteDownload(id, { deleteFile: shouldDeleteFile });
     setJobs((prev) => prev.filter((j) => j.id !== id));
     setTotal((t) => Math.max(0, t - 1));
   }
@@ -222,7 +225,14 @@ export default function History() {
                     <button
                       type="button"
                       className="icon-plain"
-                      onClick={() => setPendingDelete({ id: job.id, label: job.title || job.url })}
+                      onClick={() => {
+                        setDeleteDiskFile(false);
+                        setPendingDelete({
+                          id: job.id,
+                          label: job.title || job.url,
+                          hasFile: job.status === 'completed' && !!job.filepath,
+                        });
+                      }}
                       aria-label="Delete from history"
                       title="Delete from history"
                     >
@@ -251,10 +261,24 @@ export default function History() {
         open={!!pendingDelete}
         title="Delete from history"
         message={`Delete "${pendingDelete?.label || 'this download'}" from history?`}
-        confirmLabel="Delete"
-        onCancel={() => setPendingDelete(null)}
+        confirmLabel={pendingDelete?.hasFile && deleteDiskFile ? 'Delete row & file' : 'Delete'}
+        onCancel={() => {
+          setPendingDelete(null);
+          setDeleteDiskFile(false);
+        }}
         onConfirm={confirmDelete}
-      />
+      >
+        {pendingDelete?.hasFile && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: '0.88rem', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={deleteDiskFile}
+              onChange={(e) => setDeleteDiskFile(e.target.checked)}
+            />
+            <span>Also delete downloaded file and sidecars from disk</span>
+          </label>
+        )}
+      </ConfirmDialog>
     </>
   );
 }

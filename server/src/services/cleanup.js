@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const cron = require('node-cron');
 const db = require('../db');
 const jellyfin = require('./jellyfin');
 const plex = require('./plex');
@@ -177,9 +176,10 @@ function listSidecars(filepath) {
   return names.map((name) => path.join(dir, name));
 }
 
-// Removes the media file plus its sidecars, so neither the nightly job nor a Library delete
-// leaves orphaned .nfo/poster/subtitle files behind for Jellyfin to pick up.
-function deleteDownloadFile(id, filepath, title, reason) {
+// Removes a download's media file, its sidecars (.nfo, poster, subtitles), and any split
+// part files + their sidecars from disk without modifying the database row.
+function removeMediaFiles(id, filepath, splitPartsRaw = null) {
+  if (!filepath) return true;
   const sidecars = listSidecars(filepath);
   try {
     if (fs.existsSync(filepath)) {
@@ -205,19 +205,31 @@ function deleteDownloadFile(id, filepath, title, reason) {
 
   // If this download was split into multiple parts, remove all other part files too
   try {
-    const row = db.prepare('SELECT split_parts FROM downloads WHERE id = ?').get(id);
-    if (row && row.split_parts) {
-      const parts = JSON.parse(row.split_parts);
-      for (const p of parts) {
-        if (p && p !== filepath && fs.existsSync(p)) {
-          try { fs.unlinkSync(p); } catch (_) {}
-          for (const s of listSidecars(p)) {
-            try { fs.unlinkSync(s); } catch (_) {}
+    const raw = splitPartsRaw !== null && splitPartsRaw !== undefined
+      ? splitPartsRaw
+      : (db.prepare('SELECT split_parts FROM downloads WHERE id = ?').get(id) || {}).split_parts;
+    if (raw) {
+      const parts = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(parts)) {
+        for (const p of parts) {
+          if (p && p !== filepath && fs.existsSync(p)) {
+            try { fs.unlinkSync(p); } catch (_) {}
+            for (const s of listSidecars(p)) {
+              try { fs.unlinkSync(s); } catch (_) {}
+            }
           }
         }
       }
     }
   } catch (_) {}
+
+  return true;
+}
+
+// Removes the media file plus its sidecars, so neither the nightly job nor a Library delete
+// leaves orphaned .nfo/poster/subtitle files behind for Jellyfin to pick up.
+function deleteDownloadFile(id, filepath, title, reason) {
+  if (!removeMediaFiles(id, filepath)) return false;
 
   console.log(`[cleanup] Deleted "${title || filepath}" (${reason})`);
   db.prepare("UPDATE downloads SET status = 'deleted', filepath = NULL WHERE id = ?").run(id);
@@ -247,6 +259,7 @@ async function runCleanup() {
 }
 
 function start() {
+  const cron = require('node-cron');
   // Runs once a night; both the age-based and Jellyfin-watched rules are evaluated on every
   // tick, independently of each other, so either or both can delete a given video.
   cron.schedule('0 3 * * *', () => {
@@ -254,4 +267,13 @@ function start() {
   });
 }
 
-module.exports = { init, start, runCleanup, computeCleanupPlan, getCleanupConfig, deleteDownloadFile };
+module.exports = {
+  init,
+  start,
+  runCleanup,
+  computeCleanupPlan,
+  getCleanupConfig,
+  deleteDownloadFile,
+  removeMediaFiles,
+  listSidecars,
+};

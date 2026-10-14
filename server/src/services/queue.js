@@ -633,9 +633,12 @@ function stopJob(id) {
   return stopped;
 }
 
-function removeJob(id) {
+function removeJob(id, { deleteFile = false } = {}) {
   const job = getJobSummary(id);
-  ytdlp.stopDownload(id);
+  ytdlp.stopDownload(id, { abort: true });
+  if (deleteFile && job && job.filepath) {
+    require('./cleanup').removeMediaFiles(id, job.filepath, job.split_parts);
+  }
   db.prepare('DELETE FROM downloads WHERE id = ?').run(id);
   if (!job) return false;
   notifyWatchItem({ ...job, status: 'removed' });

@@ -269,7 +269,8 @@ router.post('/:id/retry', (req, res) => {
 
 router.delete('/:id', (req, res) => {
   // Idempotent: removing a row that's already gone (e.g. from another tab) is still ok.
-  queue.removeJob(req.params.id);
+  const deleteFile = req.query.deleteFile === '1' || req.query.deleteFile === 'true';
+  queue.removeJob(req.params.id, { deleteFile });
   res.json({ ok: true });
 });
 

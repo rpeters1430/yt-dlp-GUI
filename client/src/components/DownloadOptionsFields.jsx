@@ -148,7 +148,7 @@ const QUALITY_CHOICES = [
   { value: '720', label: '720p' },
   { value: '480', label: '480p' },
 ];
-const VIDEO_TYPES = ['mp4', 'mkv'];
+const VIDEO_TYPES = ['mp4', 'mkv', 'webm'];
 const AUDIO_TYPES = ['m4a', 'mp3', 'opus', 'flac'];
 const CHUNK_CHOICES = [
   { value: 0, label: 'Off' },

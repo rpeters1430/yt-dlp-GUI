@@ -421,7 +421,9 @@ function buildVideoFormatSelector(videoFilter, container) {
   const video = `bestvideo*${videoFilter}`;
   const pair = container === 'mp4'
     ? `${video}+bestaudio[ext=m4a]/${video}+bestaudio`
-    : `${video}+bestaudio`;
+    : container === 'webm'
+      ? `${video}[ext=webm]+bestaudio[ext=webm]/${video}+bestaudio`
+      : `${video}+bestaudio`;
   return `${pair}/best${videoFilter}`;
 }
 
@@ -524,7 +526,7 @@ function expectedOutputExt({ audioOnly, container }) {
     const fmt = AUDIO_FORMATS.includes(container) ? container : 'mp3';
     return { alac: 'm4a', aac: 'm4a', vorbis: 'ogg' }[fmt] || fmt;
   }
-  return container === 'mkv' || container === 'ts' ? container : 'mp4';
+  return container === 'mkv' || container === 'ts' || container === 'webm' ? container : 'mp4';
 }
 
 // Containers embedThumbnailFromUrl can add an attached picture to.
@@ -694,10 +696,10 @@ function buildDownloadArgs(url, rawOptions = {}) {
     }
   } else {
     args.push('-f', buildFormatSelector({ formatSelector, quality, container }));
-    if (container === 'ts') {
-      args.push('--merge-output-format', 'ts');
+    if (container === 'ts' || container === 'mkv' || container === 'webm') {
+      args.push('--merge-output-format', container);
     } else {
-      args.push('--merge-output-format', container === 'mkv' ? 'mkv' : 'mp4');
+      args.push('--merge-output-format', 'mp4');
     }
   }
 
@@ -863,10 +865,44 @@ function sendWindowsCtrlBreak(pid, onLog) {
   return true;
 }
 
-function stopDownload(jobId) {
+function cleanupPartialFiles(filepath) {
+  if (!filepath) return;
+  const dir = path.dirname(filepath);
+  const ext = path.extname(filepath);
+  const base = path.basename(filepath, ext);
+  for (const candidate of [filepath, `${filepath}.part`, `${filepath}.ytdl`]) {
+    try {
+      if (fs.existsSync(candidate)) fs.unlinkSync(candidate);
+    } catch (_) {}
+  }
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.startsWith(`${base}.`)) continue;
+      if (/\.(part|ytdl|temp)$/i.test(name) || /^\.f\d+\./i.test(name.slice(base.length))) {
+        try { fs.unlinkSync(path.join(dir, name)); } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
+
+function stopDownload(jobId, { abort = false } = {}) {
   const active = activeProcesses.get(jobId);
   if (!active) return false;
   const { proc, onProgress, onLog } = active;
+  if (abort) {
+    active.aborted = true;
+    clearStopTimers(active);
+    console.log(`[ytdlp] Aborting download for removed job ${jobId}`);
+    killProcessTree(proc, 'SIGTERM');
+    const killTimer = setTimeout(() => {
+      if (activeProcesses.get(jobId) === active) {
+        killProcessTree(proc, 'SIGKILL');
+      }
+    }, 5000);
+    killTimer.unref?.();
+    active.stopTimers = [killTimer];
+    return true;
+  }
   userStoppedJobs.add(jobId);
   console.log(`[ytdlp] Requesting graceful stop for job ${jobId}`);
   onProgress && onProgress({ stage: 'Finalizing recording…', percent: 99, speed: null, eta: null });
@@ -1322,11 +1358,17 @@ function download(url, options = {}, onProgress, onLog) {
       if (stdoutRemainder.trim()) processLines([stdoutRemainder], false);
       if (stderrRemainder.trim()) processLines([stderrRemainder], true);
       if (idleTimer) clearTimeout(idleTimer);
+      const activeEntry = options.jobId ? activeProcesses.get(options.jobId) : null;
+      const wasAborted = !!activeEntry?.aborted;
       const wasStoppedByUser = !!options.jobId && userStoppedJobs.has(options.jobId);
       if (options.jobId) {
-        clearStopTimers(activeProcesses.get(options.jobId));
+        clearStopTimers(activeEntry);
         activeProcesses.delete(options.jobId);
         userStoppedJobs.delete(options.jobId);
+      }
+      if (wasAborted) {
+        if (!finalFilepath && filepath) cleanupPartialFiles(filepath);
+        return reject(new Error('Download aborted by user'));
       }
       if (timedOut) {
         return reject(new Error(`Download stalled: no output for ${Math.round(stalledQuietMs / 60000)} minutes`));
@@ -1395,6 +1437,8 @@ async function searchYouTube(query, limit = 1) {
           title: e.title,
           duration: typeof e.duration === 'number' ? e.duration : null,
           uploader: e.uploader || e.channel || null,
+          channelId: e.channel_id || null,
+          channelUrl: e.channel_url || e.uploader_url || (e.channel_id ? `https://www.youtube.com/channel/${e.channel_id}` : null),
           thumbnail: e.thumbnails?.[0]?.url || e.thumbnail || null,
         });
       }
@@ -1430,6 +1474,7 @@ module.exports = {
   MUSIC_DIR,
   COOKIES_FILE,
   stopDownload,
+  cleanupPartialFiles,
   assertPublicUrl,
   setTwitchAuthCookie,
   hasTwitchAuthCookie,

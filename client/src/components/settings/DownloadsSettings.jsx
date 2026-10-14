@@ -62,7 +62,7 @@ export default function DownloadsSettings() {
   }
 
   const audio = !!defaults.audioOnly;
-  const types = audio ? ['m4a', 'mp3', 'opus', 'flac'] : ['mp4', 'mkv'];
+  const types = audio ? ['m4a', 'mp3', 'opus', 'flac'] : ['mp4', 'mkv', 'webm'];
 
   return (
     <div className="setting-rows">

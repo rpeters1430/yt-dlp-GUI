@@ -1,5 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import { api } from '../api.js';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
@@ -8,6 +7,7 @@ import WatchActivityModal from '../components/WatchActivityModal.jsx';
 import AddWatchDrawer from '../components/AddWatchDrawer.jsx';
 import Art from '../components/Art.jsx';
 import { Switch } from '../components/DownloadOptionsFields.jsx';
+import { useDownloads } from '../context/DownloadsContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { relativeTime } from '../format.js';
 
@@ -45,24 +45,24 @@ export default function Watches() {
   const [addOpen, setAddOpen] = useState(false);
   const [advancedUrl, setAdvancedUrl] = useState('');
   const toast = useToast();
+  const { subscribeWatchUpdates } = useDownloads();
   const [editingWatch, setEditingWatch] = useState(null);
   const [activityWatch, setActivityWatch] = useState(null); // { watch, tab }
   const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
   const [pendingReset, setPendingReset] = useState(null); // { id, label }
 
-  function refresh() {
+  const refresh = useCallback(() => {
     api.listWatches()
       .then(setWatches)
       .catch(() => {})
       .finally(() => setLoading(false));
-  }
+  }, []);
 
   useEffect(() => {
     refresh();
 
-    // Socket.IO for real-time updates from scheduler
-    const socket = io({ withCredentials: true });
-    socket.on('watch:update', (updated) => {
+    // Subscribe to real-time watch:update events on the shared Socket.IO connection
+    return subscribeWatchUpdates((updated) => {
       setWatches((prev) => {
         const idx = prev.findIndex((w) => w.id === updated.id);
         if (idx >= 0) {
@@ -73,17 +73,15 @@ export default function Watches() {
         return [updated, ...prev];
       });
     });
-
-    return () => socket.disconnect();
-  }, []);
+  }, [refresh, subscribeWatchUpdates]);
 
   // Polling fallback while any watch is actively checking
   useEffect(() => {
     const hasChecking = watches.some((w) => w.last_status === 'checking' || busyId === w.id);
-    if (!hasChecking) return;
+    if (!hasChecking) return undefined;
     const interval = setInterval(refresh, 2500);
     return () => clearInterval(interval);
-  }, [watches, busyId]);
+  }, [watches, busyId, refresh]);
 
   async function handleToggle(watch) {
     try {

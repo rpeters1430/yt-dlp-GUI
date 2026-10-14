@@ -362,3 +362,26 @@ test('a music track failing for any other reason does not try its other matches'
   await waitFor(() => statusOf(q, id) === 'failed', { label: 'job to fail' });
   assert.deepEqual(q.state.downloadCalls.map((c) => c.url), [URL_A]);
 });
+
+test('removeJob with deleteFile removes the media file, sidecars, and split parts from disk', (t) => {
+  const q = loadQueue(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-del-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const part1 = path.join(dir, 'video_part1.mp4');
+  const part2 = path.join(dir, 'video_part2.mp4');
+  const nfo1 = path.join(dir, 'video_part1.nfo');
+  const poster1 = path.join(dir, 'video_part1.jpg');
+  for (const f of [part1, part2, nfo1, poster1]) fs.writeFileSync(f, 'x');
+
+  q.db.prepare(`
+    INSERT INTO downloads (id, url, status, title, filepath, split_parts)
+    VALUES ('del-1', ?, 'completed', 'Split stream', ?, ?)
+  `).run(URL_A, part1, JSON.stringify([part1, part2]));
+
+  assert.equal(q.queue.removeJob('del-1', { deleteFile: true }), true);
+  assert.equal(q.queue.getJob('del-1'), undefined);
+  for (const f of [part1, part2, nfo1, poster1]) {
+    assert.equal(fs.existsSync(f), false, `${f} should be deleted`);
+  }
+});

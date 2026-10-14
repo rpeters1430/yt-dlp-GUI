@@ -1,4 +1,3 @@
-const cron = require('node-cron');
 const db = require('../db');
 const queue = require('./queue');
 const ytdlp = require('./ytdlp');
@@ -84,6 +83,7 @@ function logFailure(name, error) {
 }
 
 function start() {
+  const cron = require('node-cron');
   cron.schedule(YTDLP_UPDATE_CRON, () => {
     updateNightlyYtdlp().catch((error) => logFailure('yt-dlp nightly update', error));
   }, cronOptions());
