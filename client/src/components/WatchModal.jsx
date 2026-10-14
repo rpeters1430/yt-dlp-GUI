@@ -435,7 +435,7 @@ export default function WatchModal({
                   <label className="field-label" style={{ display: 'block', marginBottom: 6 }}>
                     Channel or Playlist URL
                   </label>
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <input
                       type="url"
                       placeholder="e.g. https://www.youtube.com/@Veritasium or playlist URL"
@@ -443,7 +443,7 @@ export default function WatchModal({
                       onChange={(e) => setUrl(e.target.value)}
                       onBlur={handleUrlBlur}
                       disabled={isEdit}
-                      style={{ flex: 1 }}
+                      style={{ flex: '1 1 200px', minWidth: 0 }}
                       required
                     />
                     {!isEdit && (

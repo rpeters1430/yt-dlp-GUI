@@ -86,11 +86,11 @@ function deferred() {
 }
 
 // Inserts a download row directly, for listing/search tests that shouldn't run anything.
-function insertJob(db, { id, status = 'completed', title = null, url = 'https://example.com/v', extractor = null, createdAt, log = null }) {
+function insertJob(db, { id, status = 'completed', title = null, url = 'https://example.com/v', extractor = null, error = null, createdAt, log = null }) {
   db.prepare(`
-    INSERT INTO downloads (id, url, status, title, extractor, log, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, coalesce(?, datetime('now')))
-  `).run(id, url, status, title, extractor, log, createdAt || null);
+    INSERT INTO downloads (id, url, status, title, extractor, error, log, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, coalesce(?, datetime('now')))
+  `).run(id, url, status, title, extractor, error, log, createdAt || null);
 }
 
 module.exports = { openFreshDb, loadQueue, waitFor, deferred, insertJob };

@@ -800,12 +800,35 @@ function getQbitTorrents({ category, hashes, filter } = {}) {
     tasks = tasks.filter((t) => hashSet.has(t.hash.toLowerCase()));
   }
 
-  const result = [];
+  const parsedTaskJobs = new Map();
+  const allJobIds = [];
   for (const task of tasks) {
     let jobIds = [];
     try {
       jobIds = JSON.parse(task.job_ids || '[]');
     } catch (_) {}
+    parsedTaskJobs.set(task.id, jobIds);
+    for (const id of jobIds) {
+      if (id) allJobIds.push(id);
+    }
+  }
+
+  // Batch-fetch all download statuses in one query (chunked at 500 parameters) instead of N+1 queries.
+  const jobsById = new Map();
+  if (allJobIds.length > 0) {
+    const uniqueIds = [...new Set(allJobIds)];
+    const CHUNK = 500;
+    for (let i = 0; i < uniqueIds.length; i += CHUNK) {
+      const slice = uniqueIds.slice(i, i + CHUNK);
+      const placeholders = slice.map(() => '?').join(',');
+      const rows = db.prepare(`SELECT id, status, percent FROM downloads WHERE id IN (${placeholders})`).all(...slice);
+      for (const r of rows) jobsById.set(r.id, r);
+    }
+  }
+
+  const result = [];
+  for (const task of tasks) {
+    const jobIds = parsedTaskJobs.get(task.id) || [];
 
     let totalPercent = 0;
     let completedCount = 0;
@@ -813,16 +836,18 @@ function getQbitTorrents({ category, hashes, filter } = {}) {
     let downloadingCount = 0;
 
     if (jobIds.length > 0) {
-      const placeholders = jobIds.map(() => '?').join(',');
-      const rows = db.prepare(`SELECT status, percent FROM downloads WHERE id IN (${placeholders})`).all(...jobIds);
-      for (const r of rows) {
+      let foundCount = 0;
+      for (const jobId of jobIds) {
+        const r = jobsById.get(jobId);
+        if (!r) continue;
+        foundCount++;
         totalPercent += r.status === 'completed' ? 100 : (r.percent || 0);
         if (r.status === 'completed') completedCount++;
         else if (r.status === 'failed') failedCount++;
         else if (r.status === 'downloading') downloadingCount++;
       }
       // Jobs removed from the download queue will never finish; count them as failed.
-      failedCount += jobIds.length - rows.length;
+      failedCount += jobIds.length - foundCount;
     }
 
     // job_ids is written once, together with the status change, after every track was enqueued.

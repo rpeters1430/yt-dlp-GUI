@@ -1,5 +1,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-test-config-'));
+process.env.CONFIG_DIR = testConfigDir;
+process.on('exit', () => {
+  try { fs.rmSync(testConfigDir, { recursive: true, force: true }); } catch (_) {}
+});
+
 const {
   isPlaylistUrl, getDownloadIdleTimeoutMs, clearRecentCaches, normalizeUrl, isNotLiveError, parseNotLiveError,
 } = require('./ytdlp');
@@ -160,21 +170,23 @@ test('isRedditShareUrl matches Reddit app share links only', () => {
 
 test('resolveShareUrl follows the Reddit redirect and strips tracking params', async (t) => {
   const { resolveShareUrl } = require('./ytdlp');
+  const validateUrl = async () => {};
   t.mock.method(globalThis, 'fetch', async () => new Response(null, {
     status: 301,
     headers: { location: 'https://www.reddit.com/r/videos/comments/1abcde/some_title/?share_id=xyz&utm_medium=android_app' },
   }));
   assert.equal(
-    await resolveShareUrl('https://www.reddit.com/r/videos/s/eawAD6BLAE'),
+    await resolveShareUrl('https://www.reddit.com/r/videos/s/eawAD6BLAE', { validateUrl }),
     'https://www.reddit.com/r/videos/comments/1abcde/some_title/'
   );
 });
 
 test('resolveShareUrl falls back to the original URL when resolution fails', async (t) => {
   const { resolveShareUrl } = require('./ytdlp');
+  const validateUrl = async () => {};
   t.mock.method(globalThis, 'fetch', async () => new Response('Blocked', { status: 403 }));
   const share = 'https://www.reddit.com/r/videos/s/eawAD6BLAE';
-  assert.equal(await resolveShareUrl(share), share);
+  assert.equal(await resolveShareUrl(share, { validateUrl }), share);
 });
 
 test('resolveShareUrl leaves non-share URLs untouched without fetching', async (t) => {
@@ -187,6 +199,7 @@ test('resolveShareUrl leaves non-share URLs untouched without fetching', async (
 
 test('resolveShareUrl follows an intermediate Reddit redirect hop', async (t) => {
   const { resolveShareUrl } = require('./ytdlp');
+  const validateUrl = async () => {};
   const hops = [
     'https://www.reddit.com/r/videos/s/eawAD6BLAE',
     'https://www.reddit.com/r/videos/comments/1abcde/some_title/?share_id=xyz',
@@ -194,45 +207,48 @@ test('resolveShareUrl follows an intermediate Reddit redirect hop', async (t) =>
   let call = 0;
   t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 301, headers: { location: hops[call++] } }));
   assert.equal(
-    await resolveShareUrl('https://reddit.com/r/videos/s/eawAD6BLAE'),
+    await resolveShareUrl('https://reddit.com/r/videos/s/eawAD6BLAE', { validateUrl }),
     'https://www.reddit.com/r/videos/comments/1abcde/some_title/'
   );
 });
 
 test('resolveShareUrl does not follow redirects off Reddit', async (t) => {
   const { resolveShareUrl } = require('./ytdlp');
+  const validateUrl = async () => {};
   const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, {
     status: 302,
     headers: { location: 'http://169.254.169.254/latest/meta-data/' },
   }));
   const share = 'https://www.reddit.com/r/videos/s/eawAD6BLAE';
-  assert.equal(await resolveShareUrl(share), share);
+  assert.equal(await resolveShareUrl(share, { validateUrl }), share);
   // One request per user agent; the off-site hop is never fetched.
   assert.equal(fetchMock.mock.callCount(), 2);
 });
 
 test('resolveShareUrl caches a resolved link so enqueue after Analyze does not refetch', async (t) => {
   const { resolveShareUrl } = require('./ytdlp');
+  const validateUrl = async () => {};
   const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, {
     status: 301,
     headers: { location: 'https://www.reddit.com/r/videos/comments/1abcde/some_title/' },
   }));
   const share = 'https://www.reddit.com/r/videos/s/eawAD6BLAE';
-  const first = await resolveShareUrl(share);
+  const first = await resolveShareUrl(share, { validateUrl });
   const callsAfterFirst = fetchMock.mock.callCount();
-  assert.equal(await resolveShareUrl(share), first);
+  assert.equal(await resolveShareUrl(share, { validateUrl }), first);
   assert.equal(fetchMock.mock.callCount(), callsAfterFirst);
 });
 
 test('resolveShareUrl uses whichever user agent Reddit answers', async (t) => {
   const { resolveShareUrl } = require('./ytdlp');
+  const validateUrl = async () => {};
   t.mock.method(globalThis, 'fetch', async (_url, opts) => (
     /Chrome/.test(opts.headers['User-Agent'])
       ? new Response(null, { status: 301, headers: { location: 'https://www.reddit.com/r/videos/comments/1abcde/t/' } })
       : new Response('Blocked', { status: 403 })
   ));
   assert.equal(
-    await resolveShareUrl('https://www.reddit.com/r/videos/s/eawAD6BLAE'),
+    await resolveShareUrl('https://www.reddit.com/r/videos/s/eawAD6BLAE', { validateUrl }),
     'https://www.reddit.com/r/videos/comments/1abcde/t/'
   );
 });
@@ -430,4 +446,149 @@ test('non-live downloads fetch fragments concurrently; live captures do not', ()
   const { buildDownloadArgs } = require('./ytdlp');
   assert.ok(buildDownloadArgs('https://www.youtube.com/watch?v=abc123', {}).includes('--concurrent-fragments'));
   assert.equal(buildDownloadArgs('https://www.youtube.com/watch?v=abc123', { isLive: true }).includes('--concurrent-fragments'), false);
+});
+
+test('WebM video downloads prefer WebM/Opus streams and merge to webm', () => {
+  const { buildFormatSelector, buildDownloadArgs } = require('./ytdlp');
+  assert.equal(buildFormatSelector({ container: 'webm' }), 'bestvideo*[ext=webm]+bestaudio[ext=webm]/bestvideo*+bestaudio/best');
+  assert.equal(
+    buildFormatSelector({ quality: '1080', container: 'webm' }),
+    'bestvideo*[height<=1080][ext=webm]+bestaudio[ext=webm]/bestvideo*[height<=1080]+bestaudio/best[height<=1080]',
+  );
+  const args = buildDownloadArgs('https://www.youtube.com/watch?v=abc123', { container: 'webm' });
+  const mergeIdx = args.indexOf('--merge-output-format');
+  assert.notEqual(mergeIdx, -1);
+  assert.equal(args[mergeIdx + 1], 'webm');
+});
+
+test('cleanupPartialFiles removes .part, .ytdl, and stream fragment files next to destFile', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { cleanupPartialFiles } = require('./ytdlp');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-partial-'));
+  try {
+    const dest = path.join(dir, 'My Video [abc123].mp4');
+    const part = `${dest}.part`;
+    const ytdl = `${dest}.ytdl`;
+    const frag = path.join(dir, 'My Video [abc123].f137.mp4.part');
+    const unrelated = path.join(dir, 'Other Video [xyz].mp4');
+    for (const f of [part, ytdl, frag, unrelated]) fs.writeFileSync(f, 'x');
+
+    cleanupPartialFiles(dest);
+
+    assert.equal(fs.existsSync(part), false);
+    assert.equal(fs.existsSync(ytdl), false);
+    assert.equal(fs.existsSync(frag), false);
+    assert.equal(fs.existsSync(unrelated), true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('assertPublicUrlResolved blocks DNS rebinding to loopback/private IPs and allows public IPs', async () => {
+  const { assertPublicUrlResolved } = require('./ytdlp');
+
+  // Rebinding to 127.0.0.1
+  await assert.rejects(
+    () => assertPublicUrlResolved('http://127.0.0.1.nip.io/video.mp4', {
+      lookup: async () => [{ address: '127.0.0.1', family: 4 }],
+    }),
+    /resolves to a local\/private network address/
+  );
+
+  // Rebinding to RFC1918 192.168.1.50
+  await assert.rejects(
+    () => assertPublicUrlResolved('https://internal.example.com/stream', {
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }, { address: '192.168.1.50', family: 4 }],
+    }),
+    /resolves to a local\/private network address/
+  );
+
+  // Rebinding to IPv6 loopback ::1
+  await assert.rejects(
+    () => assertPublicUrlResolved('https://ipv6-rebind.example.com/watch', {
+      lookup: async () => [{ address: '::1', family: 6 }],
+    }),
+    /resolves to a local\/private network address/
+  );
+
+  // Public IPv4 and IPv6 addresses pass
+  await assert.doesNotReject(() => assertPublicUrlResolved('https://www.youtube.com/watch?v=dQw4w9WgXcQ', {
+    lookup: async () => [{ address: '142.250.190.46', family: 4 }, { address: '2607:f8b0:4005:809::200e', family: 6 }],
+  }));
+
+  await assert.rejects(
+    () => assertPublicUrlResolved('https://unresolved.example.com/video', {
+      lookup: async () => { throw Object.assign(new Error('DNS unavailable'), { code: 'EAI_AGAIN' }); },
+    }),
+    /Could not validate URL hostname.*EAI_AGAIN/
+  );
+});
+
+test('parseSha256ForAsset, computeFileSha256, and verifyExecutableHeader validate binary updates', async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const crypto = require('crypto');
+  const { parseSha256ForAsset, computeFileSha256, verifyExecutableHeader } = require('./ytdlp');
+
+  const samplePayload = Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46]), Buffer.alloc(128, 0xaa)]);
+  const expectedSha = crypto.createHash('sha256').update(samplePayload).digest('hex');
+
+  const checksumsTxt = [
+    `# FFmpeg build checksums`,
+    `0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  ffmpeg-master-latest-win64-gpl.zip`,
+    `${expectedSha} *ffmpeg-master-latest-linux64-gpl.tar.xz`,
+  ].join('\n');
+
+  assert.equal(parseSha256ForAsset(checksumsTxt, 'ffmpeg-master-latest-linux64-gpl.tar.xz'), expectedSha);
+  assert.equal(parseSha256ForAsset(checksumsTxt, 'missing-asset.tar.xz'), null);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-bincheck-'));
+  try {
+    const elfFile = path.join(dir, 'qjs-linux-x86_64');
+    fs.writeFileSync(elfFile, samplePayload);
+    assert.equal(await computeFileSha256(elfFile), expectedSha);
+    assert.equal(verifyExecutableHeader(elfFile, 'linux'), true);
+
+    const htmlErrorFile = path.join(dir, 'bad-binary');
+    fs.writeFileSync(htmlErrorFile, '<!DOCTYPE html><html><body>Rate limit exceeded — please try again later padding to exceed 64 bytes</body></html>');
+    assert.throws(() => verifyExecutableHeader(htmlErrorFile, 'linux'), /not a valid Linux ELF executable/);
+    assert.throws(() => verifyExecutableHeader(htmlErrorFile, 'win32'), /not a valid Windows PE executable/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('classifyFailure categorizes common download errors for retry guidance', () => {
+  const { classifyFailure } = require('./ytdlp');
+  assert.equal(classifyFailure("Sign in to confirm you're not a bot"), 'bot_check');
+  assert.equal(classifyFailure('Sign in to confirm your age'), 'auth_required');
+  assert.equal(classifyFailure('Private video'), 'auth_required');
+  assert.equal(classifyFailure('This video has been removed by the uploader'), 'unavailable');
+  assert.equal(classifyFailure('Video unavailable in your country'), 'unavailable');
+  assert.equal(classifyFailure('Read timed out'), 'network_or_stalled');
+  assert.equal(classifyFailure('HTTP Error 429: Too Many Requests'), 'network_or_stalled');
+});
+
+test('buildDownloadArgs supports rate controls and section trimming', () => {
+  const { buildDownloadArgs } = require('./ytdlp');
+  const args = buildDownloadArgs('https://www.youtube.com/watch?v=abc123', {
+    limitRate: '10M',
+    sleepInterval: 5,
+    downloadSections: '*00:01:00-00:03:30',
+  });
+  const rateIdx = args.indexOf('--limit-rate');
+  assert.notEqual(rateIdx, -1);
+  assert.equal(args[rateIdx + 1], '10M');
+  const sleepIdx = args.indexOf('--sleep-interval');
+  assert.notEqual(sleepIdx, -1);
+  assert.equal(args[sleepIdx + 1], '5');
+  const maxSleepIdx = args.indexOf('--max-sleep-interval');
+  assert.notEqual(maxSleepIdx, -1);
+  assert.equal(args[maxSleepIdx + 1], '10');
+  const sectionIdx = args.indexOf('--download-sections');
+  assert.notEqual(sectionIdx, -1);
+  assert.equal(args[sectionIdx + 1], '*00:01:00-00:03:30');
 });

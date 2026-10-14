@@ -26,13 +26,15 @@ router.get('/settings', (req, res) => {
     jellyfinUserId: config.jellyfinUserId,
     jellyfinApiKeyConfigured: !!config.jellyfinApiKey,
     keepRecentPerWatch: config.keepRecentPerWatch,
+    minFreeDiskGb: config.minFreeDiskGb,
+    storage: cleanup.getStorageStats(),
   });
 });
 
 // jellyfinApiKey is only written when present in the body at all, so leaving it blank on
 // subsequent saves doesn't wipe out a previously configured key.
 router.put('/settings', (req, res) => {
-  const { ageEnabled, ageDays, jellyfinEnabled, jellyfinUrl, jellyfinUserId, jellyfinApiKey, keepRecentPerWatch } = req.body || {};
+  const { ageEnabled, ageDays, jellyfinEnabled, jellyfinUrl, jellyfinUserId, jellyfinApiKey, keepRecentPerWatch, minFreeDiskGb } = req.body || {};
 
   if (ageEnabled !== undefined) setSetting('cleanup_age_enabled', ageEnabled ? '1' : '0');
   if (ageDays !== undefined) {
@@ -62,6 +64,13 @@ router.put('/settings', (req, res) => {
     }
     setSetting('cleanup_keep_recent', keep);
   }
+  if (minFreeDiskGb !== undefined) {
+    const minGb = Number(minFreeDiskGb);
+    if (!Number.isFinite(minGb) || minGb < 0) {
+      return res.status(400).json({ error: 'minFreeDiskGb must be zero or a positive number' });
+    }
+    setSetting('cleanup_min_free_gb', minGb);
+  }
 
   const config = cleanup.getCleanupConfig();
   res.json({
@@ -72,6 +81,8 @@ router.put('/settings', (req, res) => {
     jellyfinUserId: config.jellyfinUserId,
     jellyfinApiKeyConfigured: !!config.jellyfinApiKey,
     keepRecentPerWatch: config.keepRecentPerWatch,
+    minFreeDiskGb: config.minFreeDiskGb,
+    storage: cleanup.getStorageStats(),
   });
 });
 

@@ -32,8 +32,10 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 
 ### Downloading
 - Paste one or many URLs at once; jobs are queued with configurable concurrency
+- Pause or resume the queue, move a queued download to the front, and prioritize manual downloads ahead of Watch backfills
 - Live progress bars over WebSocket (percent, speed, ETA)
-- Format picker, audio-only (MP3), subtitles, embedded thumbnail/metadata/chapters, and SponsorBlock auto-remove
+- Format picker, audio-only (MP3), timestamp/chapter trimming, subtitles, embedded thumbnail/metadata/chapters, and SponsorBlock auto-remove
+- Optional per-download bandwidth caps and jittered delays to reduce network saturation and rate limits
 - Download history with thumbnails, file paths, and the exact yt-dlp command and log for every job
 - Customizable filename/folder layout — pick a preset or write your own yt-dlp template, globally or per Watch (see [File naming](#file-naming))
 - Writes a Kodi/Jellyfin/Emby-compatible `.nfo` + poster image next to every download so titles, descriptions, and artwork scrape reliably (toggle in Settings)
@@ -63,6 +65,15 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 - Optionally clean up Watch-downloaded videos: delete after N days, once watched in Jellyfin, or both
 - Runs nightly, with a dry-run preview and a "run now" button
 - Safety guards: per-video protect, per-Watch exemption, and "always keep newest N"
+- Optional free-space guard: run cleanup and pause new Watch queueing below a configured disk threshold
+
+### Queue and failure recovery
+- Pause queued work while active downloads finish; resume whenever you're ready
+- Promote a queued download to the front of the queue
+- Filter failed jobs by likely cause (network, bot check, authentication, or unavailable) and retry only matching or transient failures
+
+### Mobile sharing
+- Install the app on a supported Android browser and share links to it from other apps, or use the bookmarklet in Settings → Downloads
 
 ### Live streams
 - **YouTube and any other yt-dlp live extractor** — a URL that's currently live is detected automatically in the Analyze modal
@@ -95,11 +106,12 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 - Syncs after each download, every 15 minutes, or on demand
 
 ### Maintenance & security
-- Bundles modern static FFmpeg builds from [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) and the [QuickJS-ng](https://github.com/quickjs-ng/quickjs) JavaScript runtime yt-dlp needs for YouTube, with one-click in-app updates
+- Bundles modern static FFmpeg builds from [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) and the [QuickJS-ng](https://github.com/quickjs-ng/quickjs) JavaScript runtime yt-dlp needs for YouTube, with FFmpeg checksum and QuickJS binary validation before installation
 - Choose the yt-dlp **stable** or **nightly** channel; the choice survives container recreation
-- Single admin login with rate-limited login attempts and session invalidation on password change
+- Single admin login with rate-limited login attempts and session invalidation on password change; Lidarr API-key endpoints are rate-limited too
 - Cookie support for any site, for age-restricted, members-only, private, or subscriber-only content
-- Blocks URLs pointing at private/loopback addresses by default (SSRF guard)
+- Blocks URLs that target private/loopback addresses, including hostnames resolving to private IPs (SSRF guard)
+- Optional `PUID` / `PGID` support for NAS file ownership
 
 ## Quick start (Docker Compose)
 
@@ -133,6 +145,9 @@ services:
     environment:
       - MAX_CONCURRENT_DOWNLOADS=2
       - TZ=America/Los_Angeles
+      # Optional: use your NAS user and group IDs (check with `id`)
+      # - PUID=1000
+      # - PGID=10
       - VIDEO_DIR=/videos
       - MUSIC_DIR=/music
     volumes:
@@ -147,6 +162,7 @@ Adjust to taste:
 - **`ports`** — change the left-hand `3000` if that port is taken (e.g. `"8080:3000"`).
 - **`TZ`** — your timezone (e.g. `America/New_York`), so scheduled checks and timestamps line up.
 - **`MAX_CONCURRENT_DOWNLOADS`** — keep this low (1–2) on a NAS with limited CPU.
+- **`PUID` / `PGID`** — optional host UID and GID for the app process and files it creates. When set, the container adjusts `/config` ownership and the top level of download directories before dropping root privileges.
 
 ### 3. Create `.env` next to it
 
@@ -216,6 +232,8 @@ Everything below is optional — set it in `.env` (or `environment:` in `docker-
 | `ADMIN_USER` | `admin` | Login username. |
 | `ADMIN_PASSWORD` | random (printed once) | Login password. |
 | `SESSION_SECRET` | generated & persisted | Secret used to sign session cookies. |
+| `PUID` | `0` (root) | Optional numeric user ID for the app and download processes inside Docker. |
+| `PGID` | `0` (root) | Optional numeric group ID for the app and download processes inside Docker. |
 | `TZ` | container default (UTC) | Timezone for schedules and timestamps. |
 | `PORT` | `3000` | Port the server listens on inside the container. |
 | `MAX_CONCURRENT_DOWNLOADS` | `2` | How many downloads run at once. |
@@ -390,7 +408,7 @@ Dependency updates are skipped while downloads are active, so they never interru
 
 **YouTube says "Sign in to confirm you're not a bot" or a video is unavailable** — add cookies (see [Site cookies](#site-cookies-youtube-twitch-and-others)) and update yt-dlp from Settings; switching to the Nightly channel often helps when YouTube changes something.
 
-**A URL to a local service is rejected** — that's the private-address guard. Set `ALLOW_LOCAL_URLS=1` if it's intentional.
+**A URL to a local service is rejected** — that's the private-address guard, which also checks hostname DNS answers. Set `ALLOW_LOCAL_URLS=1` if it's intentional.
 
 **A file won't play in the Library** — browsers can't play every format (for example `.ts` recordings, or some codecs inside `.mkv`). Use **Download file** and open it in VLC, or choose MP4 as the container for future downloads.
 

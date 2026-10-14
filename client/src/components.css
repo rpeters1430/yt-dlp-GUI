@@ -605,7 +605,7 @@ button.command-go { flex: none; }
 /* Up next */
 .up-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
   gap: 18px;
 }
 .up-card { min-width: 0; }
@@ -691,7 +691,7 @@ select.toolbar-select { height: 46px; background: var(--surface); }
 
 .library-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr));
   gap: 22px;
   align-items: start;
 }
@@ -1054,7 +1054,7 @@ input.extractor-search { width: 100%; margin-bottom: 14px; }
 /* Twitch                                                                 */
 /* ---------------------------------------------------------------------- */
 
-.lookup-row { display: flex; gap: 12px; }
+.lookup-row { display: flex; flex-wrap: wrap; gap: 12px; }
 .lookup-row input { flex: 1; min-width: 0; height: 52px; font-size: 15px; }
 .lookup-row button { flex: none; }
 .twitch-live { display: flex; flex-wrap: wrap; gap: 24px 28px; align-items: flex-start; }
@@ -1271,4 +1271,12 @@ button.more-by-item:hover:not(:disabled) { background: none; filter: brightness(
 .text-warning { color: var(--warning) !important; }
 @media (max-width: 760px) {
   .more-by { flex-basis: 100%; }
+}
+
+@media (max-width: 480px) {
+  .choice-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .card { padding: 16px; }
+  .lookup-row button { width: 100%; }
+  .album-title { font-size: clamp(28px, 8vw, 40px); }
+  .artist-hero-name { font-size: clamp(26px, 7vw, 36px); }
 }

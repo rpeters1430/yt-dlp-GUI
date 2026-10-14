@@ -1,11 +1,25 @@
 const crypto = require('crypto');
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const lidarr = require('../services/lidarr');
 const music = require('../services/music');
 const { requireAuth } = require('../auth');
 
 const router = express.Router();
 router.use(express.urlencoded({ extended: true }));
+
+// Caps failed API-key / password attempts on the Torznab, .torrent download, qBittorrent,
+// and SABnzbd endpoints: 20 failed attempts per 15 minutes per IP. Legitimate requests
+// aren't counted (skipSuccessfulRequests) so normal Lidarr polling is never throttled.
+const apiKeyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  requestWasSuccessful: (_req, res) => res.statusCode < 400 && !res.locals?.authFailed,
+  message: { error: 'Too many failed authentication attempts. Try again later.' },
+});
 
 // Helper to determine the host URL from request
 function getHostUrl(req) {
@@ -30,6 +44,7 @@ async function handleTorznabRequest(req, res) {
   const apikey = params.apikey || getApiKey(req);
 
   if (!lidarr.validateTorznabApiKey(apikey)) {
+    res.locals.authFailed = true;
     res.set('Content-Type', 'application/xml');
     return res.status(401).send(`<?xml version="1.0" encoding="UTF-8"?>
 <error code="100" description="Invalid or missing API Key"/>`);
@@ -77,14 +92,15 @@ async function handleTorznabRequest(req, res) {
   return t ? res.send('<error code="202" description="No such function"/>') : res.send(lidarr.getCapsXml());
 }
 
-router.get('/torznab', handleTorznabRequest);
+router.get('/torznab', apiKeyLimiter, handleTorznabRequest);
 
 // -------------------------------------------------------------
 // Torrent File Download Endpoint
 // Called by Lidarr when downloading the .torrent file
 // -------------------------------------------------------------
-router.get('/download', (req, res) => {
+router.get('/download', apiKeyLimiter, (req, res) => {
   if (!lidarr.validateTorznabApiKey(getApiKey(req))) {
+    res.locals.authFailed = true;
     return res.status(401).send('Invalid or missing API Key');
   }
   const { type = 'album', id, artist, album, track } = req.query;
@@ -206,9 +222,10 @@ function getQbitSid(req) {
 // auth check below so /api/v2/auth/login still reaches the login route.
 qbitRouter.use('/api/v2', qbitRouter);
 
-qbitRouter.post('/auth/login', (req, res) => {
+qbitRouter.post('/auth/login', apiKeyLimiter, (req, res) => {
   const password = req.body?.password || req.query?.password || '';
   if (!lidarr.validateTorznabApiKey(password)) {
+    res.locals.authFailed = true;
     // Real qBittorrent answers a bad login with 200 "Fails.", which Lidarr reports as an auth error.
     return res.type('text/plain').status(200).send('Fails.');
   }
@@ -457,6 +474,7 @@ async function handleSabRequest(req, res) {
   const mode = (req.query.mode || req.body?.mode || '').toLowerCase();
 
   if (!lidarr.validateTorznabApiKey(getApiKey(req))) {
+    res.locals.authFailed = true;
     // SABnzbd's own wording, which Lidarr recognises as an authentication failure.
     return res.status(200).json({ status: false, error: 'API Key Incorrect' });
   }
@@ -524,18 +542,18 @@ async function handleSabRequest(req, res) {
   res.json({ status: false, error: 'Unsupported SABnzbd operation; configure the qBittorrent adapter' });
 }
 
-router.get('/sab/api', handleSabRequest);
-router.post('/sab/api', handleSabRequest);
-router.get('/sab', handleSabRequest);
-router.post('/sab', handleSabRequest);
+router.get('/sab/api', apiKeyLimiter, handleSabRequest);
+router.post('/sab/api', apiKeyLimiter, handleSabRequest);
+router.get('/sab', apiKeyLimiter, handleSabRequest);
+router.post('/sab', apiKeyLimiter, handleSabRequest);
 
 // Handle direct /api/lidarr?t=... or mode=... calls
 router.use((req, res, next) => {
   if (req.query.t) {
-    return handleTorznabRequest(req, res);
+    return apiKeyLimiter(req, res, () => handleTorznabRequest(req, res));
   }
   if (req.query.mode || req.body?.mode) {
-    return handleSabRequest(req, res);
+    return apiKeyLimiter(req, res, () => handleSabRequest(req, res));
   }
   next();
 });
@@ -636,4 +654,3 @@ router.post('/download-wanted', requireAuth, async (req, res) => {
 
 router.qbitRouter = qbitRouter;
 module.exports = router;
-

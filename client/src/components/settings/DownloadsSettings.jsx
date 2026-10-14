@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Bookmark, Copy } from 'lucide-react';
 import { api } from '../../api.js';
 import { useStaging } from '../../context/StagingContext.jsx';
 import { useToast } from '../../context/ToastContext.jsx';
@@ -19,18 +20,24 @@ export function SettingRow({ label, description, children }) {
 
 const QUALITIES = [['', 'Best'], ['2160', '2160p'], ['1440', '1440p'], ['1080', '1080p'], ['720', '720p'], ['480', '480p']];
 const CHUNKS = [[0, 'Off'], [15, '15 min'], [30, '30 min'], [60, '60 min'], [120, '120 min']];
+const RATE_LIMITS = [['', 'Unlimited'], ['2M', '2 MB/s'], ['5M', '5 MB/s'], ['10M', '10 MB/s'], ['25M', '25 MB/s'], ['50M', '50 MB/s']];
+const SLEEP_INTERVALS = [[0, 'Off'], [2, '2–4 sec'], [5, '5–10 sec'], [10, '10–20 sec']];
 
 export default function DownloadsSettings() {
   const { defaults, setDefaults } = useStaging();
   const toast = useToast();
   const [concurrent, setConcurrent] = useState(null);
   const [chunkMins, setChunkMins] = useState(null);
+  const [limitRate, setLimitRate] = useState('');
+  const [sleepInterval, setSleepInterval] = useState(0);
   const [autoAnalyze, setAutoAnalyze] = useState(getAutoAnalyzeOnPaste);
 
   useEffect(() => {
     api.getSettings().then((s) => {
       setConcurrent(s.max_concurrent_downloads || 2);
       setChunkMins(parseInt(s.default_live_chunk_mins, 10) || 0);
+      setLimitRate(s.download_limit_rate || '');
+      setSleepInterval(parseInt(s.download_sleep_interval, 10) || 0);
     }).catch(() => {});
   }, []);
 
@@ -61,8 +68,23 @@ export default function DownloadsSettings() {
     });
   }
 
+  function changeLimitRate(value) {
+    const prev = limitRate;
+    setLimitRate(value);
+    save({ download_limit_rate: value }, value ? `Bandwidth capped at ${value}/s per download` : 'Bandwidth limit removed', () => setLimitRate(prev));
+  }
+
+  function changeSleepInterval(value) {
+    const prev = sleepInterval;
+    setSleepInterval(value);
+    save({ download_sleep_interval: String(value) }, value ? `Added ${value}–${value * 2}s delay between downloads` : 'Download sleep delay disabled', () => setSleepInterval(prev));
+  }
+
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const bookmarkletHref = `javascript:void(window.open('${origin}/?url='+encodeURIComponent(location.href),'_blank','noopener'))`;
+
   const audio = !!defaults.audioOnly;
-  const types = audio ? ['m4a', 'mp3', 'opus', 'flac'] : ['mp4', 'mkv'];
+  const types = audio ? ['m4a', 'mp3', 'opus', 'flac'] : ['mp4', 'mkv', 'webm'];
 
   return (
     <div className="setting-rows">
@@ -96,6 +118,17 @@ export default function DownloadsSettings() {
           {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
       </SettingRow>
+      <SettingRow label="Bandwidth limit per download" description="Cap per-job speed (--limit-rate) so downloads don't saturate your LAN">
+        <select className="value-chip" value={limitRate} onChange={(e) => changeLimitRate(e.target.value)} aria-label="Bandwidth limit">
+          {RATE_LIMITS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          {limitRate && !RATE_LIMITS.some(([v]) => v === limitRate) && <option value={limitRate}>{limitRate}</option>}
+        </select>
+      </SettingRow>
+      <SettingRow label="Rate-limit protection delay" description="Add a jittered pause (--sleep-interval) before downloads to reduce YouTube 429s">
+        <select className="value-chip" value={sleepInterval} onChange={(e) => changeSleepInterval(Number(e.target.value))} aria-label="Rate-limit protection delay">
+          {SLEEP_INTERVALS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+      </SettingRow>
       <SettingRow label="Default live chunk length" description="Split long live recordings into parts">
         <select className="value-chip" value={chunkMins ?? ''} disabled={chunkMins === null} onChange={(e) => changeChunks(Number(e.target.value))} aria-label="Default live chunk length">
           {chunkMins === null && <option value="">…</option>}
@@ -121,6 +154,36 @@ export default function DownloadsSettings() {
           checked={autoAnalyze}
           onChange={(v) => { setAutoAnalyze(v); setAutoAnalyzeOnPaste(v); }}
         />
+      </SettingRow>
+      <SettingRow
+        label="One-click browser bookmarklet & Android Share"
+        description="Drag 'Send to yt-dlp GUI' to your bookmarks bar, or install this web app on Android to share links directly from the native Share sheet."
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <a
+            href={bookmarkletHref}
+            onClick={(e) => {
+              e.preventDefault();
+              toast('Drag this button to your browser bookmarks bar');
+            }}
+            className="btn-secondary btn-sm"
+            title="Drag to your bookmarks bar"
+          >
+            <Bookmark size={13} /> Send to yt-dlp GUI
+          </a>
+          <button
+            type="button"
+            className="btn-ghost btn-sm"
+            onClick={() => {
+              navigator.clipboard?.writeText(bookmarkletHref)
+                .then(() => toast('Copied bookmarklet URL'))
+                .catch(() => toast('Could not copy bookmarklet', { error: true }));
+            }}
+            title="Copy bookmarklet script"
+          >
+            <Copy size={13} /> Copy
+          </button>
+        </div>
       </SettingRow>
     </div>
   );

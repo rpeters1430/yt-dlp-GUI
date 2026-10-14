@@ -201,7 +201,25 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
       // A tab switched off stops queueing, including its pending backlog and retries.
       const selectedTabs = scanSources(watch).some((src) => src.tab) ? watchContentTypes(watch) : null;
       const candidates = repository.queueCandidates(watch.id, repository.now(), budget, { tabs: selectedTabs });
-      const queued = queueItems(watch, candidates, runId);
+      let lowDiskGuardError = null;
+      let canQueue = true;
+      if (candidates.length > 0) {
+        try {
+          const cleanup = require('../cleanup');
+          let storage = cleanup.getStorageStats ? cleanup.getStorageStats() : null;
+          if (storage && storage.belowMinFreeDisk) {
+            log(watch, runId, `free disk space (${storage.freeGb} GB) is below minimum guard (${storage.minFreeDiskGb} GB); triggering auto-delete check`);
+            await cleanup.runCleanup().catch(() => {});
+            storage = cleanup.getStorageStats ? cleanup.getStorageStats() : null;
+          }
+          if (storage && storage.belowMinFreeDisk) {
+            canQueue = false;
+            lowDiskGuardError = `Paused queueing: free disk space (${storage.freeGb} GB) is below minimum guard (${storage.minFreeDiskGb} GB)`;
+            log(watch, runId, lowDiskGuardError);
+          }
+        } catch (_) {}
+      }
+      const queued = canQueue ? queueItems(watch, candidates, runId) : [];
 
       const agg = repository.aggregateWatch(watch.id);
       // A full backfill that hit its limit is reported like a partial scan, so the Watch card
@@ -226,9 +244,11 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
       repository.updateWatchStatus(watch.id, {
         last_checked_at: repository.nowSql(),
         last_status: 'ok',
-        last_error: backfillTruncated
-          ? `Only the newest ${FULL_BACKFILL_LIMIT} videos were downloaded; older ones were skipped`
-          : (partial ? 'Scan limit reached before known content' : null),
+        last_error: lowDiskGuardError
+          ? lowDiskGuardError
+          : (backfillTruncated
+            ? `Only the newest ${FULL_BACKFILL_LIMIT} videos were downloaded; older ones were skipped`
+            : (partial ? 'Scan limit reached before known content' : null)),
         last_new_count: counts.new,
         thumbnail: latest.thumbnail || extractThumbnail(scan.info),
         channel_name: latest.channel_name || scan.info.uploader || scan.info.channel || null,

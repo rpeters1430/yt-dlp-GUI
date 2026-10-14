@@ -231,6 +231,8 @@ export default function Settings({ username, onLogout }) {
         jellyfinEnabled: !!cleanupSettings.jellyfinEnabled,
         jellyfinUrl: cleanupSettings.jellyfinUrl || '',
         jellyfinUserId: cleanupSettings.jellyfinUserId || '',
+        keepRecentPerWatch: parseInt(cleanupSettings.keepRecentPerWatch, 10) || 0,
+        minFreeDiskGb: Math.max(0, parseFloat(cleanupSettings.minFreeDiskGb) || 0),
       };
       if (jellyfinApiKeyInput) payload.jellyfinApiKey = jellyfinApiKeyInput;
       const updated = await api.updateCleanupSettings(payload);
@@ -707,6 +709,28 @@ export default function Settings({ username, onLogout }) {
                 value={cleanupSettings.jellyfinUserId || ''}
                 onChange={(e) => updateCleanupField('jellyfinUserId', e.target.value)}
               />
+            </label>
+
+            {cleanupSettings.storage && (
+              <div className="notice" style={{ marginBottom: 8 }}>
+                <strong>Disk volume ({cleanupSettings.storage.path}):</strong> {cleanupSettings.storage.freeGb} GB free ({cleanupSettings.storage.usedPercent}% used)
+              </div>
+            )}
+
+            <label className="field-label">
+              Minimum free disk space guard (GB)
+              <input
+                type="number"
+                min="0"
+                step="0.5"
+                style={{ width: '90px' }}
+                value={cleanupSettings.minFreeDiskGb ?? 0}
+                onChange={(e) => updateCleanupField('minFreeDiskGb', e.target.value)}
+              />
+              <span className="muted small">
+                If free space on your media volume drops below this threshold, scheduled Watch checks
+                trigger an automatic cleanup pass and pause queueing until space is freed. 0 disables this guard.
+              </span>
             </label>
 
             <label className="field-label">

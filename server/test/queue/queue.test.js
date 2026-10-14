@@ -52,7 +52,34 @@ test('socket updates leave out the log except when it changed, and counts follow
 
   const counts = q.io.of('jobs:counts');
   assert.ok(counts.length >= 2);
-  assert.deepEqual(counts.at(-1), { queued: 0, downloading: 0, completed: 1, failed: 0 });
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(counts.at(-1)).filter(([key]) => ['queued', 'downloading', 'completed', 'failed'].includes(key))),
+    { queued: 0, downloading: 0, completed: 1, failed: 0 }
+  );
+  assert.equal(counts.at(-1).paused, false);
+});
+
+test('a paused queue holds jobs and prioritizing a job moves it ahead when resumed', async (t) => {
+  const q = loadQueue(t, { maxConcurrent: 1 });
+  q.queue.init(q.io);
+  const gate = deferred();
+  q.state.download = () => gate.promise;
+
+  assert.equal(q.queue.pauseQueue(), true);
+  const first = q.queue.enqueue(URL_A);
+  const second = q.queue.enqueue(URL_B);
+  const third = q.queue.enqueue(URL_C);
+  assert.equal(q.state.downloadCalls.length, 0);
+  assert.equal(q.queue.prioritizeJob(third), true);
+  assert.equal(q.queue.resumeQueue(), false);
+
+  await waitFor(() => q.state.downloadCalls.length === 1, { label: 'prioritized job to start' });
+  assert.equal(q.state.downloadCalls[0].url, URL_C);
+  assert.equal(statusOf(q, first), 'queued');
+  assert.equal(statusOf(q, second), 'queued');
+  assert.equal(statusOf(q, third), 'downloading');
+  gate.resolve({ filepath: '/downloads/prioritized.mp4' });
+  await waitFor(() => finished(q, third));
 });
 
 test('a failed download is marked failed with the error and a failure notification', async (t) => {
@@ -319,7 +346,13 @@ test('getStatusCounts counts every status across the whole history', (t) => {
   insertJob(q.db, { id: '2', status: 'failed' });
   insertJob(q.db, { id: '3', status: 'failed' });
   insertJob(q.db, { id: '4', status: 'deleted' });
-  assert.deepEqual(q.queue.getStatusCounts(), { queued: 0, downloading: 0, completed: 1, failed: 2, deleted: 1 });
+  const counts = q.queue.getStatusCounts();
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(counts).filter(([key]) => ['queued', 'downloading', 'completed', 'failed', 'deleted'].includes(key))),
+    { queued: 0, downloading: 0, completed: 1, failed: 2, deleted: 1 }
+  );
+  assert.equal(counts.paused, false);
+  assert.ok(counts.storage === null || typeof counts.storage.freeGb === 'number');
 });
 
 test('a watch-linked job reports its status to the watch listener', async (t) => {
@@ -361,4 +394,27 @@ test('a music track failing for any other reason does not try its other matches'
   const id = q.queue.enqueue(URL_A, { audioOnly: true, optionsJson: { fallbackUrls: [URL_B] } });
   await waitFor(() => statusOf(q, id) === 'failed', { label: 'job to fail' });
   assert.deepEqual(q.state.downloadCalls.map((c) => c.url), [URL_A]);
+});
+
+test('removeJob with deleteFile removes the media file, sidecars, and split parts from disk', (t) => {
+  const q = loadQueue(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-del-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const part1 = path.join(dir, 'video_part1.mp4');
+  const part2 = path.join(dir, 'video_part2.mp4');
+  const nfo1 = path.join(dir, 'video_part1.nfo');
+  const poster1 = path.join(dir, 'video_part1.jpg');
+  for (const f of [part1, part2, nfo1, poster1]) fs.writeFileSync(f, 'x');
+
+  q.db.prepare(`
+    INSERT INTO downloads (id, url, status, title, filepath, split_parts)
+    VALUES ('del-1', ?, 'completed', 'Split stream', ?, ?)
+  `).run(URL_A, part1, JSON.stringify([part1, part2]));
+
+  assert.equal(q.queue.removeJob('del-1', { deleteFile: true }), true);
+  assert.equal(q.queue.getJob('del-1'), undefined);
+  for (const f of [part1, part2, nfo1, poster1]) {
+    assert.equal(fs.existsSync(f), false, `${f} should be deleted`);
+  }
 });

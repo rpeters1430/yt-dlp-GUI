@@ -114,9 +114,11 @@ function getTwitchAuthTokenMasked() {
 const PRIVATE_COOKIES_ROOT = path.join(os.tmpdir(), 'ytdlp-gui-cookies');
 
 function removePrivateCookieDir(dir) {
-  fs.rm(dir, { recursive: true, force: true, maxRetries: 3 }, (err) => {
-    if (err) console.error(`[ytdlp] Failed to remove private cookies copy ${dir}: ${err.message}`);
-  });
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  } catch (err) {
+    console.error(`[ytdlp] Failed to remove private cookies copy ${dir}: ${err.message}`);
+  }
 }
 
 // Runs once at module load, i.e. at server startup, before the queue resumes any job. Any

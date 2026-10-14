@@ -3,8 +3,12 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const ytdlp = require('./ytdlp');
-const queue = require('./queue');
-const db = require('../db');
+function getQueue() {
+  return require('./queue');
+}
+function getDb() {
+  return require('../db');
+}
 const { resolveMusicDir } = require('./ytdlpPaths');
 
 // Only replacing path separators/reserved characters isn't enough: a name that sanitizes to
@@ -443,8 +447,36 @@ async function matchTrackToYouTube(track) {
   };
 }
 
+// Resolves an artist name to a canonical YouTube channel URL (preferring their Topic or
+// official channel) so Music Watches use a valid yt-dlp channel URL instead of a /results?search_query= page.
+async function resolveArtistChannel(artistName) {
+  const artist = String(artistName || '').trim();
+  if (!artist) throw new Error('Artist name is required');
+
+  const queries = [`${artist} - Topic`, `${artist} official`];
+  const results = (await Promise.all(
+    queries.map((q) => ytdlp.searchYouTube(q, 5).catch(() => []))
+  )).flat();
+
+  const artLower = artist.toLowerCase();
+  const topicMatch = results.find((r) => r && r.channelUrl && (r.uploader || '').toLowerCase() === `${artLower} - topic`);
+  if (topicMatch) return { url: topicMatch.channelUrl, uploader: topicMatch.uploader, isTopic: true };
+
+  const anyTopic = results.find((r) => r && r.channelUrl && (r.uploader || '').toLowerCase().includes('topic') && (r.uploader || '').toLowerCase().includes(artLower));
+  if (anyTopic) return { url: anyTopic.channelUrl, uploader: anyTopic.uploader, isTopic: true };
+
+  const exactUploader = results.find((r) => r && r.channelUrl && (r.uploader || '').toLowerCase() === artLower);
+  if (exactUploader) return { url: exactUploader.channelUrl, uploader: exactUploader.uploader, isTopic: false };
+
+  const firstWithChannel = results.find((r) => r && r.channelUrl);
+  if (firstWithChannel) return { url: firstWithChannel.channelUrl, uploader: firstWithChannel.uploader || artist, isTopic: false };
+
+  const handle = artist.replace(/[^a-zA-Z0-9._-]/g, '');
+  return { url: `https://www.youtube.com/@${handle || 'music'}`, uploader: artist, isTopic: false };
+}
+
 async function inspectUrl(url) {
-  ytdlp.assertPublicUrl(url);
+  await ytdlp.assertPublicUrlResolved(url);
   const info = await ytdlp.getInfo(url, { flatPlaylist: true });
 
   const entries = [];
@@ -631,7 +663,7 @@ async function tagMusicFile(filepath, meta = {}) {
 
 function getMusicSettings() {
   const keys = ['music_folder', 'music_format', 'music_quality', 'music_save_cover'];
-  const rows = db.prepare(`SELECT key, value FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).all(...keys);
+  const rows = getDb().prepare(`SELECT key, value FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).all(...keys);
   const map = {};
   for (const r of rows) map[r.key] = r.value;
 
@@ -646,7 +678,7 @@ function getMusicSettings() {
 }
 
 function updateMusicSettings({ musicFolder, musicFormat, musicQuality, saveCover }) {
-  const upsert = db.prepare(`
+  const upsert = getDb().prepare(`
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `);
@@ -666,6 +698,7 @@ async function enqueueMusicDownload({
   musicFolder = 'Music',
   saveCover = true,
   extraOptions = {},
+  queueImpl = null,
 }) {
   let youtubeUrl = track.youtubeUrl;
   let matchedInfo;
@@ -702,7 +735,8 @@ async function enqueueMusicDownload({
 
   const albumArtist = track.albumArtist || track.artist;
 
-  const jobId = queue.enqueue(youtubeUrl, {
+  const activeQueue = queueImpl || getQueue();
+  const jobId = activeQueue.enqueue(youtubeUrl, {
     audioOnly: true,
     container: audioFormat || 'mp3',
     quality: null,
@@ -752,6 +786,7 @@ module.exports = {
   searchTracks,
   matchTrackToYouTube,
   getMatchCandidates,
+  resolveArtistChannel,
   inspectUrl,
   saveCoverArt,
   tagMusicFile,
