@@ -1,6 +1,33 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildMusicTags, buildMetadataBlockPicture, searchAlbums } = require('./music');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execFileSync } = require('child_process');
+
+const testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-music-test-'));
+process.env.CONFIG_DIR = path.join(testDir, 'config');
+process.env.DOWNLOAD_DIR = path.join(testDir, 'downloads');
+process.env.MUSIC_DIR = path.join(testDir, 'music');
+process.on('exit', () => {
+  try { fs.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
+});
+
+const ytdlp = require('./ytdlp');
+const {
+  buildMusicTags,
+  buildMetadataBlockPicture,
+  searchAlbums,
+  scoreCandidate,
+  getAlbumDetails,
+  resolveArtistChannel,
+  getMatchCandidates,
+  matchTrackToYouTube,
+  tagMusicFile,
+  enqueueMusicDownload,
+  inspectUrl,
+  sanitizeFilename,
+} = require('./music');
 
 test('buildMusicTags maps iTunes metadata to ffmpeg tag names and skips blanks', () => {
   assert.deepEqual(buildMusicTags({
@@ -40,7 +67,6 @@ test('searchAlbums can return keyword results without searching or enriching an 
 });
 
 test('scoreCandidate matches flag words whole and penalises other songs', () => {
-  const { scoreCandidate } = require('./music');
   const studio = scoreCandidate({ title: 'Life Goes On', uploader: 'Oliver Tree - Topic', duration: 160 }, 'Oliver Tree', 'Life Goes On', 160);
   const live = scoreCandidate({ title: 'Life Goes On (Live)', uploader: 'Oliver Tree', duration: 160 }, 'Oliver Tree', 'Life Goes On', 160);
   assert.ok(studio > live);
@@ -56,7 +82,6 @@ test('scoreCandidate matches flag words whole and penalises other songs', () => 
 });
 
 test('getAlbumDetails requests all multi-disc tracks and rejects truncated metadata', async (t) => {
-  const { getAlbumDetails } = require('./music');
   let count = 60;
   t.mock.method(global, 'fetch', async (url) => {
     assert.match(url, /entity=song&limit=200/);
@@ -75,9 +100,6 @@ test('getAlbumDetails requests all multi-disc tracks and rejects truncated metad
 });
 
 test('resolveArtistChannel prefers Topic channel URL and falls back to @handle URL', async (t) => {
-  const ytdlp = require('./ytdlp');
-  const { resolveArtistChannel } = require('./music');
-
   t.mock.method(ytdlp, 'searchYouTube', async (query) => {
     if (query.includes('Topic')) {
       return [
@@ -104,4 +126,120 @@ test('resolveArtistChannel prefers Topic channel URL and falls back to @handle U
   const fallback = await resolveArtistChannel('Some Unknown Band!');
   assert.equal(fallback.url, 'https://www.youtube.com/@SomeUnknownBand');
   assert.equal(fallback.isTopic, false);
+});
+
+test('getMatchCandidates and matchTrackToYouTube rank Topic matches first and include fallbackUrls', async (t) => {
+  t.mock.method(ytdlp, 'searchYouTube', async (query) => {
+    if (query.includes('topic')) {
+      return [
+        { id: 'top1', url: 'https://www.youtube.com/watch?v=top1', title: 'Drive (Provided to YouTube)', uploader: 'Incubus - Topic', duration: 232 },
+        { id: 'mv1', url: 'https://www.youtube.com/watch?v=mv1', title: 'Incubus - Drive (Official Music Video)', uploader: 'IncubusVEVO', duration: 235 },
+      ];
+    }
+    return [
+      { id: 'top1', url: 'https://www.youtube.com/watch?v=top1', title: 'Drive (Provided to YouTube)', uploader: 'Incubus - Topic', duration: 232 },
+      { id: 'aud1', url: 'https://www.youtube.com/watch?v=aud1', title: 'Incubus - Drive (Official Audio)', uploader: 'Incubus', duration: 232 },
+      { id: 'kara1', url: 'https://www.youtube.com/watch?v=kara1', title: 'Drive Karaoke Instrumental', uploader: 'SingKing', duration: 232 },
+    ];
+  });
+
+  const candidates = await getMatchCandidates({ artist: 'Incubus', title: 'Drive', duration: 232 }, 5);
+  assert.equal(candidates[0].videoId, 'top1');
+  assert.equal(candidates[0].isTopic, true);
+  assert.equal(candidates[0].durationDiff, 0);
+
+  const match = await matchTrackToYouTube({ artist: 'Incubus', title: 'Drive', duration: 232 });
+  assert.equal(match.videoId, 'top1');
+  assert.ok(match.fallbackUrls.includes('https://www.youtube.com/watch?v=aud1'));
+  assert.ok(!match.fallbackUrls.includes('https://www.youtube.com/watch?v=kara1'));
+});
+
+test('tagMusicFile writes ffmetadata tags into MP3 and Opus files via ffmpeg', async (t) => {
+  const workDir = fs.mkdtempSync(path.join(testDir, 'tag-'));
+  const mp3Path = path.join(workDir, 'sample.mp3');
+  execFileSync('ffmpeg', [
+    '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono', '-t', '0.2', '-q:a', '9', mp3Path,
+  ], { stdio: 'ignore' });
+
+  t.mock.method(global, 'fetch', async () => ({ ok: false, status: 404 }));
+
+  const res = await tagMusicFile(mp3Path, {
+    title: 'Pardon Me',
+    artist: 'Incubus',
+    album: 'Make Yourself',
+    trackNumber: 2,
+    totalTracks: 13,
+    year: '1999',
+    genre: 'Alternative Rock',
+  });
+  assert.equal(res.tagged, true);
+
+  const probeOut = execFileSync('ffprobe', [
+    '-v', 'quiet', '-print_format', 'json', '-show_format', mp3Path,
+  ], { encoding: 'utf8' });
+  const tags = JSON.parse(probeOut).format.tags || {};
+  assert.equal(tags.title || tags.TITLE, 'Pardon Me');
+  assert.equal(tags.artist || tags.ARTIST, 'Incubus');
+  assert.equal(tags.album || tags.ALBUM, 'Make Yourself');
+});
+
+test('enqueueMusicDownload sanitizes path traversal and formats disc-track output templates', async () => {
+  assert.equal(sanitizeFilename('..'), 'Unknown');
+  assert.equal(sanitizeFilename('AC/DC: Live*'), 'AC_DC_ Live_');
+
+  const enqueued = [];
+  const fakeQueue = {
+    enqueue: (url, opts) => {
+      enqueued.push({ url, opts });
+      return 'job-music-1';
+    },
+  };
+
+  const result = await enqueueMusicDownload({
+    track: {
+      title: 'Wish You Were Here',
+      artist: 'Incubus',
+      albumArtist: 'Incubus',
+      album: 'Morning View',
+      trackNumber: 3,
+      totalTracks: 13,
+      discNumber: 2,
+      totalDiscs: 2,
+      year: '2001',
+      youtubeUrl: 'https://www.youtube.com/watch?v=wish123',
+    },
+    audioFormat: 'opus',
+    audioQuality: '160k',
+    musicFolder: '',
+    saveCover: false,
+    queueImpl: fakeQueue,
+  });
+
+  assert.equal(result.jobId, 'job-music-1');
+  assert.equal(enqueued.length, 1);
+  assert.equal(enqueued[0].url, 'https://www.youtube.com/watch?v=wish123');
+  assert.equal(enqueued[0].opts.audioOnly, true);
+  assert.equal(enqueued[0].opts.container, 'opus');
+  assert.match(enqueued[0].opts.optionsJson.outputTemplate, /Incubus\/Morning View\/2-03 - Wish You Were Here\.%\(ext\)s$/);
+  assert.equal(enqueued[0].opts.optionsJson.isMusicDownload, true);
+  assert.equal(enqueued[0].opts.optionsJson.musicMetadata.title, 'Wish You Were Here');
+});
+
+test('inspectUrl rejects private/loopback URLs and flattens playlist entries', async (t) => {
+  await assert.rejects(() => inspectUrl('http://127.0.0.1:8080/playlist'), /local\/private/);
+
+  t.mock.method(ytdlp, 'getInfo', async () => ({
+    id: 'PL999',
+    title: 'Test Album Playlist',
+    uploader: 'Artist Channel',
+    entries: [
+      { id: 't1', title: 'Track 1', duration: 180, url: 'https://www.youtube.com/watch?v=t1' },
+      { id: 't2', title: 'Track 2', duration: 200, url: 'https://www.youtube.com/watch?v=t2' },
+    ],
+  }));
+
+  const inspected = await inspectUrl('https://www.youtube.com/playlist?list=PL999');
+  assert.equal(inspected.isPlaylist, true);
+  assert.equal(inspected.trackCount, 2);
+  assert.equal(inspected.entries[0].title, 'Track 1');
 });

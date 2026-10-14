@@ -1,5 +1,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-test-config-'));
+process.env.CONFIG_DIR = testConfigDir;
+process.on('exit', () => {
+  try { fs.rmSync(testConfigDir, { recursive: true, force: true }); } catch (_) {}
+});
+
 const {
   isPlaylistUrl, getDownloadIdleTimeoutMs, clearRecentCaches, normalizeUrl, isNotLiveError, parseNotLiveError,
 } = require('./ytdlp');

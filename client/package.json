@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "lint": "eslint . --max-warnings 0"
+    "lint": "eslint . --max-warnings 0",
+    "test": "node --test src/outputTemplatePreview.test.js"
   },
   "dependencies": {
     "lucide-react": "^1.0.0",

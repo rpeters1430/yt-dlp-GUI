@@ -1,5 +1,3 @@
-const db = require('../db');
-const queue = require('./queue');
 const ytdlp = require('./ytdlp');
 
 const YTDLP_UPDATE_CRON = process.env.YTDLP_UPDATE_CRON || '0 3 * * *';
@@ -11,22 +9,35 @@ let ytdlpUpdateRunning = false;
 let ffmpegUpdateRunning = false;
 let quickjsUpdateRunning = false;
 
+function getDb() {
+  return require('../db');
+}
+
+function getQueue() {
+  return require('./queue');
+}
+
 function cronOptions() {
   return process.env.TZ ? { timezone: process.env.TZ } : undefined;
 }
 
-function selectedYtdlpChannel() {
+function selectedYtdlpChannel(deps = {}) {
+  if (typeof deps.getChannel === 'function') return deps.getChannel();
+  const db = deps.db || getDb();
   const row = db.prepare("SELECT value FROM settings WHERE key = 'ytdlpChannel'").get();
   return row && row.value === 'nightly' ? 'nightly' : 'stable';
 }
 
-function downloadsAreActive() {
+function downloadsAreActive(deps = {}) {
+  if (typeof deps.getActiveCount === 'function') return deps.getActiveCount() > 0;
+  const queue = deps.queue || getQueue();
   return queue.getActiveCount && queue.getActiveCount() > 0;
 }
 
-async function updateNightlyYtdlp(reason = 'scheduled') {
-  if (selectedYtdlpChannel() !== 'nightly') return { skipped: 'stable-channel' };
-  if (downloadsAreActive()) {
+async function updateNightlyYtdlp(reason = 'scheduled', deps = {}) {
+  const ytdlpSvc = deps.ytdlp || ytdlp;
+  if (selectedYtdlpChannel(deps) !== 'nightly') return { skipped: 'stable-channel' };
+  if (downloadsAreActive(deps)) {
     console.log(`[dependency-updater] Skipping ${reason} yt-dlp nightly check while downloads are active`);
     return { skipped: 'active-downloads' };
   }
@@ -34,9 +45,9 @@ async function updateNightlyYtdlp(reason = 'scheduled') {
 
   ytdlpUpdateRunning = true;
   try {
-    const before = (await ytdlp.getVersions()).ytdlp;
-    await ytdlp.updateYtdlp('nightly');
-    const after = (await ytdlp.getVersions()).ytdlp;
+    const before = (await ytdlpSvc.getVersions()).ytdlp;
+    await ytdlpSvc.updateYtdlp('nightly');
+    const after = (await ytdlpSvc.getVersions()).ytdlp;
     console.log(`[dependency-updater] yt-dlp nightly check complete (${before || 'unknown'} -> ${after || 'unknown'})`);
     return { updated: before !== after, before, after };
   } finally {
@@ -44,8 +55,9 @@ async function updateNightlyYtdlp(reason = 'scheduled') {
   }
 }
 
-async function updateFfmpegNightly() {
-  if (downloadsAreActive()) {
+async function updateFfmpegNightly(deps = {}) {
+  const ytdlpSvc = deps.ytdlp || ytdlp;
+  if (downloadsAreActive(deps)) {
     console.log('[dependency-updater] Skipping FFmpeg nightly check while downloads are active');
     return { skipped: 'active-downloads' };
   }
@@ -53,7 +65,7 @@ async function updateFfmpegNightly() {
 
   ffmpegUpdateRunning = true;
   try {
-    const result = await ytdlp.updateFfmpegIfAvailable();
+    const result = await ytdlpSvc.updateFfmpegIfAvailable();
     console.log(`[dependency-updater] FFmpeg nightly check complete (${result.updated ? 'updated' : 'already current'})`);
     return result;
   } finally {
@@ -61,8 +73,9 @@ async function updateFfmpegNightly() {
   }
 }
 
-async function updateQuickjsNightly() {
-  if (downloadsAreActive()) {
+async function updateQuickjsNightly(deps = {}) {
+  const ytdlpSvc = deps.ytdlp || ytdlp;
+  if (downloadsAreActive(deps)) {
     console.log('[dependency-updater] Skipping QuickJS nightly check while downloads are active');
     return { skipped: 'active-downloads' };
   }
@@ -70,7 +83,7 @@ async function updateQuickjsNightly() {
 
   quickjsUpdateRunning = true;
   try {
-    const result = await ytdlp.updateQuickjsIfAvailable();
+    const result = await ytdlpSvc.updateQuickjsIfAvailable();
     console.log(`[dependency-updater] QuickJS nightly check complete (${result.updated ? 'updated' : 'already current'})`);
     return result;
   } finally {

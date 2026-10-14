@@ -3,8 +3,12 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const ytdlp = require('./ytdlp');
-const queue = require('./queue');
-const db = require('../db');
+function getQueue() {
+  return require('./queue');
+}
+function getDb() {
+  return require('../db');
+}
 const { resolveMusicDir } = require('./ytdlpPaths');
 
 // Only replacing path separators/reserved characters isn't enough: a name that sanitizes to
@@ -659,7 +663,7 @@ async function tagMusicFile(filepath, meta = {}) {
 
 function getMusicSettings() {
   const keys = ['music_folder', 'music_format', 'music_quality', 'music_save_cover'];
-  const rows = db.prepare(`SELECT key, value FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).all(...keys);
+  const rows = getDb().prepare(`SELECT key, value FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).all(...keys);
   const map = {};
   for (const r of rows) map[r.key] = r.value;
 
@@ -674,7 +678,7 @@ function getMusicSettings() {
 }
 
 function updateMusicSettings({ musicFolder, musicFormat, musicQuality, saveCover }) {
-  const upsert = db.prepare(`
+  const upsert = getDb().prepare(`
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `);
@@ -694,6 +698,7 @@ async function enqueueMusicDownload({
   musicFolder = 'Music',
   saveCover = true,
   extraOptions = {},
+  queueImpl = null,
 }) {
   let youtubeUrl = track.youtubeUrl;
   let matchedInfo;
@@ -730,7 +735,8 @@ async function enqueueMusicDownload({
 
   const albumArtist = track.albumArtist || track.artist;
 
-  const jobId = queue.enqueue(youtubeUrl, {
+  const activeQueue = queueImpl || getQueue();
+  const jobId = activeQueue.enqueue(youtubeUrl, {
     audioOnly: true,
     container: audioFormat || 'mp3',
     quality: null,
