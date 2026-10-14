@@ -95,7 +95,7 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 - Syncs after each download, every 15 minutes, or on demand
 
 ### Maintenance & security
-- Bundles modern static FFmpeg builds from [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) and the [Deno](https://deno.com) runtime yt-dlp needs for YouTube, with one-click in-app updates
+- Bundles modern static FFmpeg builds from [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) and the [QuickJS-ng](https://github.com/quickjs-ng/quickjs) JavaScript runtime yt-dlp needs for YouTube, with one-click in-app updates
 - Choose the yt-dlp **stable** or **nightly** channel; the choice survives container recreation
 - Single admin login with rate-limited login attempts and session invalidation on password change
 - Cookie support for any site, for age-restricted, members-only, private, or subscriber-only content
@@ -203,7 +203,7 @@ docker compose up -d
 
 Your downloads, history, Watches, settings, and login all persist in `./downloads` and `./config`.
 
-yt-dlp, FFmpeg, and Deno can also be updated from **Settings** without pulling a new image, and are checked automatically overnight (see [Scheduled tasks](#scheduled-tasks)). If you'd rather have a reproducible yt-dlp version, pin it in the `Dockerfile` (`pip3 install yt-dlp==<version>`) and build locally — see [PyPI](https://pypi.org/project/yt-dlp/) for release history.
+yt-dlp, FFmpeg, and QuickJS-ng can also be updated from **Settings** without pulling a new image, and are checked automatically overnight (see [Scheduled tasks](#scheduled-tasks)). If you'd rather have a reproducible yt-dlp version, pin it in the `Dockerfile` (`pip3 install yt-dlp==<version>`) and build locally — see [PyPI](https://pypi.org/project/yt-dlp/) for release history.
 
 ## Configuration
 
@@ -242,7 +242,7 @@ Everything below is optional — set it in `.env` (or `environment:` in `docker-
 | `FFMPEG_DIR` | auto-detected | Directory containing `ffmpeg`/`ffprobe`, if not using the Settings-managed build. |
 | `YTDLP_UPDATE_CRON` | `0 3 * * *` | When to check for a new yt-dlp build (only when the saved channel is Nightly). |
 | `FFMPEG_UPDATE_CRON` | `30 3 * * *` | When to check for a new FFmpeg build. |
-| `DENO_UPDATE_CRON` | `45 3 * * *` | When to check for a new Deno release. |
+| `QUICKJS_UPDATE_CRON` | `45 3 * * *` | When to check for a new QuickJS-ng release. |
 | `DEPENDENCY_UPDATE_STARTUP_DELAY_MS` | `30000` | Delay before re-applying a saved Nightly yt-dlp channel after startup. |
 
 ### Paths (non-Docker use)
@@ -357,7 +357,7 @@ All times are server-local (set `TZ`).
 | Auto-delete | Nightly at 03:00 |
 | yt-dlp nightly check | 03:00 (`YTDLP_UPDATE_CRON`, Nightly channel only) |
 | FFmpeg check | 03:30 (`FFMPEG_UPDATE_CRON`) — downloaded only when the upstream build changes |
-| Deno check | 03:45 (`DENO_UPDATE_CRON`) |
+| QuickJS-ng check | 03:45 (`QUICKJS_UPDATE_CRON`) |
 
 Dependency updates are skipped while downloads are active, so they never interrupt a running job.
 
@@ -400,7 +400,7 @@ Dependency updates are skipped while downloads are active, so they never interru
 
 ## Local development (without Docker)
 
-Prerequisites: Node.js 24+, plus `yt-dlp`, `ffmpeg`, and `deno` installed and on your `PATH`.
+Prerequisites: Node.js 24+, plus `yt-dlp`, `ffmpeg`, and [QuickJS-ng](https://github.com/quickjs-ng/quickjs)'s `qjs` installed and on your `PATH`.
 
 ```bash
 # terminal 1: backend (http://localhost:3000)
@@ -431,7 +431,7 @@ server/
   src/index.js       Express + socket.io entry point
   src/routes/        REST API routes
   src/services/      yt-dlp runner, queue, scheduler, Jellyfin, music, cleanup, notifications, updaters
-Dockerfile           Multi-stage build: client bundle + runtime with yt-dlp, FFmpeg, Deno
+Dockerfile           Multi-stage build: client bundle + runtime with yt-dlp, FFmpeg, QuickJS-ng
 docker-compose.yml   Compose file (pulls the published image, or builds locally)
 ```
 
@@ -440,7 +440,7 @@ docker-compose.yml   Compose file (pulls the published image, or builds locally)
 - **Backend** — Node.js + Express, `better-sqlite3` for storage, `socket.io` for live progress, and `node-cron` for scheduling. yt-dlp is invoked via `child_process.spawn` rather than a library binding, so any yt-dlp version and any site it supports works without code changes.
 - **Frontend** — React (Vite), built and served as static files by the Express server: one container, one port.
 - **Library playback** — files are streamed from disk (with HTTP range requests, so seeking works) behind the same login as the rest of the app. Files are only served by download ID, from the path yt-dlp reported when the download finished — never from a path the browser supplies.
-- **YouTube JS runtime** — since yt-dlp 2025.11.12, full YouTube support requires an external JavaScript runtime to solve YouTube's JS challenges. The image ships [Deno](https://deno.com), yt-dlp's recommended runtime, for both amd64 and arm64. Outside Docker, install Deno yourself.
+- **YouTube JS runtime** — since yt-dlp 2025.11.12, full YouTube support requires an external JavaScript runtime to solve YouTube's JS challenges. The image builds [QuickJS-ng](https://github.com/quickjs-ng/quickjs) (`qjs`) from a pinned release for both amd64 and arm64, and the app runs yt-dlp with `--no-js-runtimes --js-runtimes quickjs` so it uses QuickJS-ng instead of yt-dlp's default, Deno. Outside Docker, put `qjs` on your `PATH` yourself.
 - **Watches** — every video a Watch discovers is a row in a ledger (`watch_items`) with its filter decision and download state, and every check is a row in `watch_runs`; download jobs link back to their item, so a failure is retried rather than forgotten. The first check on a new Watch only records existing videos; later checks auto-queue anything new. **Reset history** forgets everything except completed downloads and re-baselines on the next check.
 - **Auto-delete** — evaluates only Watch-downloaded videos; see [Jellyfin integration](#jellyfin-integration) for how "watched" is determined.
 - **Jellyfin playlist sync** — each Watch's playlist is created on first sync and its Jellyfin item ID is cached on the Watch, so renaming it doesn't create a duplicate.
@@ -453,4 +453,4 @@ docker-compose.yml   Compose file (pulls the published image, or builds locally)
 
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) — the downloader doing all the heavy lifting
 - [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) — static FFmpeg builds
-- [Deno](https://deno.com) — JavaScript runtime for YouTube challenge solving
+- [QuickJS-ng](https://github.com/quickjs-ng/quickjs) — JavaScript runtime for YouTube challenge solving

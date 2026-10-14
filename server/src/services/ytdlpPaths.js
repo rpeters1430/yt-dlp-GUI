@@ -13,7 +13,6 @@ const COOKIES_FILE = path.join(CONFIG_DIR, 'cookies.txt');
 const YTDLP_CACHE_DIR = path.join(CONFIG_DIR, 'yt-dlp-cache');
 const CUSTOM_BIN_DIR = path.join(CONFIG_DIR, 'bin');
 const FFMPEG_BUILD_MARKER = path.join(CONFIG_DIR, 'ffmpeg-build-id');
-const DENO_BUILD_MARKER = path.join(CONFIG_DIR, 'deno-build-id');
 
 // Ensure custom/persisted bin dir is in process.env.PATH if it exists
 if (fs.existsSync(CUSTOM_BIN_DIR)) {
@@ -33,12 +32,14 @@ function resolveMusicDir(folder) {
   return path.isAbsolute(value) ? value : path.join(DOWNLOAD_DIR, value);
 }
 
-function getDenoBin() {
-  const binName = process.platform === 'win32' ? 'deno.exe' : 'deno';
+// QuickJS-ng's CLI binary, `qjs`: the copy installed by the in-app updater if there is one,
+// else whatever is on PATH (the image's baseline in /usr/local/bin).
+function getQuickjsBin() {
+  const binName = process.platform === 'win32' ? 'qjs.exe' : 'qjs';
   if (fs.existsSync(path.join(CUSTOM_BIN_DIR, binName))) {
     return path.join(CUSTOM_BIN_DIR, binName);
   }
-  return 'deno';
+  return 'qjs';
 }
 
 function getFfmpegDir() {
@@ -61,5 +62,5 @@ function getFfmpegBin() {
 
 module.exports = {
   YTDLP_BIN, DOWNLOAD_DIR, VIDEO_DIR, MUSIC_DIR, CONFIG_DIR, COOKIES_FILE, YTDLP_CACHE_DIR, CUSTOM_BIN_DIR,
-  FFMPEG_BUILD_MARKER, DENO_BUILD_MARKER, resolveMusicDir, getDenoBin, getFfmpegDir, getFfmpegBin,
+  FFMPEG_BUILD_MARKER, resolveMusicDir, getQuickjsBin, getFfmpegDir, getFfmpegBin,
 };

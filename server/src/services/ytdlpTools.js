@@ -1,4 +1,4 @@
-// Version reporting and in-place installs/updates of yt-dlp, FFmpeg and Deno.
+// Version reporting and in-place installs/updates of yt-dlp, FFmpeg and QuickJS-ng.
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -7,11 +7,11 @@ const { pipeline } = require('stream/promises');
 const { Readable } = require('stream');
 const siteProfiles = require('./siteProfiles');
 const {
-  YTDLP_BIN, CONFIG_DIR, CUSTOM_BIN_DIR, FFMPEG_BUILD_MARKER, DENO_BUILD_MARKER, getDenoBin, getFfmpegBin,
+  YTDLP_BIN, CONFIG_DIR, CUSTOM_BIN_DIR, FFMPEG_BUILD_MARKER, getQuickjsBin, getFfmpegBin,
 } = require('./ytdlpPaths');
 
 // Runs `cmd args` and resolves with stdout, or null if the binary is missing/errors —
-// used for version reporting where an optional tool (e.g. deno in local dev) may be absent.
+// used for version reporting where an optional tool (e.g. qjs in local dev) may be absent.
 function runCommand(cmd, args) {
   return new Promise((resolve) => {
     const proc = spawn(cmd, args);
@@ -28,16 +28,15 @@ function firstLine(output) {
 
 async function getVersions() {
   const ffmpegBin = getFfmpegBin();
-  const denoBin = getDenoBin();
-  const [ytdlpOut, ffmpegOut, denoOut] = await Promise.all([
+  const [ytdlpOut, ffmpegOut, quickjsOut] = await Promise.all([
     runCommand(YTDLP_BIN, ['--version']),
     runCommand(ffmpegBin, ['-version']),
-    runCommand(denoBin, ['--version']),
+    runCommand(getQuickjsBin(), ['--version']),
   ]);
   return {
     ytdlp: firstLine(ytdlpOut),
     ffmpeg: firstLine(ffmpegOut),
-    deno: firstLine(denoOut),
+    quickjs: firstLine(quickjsOut),
     node: process.version,
   };
 }
@@ -334,101 +333,90 @@ async function updateFfmpegIfAvailable() {
   return updateFfmpeg(latestIdentity);
 }
 
-function getDenoAssetInfo() {
+// QuickJS-ng publishes standalone (statically linked on Linux) `qjs` binaries per platform
+// as plain release assets, so updating is a download-and-replace with no archive to unpack.
+function getQuickjsAssetName() {
   const platform = process.platform;
   const arch = process.arch;
 
   if (platform === 'linux') {
-    if (arch === 'x64') return { filename: 'deno-x86_64-unknown-linux-gnu.zip' };
-    if (arch === 'arm64') return { filename: 'deno-aarch64-unknown-linux-gnu.zip' };
+    if (arch === 'x64') return 'qjs-linux-x86_64';
+    if (arch === 'arm64') return 'qjs-linux-aarch64';
   } else if (platform === 'win32') {
-    if (arch === 'x64') return { filename: 'deno-x86_64-pc-windows-msvc.zip' };
-    if (arch === 'arm64') return { filename: 'deno-aarch64-pc-windows-msvc.zip' };
+    if (arch === 'x64') return 'qjs-windows-x86_64.exe';
   } else if (platform === 'darwin') {
-    if (arch === 'x64') return { filename: 'deno-x86_64-apple-darwin.zip' };
-    if (arch === 'arm64') return { filename: 'deno-aarch64-apple-darwin.zip' };
+    if (arch === 'x64') return 'qjs-darwin-x86_64';
+    if (arch === 'arm64') return 'qjs-darwin-arm64';
   }
 
-  throw new Error(`Deno builds are not available for platform '${platform}' (${arch}).`);
+  throw new Error(`QuickJS-ng builds are not available for platform '${platform}' (${arch}).`);
 }
 
-function denoDownloadUrl() {
-  const { filename } = getDenoAssetInfo();
-  return `https://github.com/denoland/deno/releases/latest/download/${filename}`;
+const QUICKJS_RELEASES_URL = 'https://github.com/quickjs-ng/quickjs/releases';
+
+let isUpdatingQuickjs = false;
+
+// `qjs --version` prints just the version (e.g. "0.17.0"); null when qjs is missing.
+async function getInstalledQuickjsVersion() {
+  return firstLine(await runCommand(getQuickjsBin(), ['--version']));
 }
 
-let isUpdatingDeno = false;
-
-async function getLatestDenoBuildIdentity() {
-  const res = await fetch(denoDownloadUrl(), {
+// GitHub redirects /releases/latest to /releases/tag/vX.Y.Z, which names the latest version
+// without needing the (rate-limited) REST API.
+async function getLatestQuickjsVersion() {
+  const res = await fetch(`${QUICKJS_RELEASES_URL}/latest`, {
     method: 'HEAD',
     headers: { 'User-Agent': 'yt-dlp-gui' },
   });
   if (!res.ok) {
-    throw new Error(`Failed to check Deno build (${res.status} ${res.statusText})`);
+    throw new Error(`Failed to check QuickJS-ng release (${res.status} ${res.statusText})`);
   }
-  return ffmpegResponseIdentity(res);
+  const match = res.url.match(/\/releases\/tag\/v?([^/?#]+)$/);
+  if (!match) {
+    throw new Error(`Could not determine the latest QuickJS-ng version from ${res.url}`);
+  }
+  return match[1];
 }
 
-function readInstalledDenoBuildIdentity() {
-  try {
-    return fs.readFileSync(DENO_BUILD_MARKER, 'utf8').trim();
-  } catch (_) {
-    return '';
-  }
-}
-
-function writeInstalledDenoBuildIdentity(identity) {
-  if (!identity) return;
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  const tempPath = `${DENO_BUILD_MARKER}.tmp-${process.pid}`;
-  fs.writeFileSync(tempPath, `${identity}\n`, { mode: 0o600 });
-  fs.renameSync(tempPath, DENO_BUILD_MARKER);
-}
-
-async function updateDeno(knownIdentity = null) {
-  if (isUpdatingDeno) {
-    throw new Error('Deno update is already in progress');
+async function updateQuickjs(knownVersion = null) {
+  if (isUpdatingQuickjs) {
+    throw new Error('QuickJS update is already in progress');
   }
 
-  const { filename } = getDenoAssetInfo();
-  const downloadUrl = denoDownloadUrl();
-
-  isUpdatingDeno = true;
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-deno-'));
-  const archivePath = path.join(tempDir, filename);
-  const extractDir = path.join(tempDir, 'extracted');
+  isUpdatingQuickjs = true;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-quickjs-'));
 
   try {
+    const version = knownVersion || await getLatestQuickjsVersion();
+    const assetName = getQuickjsAssetName();
+    const downloadUrl = `${QUICKJS_RELEASES_URL}/download/v${version}/${assetName}`;
     const res = await fetch(downloadUrl, {
       headers: { 'User-Agent': 'yt-dlp-gui' },
     });
     if (!res.ok) {
-      throw new Error(`Failed to download Deno build (${res.status} ${res.statusText})`);
+      throw new Error(`Failed to download QuickJS-ng build (${res.status} ${res.statusText})`);
     }
-    const downloadedIdentity = knownIdentity || ffmpegResponseIdentity(res);
-
-    await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(archivePath));
-
-    fs.mkdirSync(extractDir, { recursive: true });
-    await extractArchive(archivePath, extractDir);
 
     const binExt = process.platform === 'win32' ? '.exe' : '';
-    const denoTarget = `deno${binExt}`;
+    const qjsTarget = `qjs${binExt}`;
+    const qjsSrc = path.join(tempDir, qjsTarget);
+    await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(qjsSrc));
+    if (process.platform !== 'win32') fs.chmodSync(qjsSrc, 0o755);
 
-    const denoSrc = findBinary(extractDir, denoTarget);
-    if (!denoSrc) {
-      throw new Error(`Extracted archive did not contain ${denoTarget}`);
+    // Make sure the download actually runs here before it replaces a working copy.
+    const downloadedVersion = firstLine(await runCommand(qjsSrc, ['--version']));
+    if (!downloadedVersion) {
+      throw new Error(`Downloaded QuickJS-ng build (${assetName}) did not run on this system`);
     }
 
     // Always install to persistent CUSTOM_BIN_DIR (/config/bin)
-    installBinary(denoSrc, CUSTOM_BIN_DIR, denoTarget);
+    installBinary(qjsSrc, CUSTOM_BIN_DIR, qjsTarget);
 
     // Also update /usr/local/bin if running on Linux with write permissions (e.g. Docker)
     if (process.platform === 'linux') {
       try {
         fs.accessSync('/usr/local/bin', fs.constants.W_OK);
-        installBinary(denoSrc, '/usr/local/bin', denoTarget);
+        installBinary(qjsSrc, '/usr/local/bin', qjsTarget);
       } catch {
         // Not writable, persistent custom bin dir in /config/bin is sufficient
       }
@@ -440,36 +428,23 @@ async function updateDeno(knownIdentity = null) {
       process.env.PATH = `${CUSTOM_BIN_DIR}${path.delimiter}${process.env.PATH}`;
     }
 
-    writeInstalledDenoBuildIdentity(downloadedIdentity);
     return { updated: true, ...(await getVersions()) };
   } finally {
-    isUpdatingDeno = false;
+    isUpdatingQuickjs = false;
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
     } catch {}
   }
 }
 
-async function updateDenoIfAvailable() {
-  const latestIdentity = await getLatestDenoBuildIdentity();
-  const installedMarker = readInstalledDenoBuildIdentity();
-  if (latestIdentity && latestIdentity === installedMarker) {
+async function updateQuickjsIfAvailable() {
+  const latestVersion = await getLatestQuickjsVersion();
+  if (latestVersion === await getInstalledQuickjsVersion()) {
     return { updated: false, ...(await getVersions()) };
   }
-
-  // If no marker stored yet, check if currently installed deno matches the latest tag
-  if (!installedMarker) {
-    const currentVersion = firstLine(await runCommand(getDenoBin(), ['--version']));
-    const versionMatch = latestIdentity && latestIdentity.match(/\/download\/v([0-9.]+)\//);
-    if (versionMatch && currentVersion && currentVersion.includes(versionMatch[1])) {
-      writeInstalledDenoBuildIdentity(latestIdentity);
-      return { updated: false, ...(await getVersions()) };
-    }
-  }
-
-  return updateDeno(latestIdentity);
+  return updateQuickjs(latestVersion);
 }
 
 module.exports = {
-  runCommand, firstLine, getVersions, updateYtdlp, updateFfmpeg, updateFfmpegIfAvailable, updateDeno, updateDenoIfAvailable,
+  runCommand, firstLine, getVersions, updateYtdlp, updateFfmpeg, updateFfmpegIfAvailable, updateQuickjs, updateQuickjsIfAvailable,
 };

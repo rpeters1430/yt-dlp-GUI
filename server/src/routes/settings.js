@@ -94,12 +94,12 @@ router.post('/ffmpeg/update', async (req, res) => {
   }
 });
 
-router.post('/deno/update', async (req, res) => {
+router.post('/quickjs/update', async (req, res) => {
   if (queue.getActiveCount && queue.getActiveCount() > 0) {
-    return res.status(409).json({ error: 'Cannot update Deno while downloads are active. Please wait for them to complete.' });
+    return res.status(409).json({ error: 'Cannot update QuickJS while downloads are active. Please wait for them to complete.' });
   }
   try {
-    const versions = await ytdlp.updateDeno();
+    const versions = await ytdlp.updateQuickjs();
     res.json({ ok: true, ...versions });
   } catch (err) {
     res.status(500).json({ error: err.message });
