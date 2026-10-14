@@ -73,6 +73,7 @@ export default function OptionsDrawer({ mode, itemId, onClose, onSaved }) {
         onChange={setValues}
         caps={caps}
         liveInfo={mode === 'item' && !applyAll ? liveInfoOf(info) : null}
+        videoInfo={mode === 'item' && !applyAll ? info : null}
       />
     </Drawer>
   );

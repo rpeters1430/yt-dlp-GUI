@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Film, Music2, Play, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../api.js';
+import { useDownloads } from '../context/DownloadsContext.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import { useModalA11y } from '../hooks/useModalA11y.js';
 import { Segmented } from '../components/DownloadOptionsFields.jsx';
@@ -151,6 +152,7 @@ function PlayerOverlay({ item, onClose, onToggleProtect, onDelete }) {
 }
 
 export default function Library() {
+  const { storage } = useDownloads();
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [source, setSource] = useState('all');
@@ -243,8 +245,19 @@ export default function Library() {
     <>
       <div className="page-title-row">
         <h1>Library</h1>
-        <span className="mono-meta">{data ? `${data.total.toLocaleString()} item${data.total === 1 ? '' : 's'}` : ''}</span>
+        <span className="mono-meta">
+          {[
+            data ? `${data.total.toLocaleString()} item${data.total === 1 ? '' : 's'}` : null,
+            storage ? `${storage.freeGb} GB free (${Math.round(storage.usedPercent)}% used)` : null,
+          ].filter(Boolean).join(' · ')}
+        </span>
       </div>
+      {storage && (storage.lowDiskWarning || storage.belowMinFreeDisk) && (
+        <div className="notice notice-warning" style={{ marginBottom: 14 }}>
+          Low disk space on media volume: <strong>{storage.freeGb} GB free</strong> ({storage.usedPercent}% used)
+          {storage.belowMinFreeDisk ? ` — scheduled Watch downloads are paused below your ${storage.minFreeDiskGb} GB safety guard.` : '.'}
+        </div>
+      )}
 
       <div className="toolbar">
         <input

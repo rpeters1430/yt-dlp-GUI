@@ -32,8 +32,10 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 
 ### Downloading
 - Paste one or many URLs at once; jobs are queued with configurable concurrency
+- Pause or resume the queue, move a queued download to the front, and prioritize manual downloads ahead of Watch backfills
 - Live progress bars over WebSocket (percent, speed, ETA)
-- Format picker, audio-only (MP3), subtitles, embedded thumbnail/metadata/chapters, and SponsorBlock auto-remove
+- Format picker, audio-only (MP3), timestamp/chapter trimming, subtitles, embedded thumbnail/metadata/chapters, and SponsorBlock auto-remove
+- Optional per-download bandwidth caps and jittered delays to reduce network saturation and rate limits
 - Download history with thumbnails, file paths, and the exact yt-dlp command and log for every job
 - Customizable filename/folder layout — pick a preset or write your own yt-dlp template, globally or per Watch (see [File naming](#file-naming))
 - Writes a Kodi/Jellyfin/Emby-compatible `.nfo` + poster image next to every download so titles, descriptions, and artwork scrape reliably (toggle in Settings)
@@ -63,6 +65,15 @@ It runs as a single Docker container (one port, two volumes) and is designed to 
 - Optionally clean up Watch-downloaded videos: delete after N days, once watched in Jellyfin, or both
 - Runs nightly, with a dry-run preview and a "run now" button
 - Safety guards: per-video protect, per-Watch exemption, and "always keep newest N"
+- Optional free-space guard: run cleanup and pause new Watch queueing below a configured disk threshold
+
+### Queue and failure recovery
+- Pause queued work while active downloads finish; resume whenever you're ready
+- Promote a queued download to the front of the queue
+- Filter failed jobs by likely cause (network, bot check, authentication, or unavailable) and retry only matching or transient failures
+
+### Mobile sharing
+- Install the app on a supported Android browser and share links to it from other apps, or use the bookmarklet in Settings → Downloads
 
 ### Live streams
 - **YouTube and any other yt-dlp live extractor** — a URL that's currently live is detected automatically in the Analyze modal

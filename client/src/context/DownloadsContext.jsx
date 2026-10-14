@@ -135,7 +135,7 @@ export function DownloadsProvider({ children, isAuthenticated }) {
     [jobs]
   );
   const queuedJobs = useMemo(
-    () => jobs.filter((j) => j.status === 'queued'),
+    () => jobs.filter((j) => j.status === 'queued').slice().sort((a, b) => (b.priority || 0) - (a.priority || 0)),
     [jobs]
   );
 
@@ -153,6 +153,9 @@ export function DownloadsProvider({ children, isAuthenticated }) {
     counts: effectiveCounts,
     completedCount: effectiveCounts.completed || 0,
     failedCount: effectiveCounts.failed || 0,
+    queuePaused: !!effectiveCounts.paused,
+    storage: effectiveCounts.storage || null,
+    setCounts,
     currentJob,
     hasActive: activeJobs.length > 0,
     isDownloading: downloadingJobs.length > 0,

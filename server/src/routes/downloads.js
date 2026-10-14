@@ -102,6 +102,11 @@ router.post('/info', async (req, res) => {
         label: h >= 2160 ? `4K (${h}p)` : h >= 1440 ? `1440p (${h}p)` : h >= 1080 ? `1080p (${h}p)` : `${h}p`,
       })),
       formats,
+      chapters: Array.isArray(info.chapters) ? info.chapters.map((c) => ({
+        title: c.title || '',
+        start_time: c.start_time ?? 0,
+        end_time: c.end_time ?? null,
+      })) : [],
       isLive: liveStatus === 'is_live',
       liveStatus,
       liveViewers: info.concurrent_view_count || null,
@@ -157,6 +162,7 @@ router.post('/', async (req, res) => {
     waitInterval,
     splitLiveChunks,
     liveChunkDuration,
+    downloadSections,
   } = req.body || {};
   const list = urls ? urls : url ? [url] : [];
   const trimmed = list.map(ytdlp.normalizeUrl).filter(Boolean);
@@ -179,6 +185,15 @@ router.post('/', async (req, res) => {
     }
   }
 
+  let normalizedSection = '';
+  if (downloadSections && typeof downloadSections === 'string' && downloadSections.trim()) {
+    const rawSec = downloadSections.trim();
+    if (!/^(\*?[0-9:.]+-[0-9:.]+|\*?[0-9:.]+-inf)$/i.test(rawSec)) {
+      return res.status(400).json({ error: 'Invalid trim section format (expected start-end, e.g. 00:01:00-00:03:30)' });
+    }
+    normalizedSection = rawSec.startsWith('*') ? rawSec : `*${rawSec}`;
+  }
+
   const chunkMins = splitLiveChunks ? (parseInt(liveChunkDuration, 10) || 0) : 0;
   const optionsJson = {
     embedThumbnail: !!embedThumbnail,
@@ -190,6 +205,7 @@ router.post('/', async (req, res) => {
     waitInterval: parseInt(waitInterval, 10) || 15,
     splitLiveChunks: !!splitLiveChunks && chunkMins > 0,
     liveChunkDuration: chunkMins,
+    ...(normalizedSection ? { downloadSections: normalizedSection } : {}),
   };
 
   const ids = cleaned.map((u) =>
@@ -220,8 +236,8 @@ router.get('/', (req, res) => {
 
 // Paged search over the whole history: ?status=failed&q=text&limit=50&offset=0 -> { jobs, total }
 router.get('/history', (req, res) => {
-  const { status, q, limit, offset } = req.query;
-  res.json(queue.searchJobs({ status, q, limit, offset }));
+  const { status, q, limit, offset, category } = req.query;
+  res.json(queue.searchJobs({ status, q, limit, offset, category }));
 });
 
 router.get('/stats', (req, res) => {
@@ -239,7 +255,23 @@ router.post('/clear-failed', (req, res) => {
 });
 
 router.post('/retry-failed', (req, res) => {
-  res.json({ retried: queue.retryFailedJobs() });
+  const { transientOnly, category } = req.body || {};
+  res.json({ retried: queue.retryFailedJobs({ transientOnly: !!transientOnly, category: category || null }) });
+});
+
+router.post('/pause', (req, res) => {
+  res.json({ ok: true, paused: queue.pauseQueue() });
+});
+
+router.post('/resume', (req, res) => {
+  res.json({ ok: true, paused: queue.resumeQueue() });
+});
+
+router.post('/:id/prioritize', (req, res) => {
+  const job = queue.getJobSummary(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Download not found' });
+  if (!queue.prioritizeJob(job.id)) return res.status(409).json({ error: 'Only a queued download can be prioritized' });
+  res.json(queue.getJobSummary(job.id));
 });
 
 // Which of these links were already downloaded: body { items: [{ url, id?, extractor? }] }

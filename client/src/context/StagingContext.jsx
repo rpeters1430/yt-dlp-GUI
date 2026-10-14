@@ -35,6 +35,7 @@ export function toEnqueuePayload(urls, opts) {
     waitInterval: opts.waitInterval,
     splitLiveChunks: opts.splitLiveChunks,
     liveChunkDuration: opts.liveChunkDuration,
+    ...(opts.downloadSections ? { downloadSections: opts.downloadSections } : {}),
   };
 }
 

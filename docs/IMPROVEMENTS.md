@@ -85,13 +85,13 @@ delete them) as they land.
 
 ### Downloads & queue
 - [ ] **Clear completed** bulk action in History.
-- [ ] **Group failures by cause** (bot check, unavailable, private, geo-blocked, network).
-- [ ] **Reorder / pause the queue.**
+- [x] **Group failures by cause** (bot check, authentication, unavailable, network) and offer matching or transient-only bulk retries.
+- [x] **Reorder / pause the queue.** Queued jobs can be promoted, manual downloads sort ahead of Watch backfills, and pause/resume survives server restarts.
 
 ### Mobile / UI
 - [ ] **Audit every page at ~360–400px** for other non-wrapping flex rows; many components
   still use inline `style={{ display: 'flex' }}`, which is hard to fix responsively.
-- [ ] **Share target / PWA** so links can be shared straight from the YouTube/X app.
+- [x] **Share target / PWA** so Android users can share supported links directly into the app; Settings also provides a browser bookmarklet.
 - [ ] **Compact stat cards on phones** so Add downloads is visible without scrolling.
 
 ### Code quality & testing

@@ -52,7 +52,34 @@ test('socket updates leave out the log except when it changed, and counts follow
 
   const counts = q.io.of('jobs:counts');
   assert.ok(counts.length >= 2);
-  assert.deepEqual(counts.at(-1), { queued: 0, downloading: 0, completed: 1, failed: 0 });
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(counts.at(-1)).filter(([key]) => ['queued', 'downloading', 'completed', 'failed'].includes(key))),
+    { queued: 0, downloading: 0, completed: 1, failed: 0 }
+  );
+  assert.equal(counts.at(-1).paused, false);
+});
+
+test('a paused queue holds jobs and prioritizing a job moves it ahead when resumed', async (t) => {
+  const q = loadQueue(t, { maxConcurrent: 1 });
+  q.queue.init(q.io);
+  const gate = deferred();
+  q.state.download = () => gate.promise;
+
+  assert.equal(q.queue.pauseQueue(), true);
+  const first = q.queue.enqueue(URL_A);
+  const second = q.queue.enqueue(URL_B);
+  const third = q.queue.enqueue(URL_C);
+  assert.equal(q.state.downloadCalls.length, 0);
+  assert.equal(q.queue.prioritizeJob(third), true);
+  assert.equal(q.queue.resumeQueue(), false);
+
+  await waitFor(() => q.state.downloadCalls.length === 1, { label: 'prioritized job to start' });
+  assert.equal(q.state.downloadCalls[0].url, URL_C);
+  assert.equal(statusOf(q, first), 'queued');
+  assert.equal(statusOf(q, second), 'queued');
+  assert.equal(statusOf(q, third), 'downloading');
+  gate.resolve({ filepath: '/downloads/prioritized.mp4' });
+  await waitFor(() => finished(q, third));
 });
 
 test('a failed download is marked failed with the error and a failure notification', async (t) => {
@@ -319,7 +346,13 @@ test('getStatusCounts counts every status across the whole history', (t) => {
   insertJob(q.db, { id: '2', status: 'failed' });
   insertJob(q.db, { id: '3', status: 'failed' });
   insertJob(q.db, { id: '4', status: 'deleted' });
-  assert.deepEqual(q.queue.getStatusCounts(), { queued: 0, downloading: 0, completed: 1, failed: 2, deleted: 1 });
+  const counts = q.queue.getStatusCounts();
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(counts).filter(([key]) => ['queued', 'downloading', 'completed', 'failed', 'deleted'].includes(key))),
+    { queued: 0, downloading: 0, completed: 1, failed: 2, deleted: 1 }
+  );
+  assert.equal(counts.paused, false);
+  assert.ok(counts.storage === null || typeof counts.storage.freeGb === 'number');
 });
 
 test('a watch-linked job reports its status to the watch listener', async (t) => {

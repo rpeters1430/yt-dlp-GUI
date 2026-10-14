@@ -33,16 +33,19 @@ export const api = {
   getInfo: (url) => request('/downloads/info', { method: 'POST', body: JSON.stringify({ url }) }),
   enqueue: (payload) => request('/downloads', { method: 'POST', body: JSON.stringify(payload) }),
   listDownloads: () => request('/downloads'),
-  searchDownloads: ({ status = 'all', q = '', limit = 50, offset = 0 } = {}) =>
-    request(`/downloads/history?${new URLSearchParams({ status, q, limit: String(limit), offset: String(offset) })}`),
+  searchDownloads: ({ status = 'all', q = '', limit = 50, offset = 0, category = 'all' } = {}) =>
+    request(`/downloads/history?${new URLSearchParams({ status, q, limit: String(limit), offset: String(offset), category })}`),
   getDownloadStats: () => request('/downloads/stats'),
   getDownloadLog: (id) => request(`/downloads/${id}/log`),
   deleteDownload: (id, { deleteFile = false } = {}) =>
     request(`/downloads/${id}${deleteFile ? '?deleteFile=1' : ''}`, { method: 'DELETE' }),
   stopDownload: (id) => request(`/downloads/${id}/stop`, { method: 'POST' }),
   retryDownload: (id) => request(`/downloads/${id}/retry`, { method: 'POST' }),
+  prioritizeDownload: (id) => request(`/downloads/${id}/prioritize`, { method: 'POST' }),
+  pauseQueue: () => request('/downloads/pause', { method: 'POST' }),
+  resumeQueue: () => request('/downloads/resume', { method: 'POST' }),
   clearFailedDownloads: () => request('/downloads/clear-failed', { method: 'POST' }),
-  retryFailedDownloads: () => request('/downloads/retry-failed', { method: 'POST' }),
+  retryFailedDownloads: (options = {}) => request('/downloads/retry-failed', { method: 'POST', body: JSON.stringify(options) }),
   checkDuplicates: (items) => request('/downloads/check-duplicates', { method: 'POST', body: JSON.stringify({ items }) }),
   toggleDownloadProtect: (id, protectedFlag) => request(`/downloads/${id}/protect`, { method: 'PATCH', body: JSON.stringify({ protected: protectedFlag }) }),
 

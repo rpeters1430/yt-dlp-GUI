@@ -57,6 +57,19 @@ function isVideoUnavailableError(message) {
   return VIDEO_UNAVAILABLE_RE.test(String(message || ''));
 }
 
+// Keep retry suggestions aligned with the failure information shown in History. Bot and
+// authentication failures need updated cookies or credentials; unavailable videos won't
+// improve with a retry; other failures may be transient.
+const AUTH_REQUIRED_RE = /Sign in to confirm your age|age[- ]restricted|inappropriate for some users|members-only content|Join this channel to get access|Private video|requires authentication|login required|HTTP Error 401/i;
+
+function classifyFailure(message) {
+  const text = String(message || '');
+  if (isBotCheckError(text)) return 'bot_check';
+  if (AUTH_REQUIRED_RE.test(text)) return 'auth_required';
+  if (isVideoUnavailableError(text)) return 'unavailable';
+  return 'network_or_stalled';
+}
+
 // Pasted links often lack a scheme ("www.tiktok.com/@user/live", "youtu.be/abc"). yt-dlp
 // treats those as search terms or local paths, so give anything that looks like a host an
 // https:// prefix. Everything else (including ytsearch: queries) passes through untouched.
@@ -813,6 +826,15 @@ function buildDownloadArgs(url, rawOptions = {}) {
     args.push('--concurrent-fragments', String(CONCURRENT_FRAGMENTS));
   }
 
+  if (options.limitRate && /^\d+(?:\.\d+)?[KMGkmg]?$/.test(String(options.limitRate).trim())) {
+    args.push('--limit-rate', String(options.limitRate).trim());
+  }
+
+  const sleepSec = parseInt(options.sleepInterval, 10) || 0;
+  if (!isLive && sleepSec > 0) {
+    args.push('--sleep-interval', String(sleepSec), '--max-sleep-interval', String(sleepSec * 2));
+  }
+
   if (options.downloadSections) {
     args.push('--download-sections', options.downloadSections.trim());
   }
@@ -1524,6 +1546,7 @@ module.exports = {
   isYouTube,
   isBotCheckError,
   isVideoUnavailableError,
+  classifyFailure,
   isSubtitleDownloadError,
   BOT_CHECK_HINT,
   normalizeUrl,

@@ -550,3 +550,35 @@ test('parseSha256ForAsset, computeFileSha256, and verifyExecutableHeader validat
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('classifyFailure categorizes common download errors for retry guidance', () => {
+  const { classifyFailure } = require('./ytdlp');
+  assert.equal(classifyFailure("Sign in to confirm you're not a bot"), 'bot_check');
+  assert.equal(classifyFailure('Sign in to confirm your age'), 'auth_required');
+  assert.equal(classifyFailure('Private video'), 'auth_required');
+  assert.equal(classifyFailure('This video has been removed by the uploader'), 'unavailable');
+  assert.equal(classifyFailure('Video unavailable in your country'), 'unavailable');
+  assert.equal(classifyFailure('Read timed out'), 'network_or_stalled');
+  assert.equal(classifyFailure('HTTP Error 429: Too Many Requests'), 'network_or_stalled');
+});
+
+test('buildDownloadArgs supports rate controls and section trimming', () => {
+  const { buildDownloadArgs } = require('./ytdlp');
+  const args = buildDownloadArgs('https://www.youtube.com/watch?v=abc123', {
+    limitRate: '10M',
+    sleepInterval: 5,
+    downloadSections: '*00:01:00-00:03:30',
+  });
+  const rateIdx = args.indexOf('--limit-rate');
+  assert.notEqual(rateIdx, -1);
+  assert.equal(args[rateIdx + 1], '10M');
+  const sleepIdx = args.indexOf('--sleep-interval');
+  assert.notEqual(sleepIdx, -1);
+  assert.equal(args[sleepIdx + 1], '5');
+  const maxSleepIdx = args.indexOf('--max-sleep-interval');
+  assert.notEqual(maxSleepIdx, -1);
+  assert.equal(args[maxSleepIdx + 1], '10');
+  const sectionIdx = args.indexOf('--download-sections');
+  assert.notEqual(sectionIdx, -1);
+  assert.equal(args[sectionIdx + 1], '*00:01:00-00:03:30');
+});

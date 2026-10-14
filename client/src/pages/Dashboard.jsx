@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ClipboardPaste } from 'lucide-react';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { ClipboardPaste, Play } from 'lucide-react';
 import StagingTray from '../components/home/StagingTray.jsx';
 import OptionsDrawer from '../components/home/OptionsDrawer.jsx';
 import NowDownloading, { isLiveJob, isWaitingForLive } from '../components/home/NowDownloading.jsx';
 import UpNext from '../components/home/UpNext.jsx';
 import RecentlyFinished from '../components/home/RecentlyFinished.jsx';
+import { api } from '../api.js';
 import { useDownloads } from '../context/DownloadsContext.jsx';
 import { parseLinks, useStaging } from '../context/StagingContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
@@ -25,11 +26,12 @@ function Stat({ value, label, to, accent }) {
 }
 
 export default function Dashboard() {
-  const { jobs, setJobs, loaded, downloadingJobs, queuedJobs, completedCount, failedCount } = useDownloads();
+  const { jobs, setJobs, loaded, downloadingJobs, queuedJobs, completedCount, failedCount, queuePaused, setCounts } = useDownloads();
   const { staged, analyze, commit } = useStaging();
   const toast = useToast();
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [text, setText] = useState('');
   const [focused, setFocused] = useState(false);
   const [drawer, setDrawer] = useState(null); // { kind: 'item' | 'defaults', id }
@@ -45,6 +47,24 @@ export default function Dashboard() {
     navigate('.', { replace: true, state: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pasteNonce]);
+
+  // Android Web Share Target & desktop bookmarklet support (?url=...&text=...).
+  useEffect(() => {
+    const sharedUrl = searchParams.get('url') || '';
+    const sharedText = searchParams.get('text') || '';
+    if (!sharedUrl && !sharedText) return;
+    const combined = `${sharedUrl} ${sharedText}`.trim();
+    const added = analyze(combined);
+    if (!added && parseLinks(combined).length === 0) {
+      toast('No valid links found in shared content', { error: true });
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('url');
+    next.delete('text');
+    next.delete('title');
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   function runAnalyze(value = text) {
     const links = parseLinks(value);
@@ -80,6 +100,16 @@ export default function Dashboard() {
     const { summary, error } = await commit();
     if (error) toast(summary ? `${summary} · ${error}` : error, { error: true });
     else if (summary) toast(summary);
+  }
+
+  async function handleToggleQueuePause() {
+    try {
+      const res = queuePaused ? await api.resumeQueue() : await api.pauseQueue();
+      setCounts?.((prev) => (prev ? { ...prev, paused: !!res.paused } : prev));
+      toast(res.paused ? 'Queue paused (active downloads will finish)' : 'Queue resumed');
+    } catch (err) {
+      toast(err.message || 'Could not update queue state', { error: true });
+    }
   }
 
   const hero = useMemo(
@@ -135,11 +165,20 @@ export default function Dashboard() {
         </form>
         <div className="stats-inline">
           <Stat value={dash ?? downloadingJobs.filter((j) => !isWaitingForLive(j)).length} label="active" />
-          <Stat value={dash ?? queuedJobs.length + downloadingJobs.filter(isWaitingForLive).length} label="waiting" />
+          <Stat value={dash ?? queuedJobs.length + downloadingJobs.filter(isWaitingForLive).length} label={queuePaused ? 'paused' : 'waiting'} />
           <Stat value={dash ?? completedCount.toLocaleString()} label="done" />
           <Stat value={dash ?? failedCount.toLocaleString()} label="failed" to="/history?status=failed" accent={failedCount > 0} />
         </div>
       </div>
+
+      {queuePaused && upNext.length === 0 && (
+        <div className="notice notice-warning" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
+          <span>Download queue is paused — new downloads will wait until resumed.</span>
+          <button type="button" className="btn-secondary btn-sm" onClick={handleToggleQueuePause}>
+            <Play size={13} /> Resume queue
+          </button>
+        </div>
+      )}
 
       {staged.length > 0 && (
         <StagingTray
@@ -154,7 +193,12 @@ export default function Dashboard() {
       ) : (
         <>
           <NowDownloading key={hero?.id || 'none'} job={hero} onRemoved={handleRemoved} />
-          <UpNext jobs={upNext} onRemoved={handleRemoved} />
+          <UpNext
+            jobs={upNext}
+            onRemoved={handleRemoved}
+            queuePaused={queuePaused}
+            onTogglePause={handleToggleQueuePause}
+          />
           <RecentlyFinished jobs={recentFinished} failedCount={failedCount} />
         </>
       )}

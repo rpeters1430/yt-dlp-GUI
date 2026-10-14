@@ -1,5 +1,5 @@
 import React from 'react';
-import { Radio, Clock } from 'lucide-react';
+import { Radio, Clock, Scissors } from 'lucide-react';
 
 export const SUBTITLE_LANG_OPTIONS = [
   { value: 'en.*', label: 'English' },
@@ -30,6 +30,30 @@ export const SPONSORBLOCK_CATEGORIES = [
 
 export const SPONSORBLOCK_ALL_VALUES = SPONSORBLOCK_CATEGORIES.map((c) => c.value);
 
+export function formatSecToTimecode(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return [h, m, sec].map((v) => String(v).padStart(2, '0')).join(':');
+}
+
+export function parseSectionRange(sectionStr, defaultEndSec = 300) {
+  if (!sectionStr || typeof sectionStr !== 'string') {
+    return { enabled: false, start: '00:00:00', end: formatSecToTimecode(defaultEndSec) };
+  }
+  const clean = sectionStr.trim().replace(/^\*/, '');
+  const idx = clean.indexOf('-');
+  if (idx === -1) {
+    return { enabled: true, start: '00:00:00', end: formatSecToTimecode(defaultEndSec) };
+  }
+  return {
+    enabled: true,
+    start: clean.slice(0, idx).trim() || '00:00:00',
+    end: clean.slice(idx + 1).trim() || formatSecToTimecode(defaultEndSec),
+  };
+}
+
 // Defaults used whenever a fresh set of per-video/shared download options is created, so
 // thumbnails/metadata get embedded directly into the video file without requiring the user to
 // opt in every time (per issue: "no need for separate files; embed them all automatically").
@@ -50,6 +74,7 @@ export function defaultDownloadOptions(overrides = {}) {
     waitInterval: 15,
     splitLiveChunks: false,
     liveChunkDuration: 30,
+    downloadSections: '',
     ...overrides,
   };
 }
@@ -216,17 +241,15 @@ function subLangLabel(value) {
 
 /**
  * The shared download option controls: Video / Audio only, quality, file type, and the
- * subtitle / embed / SponsorBlock switches, plus live-stream choices when the link is live.
- * Used by Home's options drawer (per link and for the defaults) and Settings > Downloads.
- *
- * `caps` is the server's per-link `capabilities` object (or mergeCapabilities of several):
- * options the link can't use are hidden or disabled. Omit it to offer everything.
+ * subtitle / embed / SponsorBlock switches, plus live-stream choices when the link is live,
+ * and universal clip/chapter trimming when inspecting a single non-live video.
  */
 export default function DownloadOptionsFields({
   values,
   onChange,
   liveInfo,
   caps = null,
+  videoInfo = null,
 }) {
   const {
     audioOnly, quality, container, subtitles, subLangs,
@@ -234,6 +257,7 @@ export default function DownloadOptionsFields({
     sponsorblock, sponsorblockCategories,
     liveFromStart, waitForLive, waitInterval,
     splitLiveChunks, liveChunkDuration,
+    downloadSections,
   } = values;
   const c = caps || UNKNOWN_CAPS;
   const siteName = c.site?.name || null;
@@ -248,6 +272,10 @@ export default function DownloadOptionsFields({
   const isOffline = isUpcoming && !!liveInfo?.offline;
   const isAudioMode = audioOnly || !!c.audioOnlyMedia;
   const showLiveSplit = isLive || isUpcoming || values.isLive;
+  const canTrimClip = !isLive && !isUpcoming && !values.isLive && (!videoInfo || !videoInfo.isPlaylist);
+  const defaultClipEndSec = videoInfo?.duration ? Math.min(300, Math.floor(videoInfo.duration)) : 300;
+  const clipRange = parseSectionRange(downloadSections, defaultClipEndSec);
+  const chapters = Array.isArray(videoInfo?.chapters) ? videoInfo.chapters : [];
 
   function set(patch) {
     onChange({ ...values, ...patch });
@@ -374,6 +402,73 @@ export default function DownloadOptionsFields({
       </div>
 
       <div className="toggle-list">
+        {canTrimClip && (
+          <ToggleRow
+            label={clipRange.enabled ? `Trim clip (${clipRange.start} – ${clipRange.end})` : 'Trim clip (start / end time)'}
+            description="Download only a specific timestamp range or chapter"
+            checked={clipRange.enabled}
+            onChange={(v) => {
+              if (!v) set({ downloadSections: '' });
+              else set({ downloadSections: `*${clipRange.start}-${clipRange.end}` });
+            }}
+          />
+        )}
+        {canTrimClip && clipRange.enabled && (
+          <div className="toggle-sub" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <Scissors size={14} className="muted" />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.84rem' }}>
+                <span className="muted">Start</span>
+                <input
+                  type="text"
+                  className="mono"
+                  style={{ width: 100 }}
+                  placeholder="00:00:00"
+                  value={clipRange.start}
+                  onChange={(e) => set({ downloadSections: `*${e.target.value}-${clipRange.end}` })}
+                  aria-label="Clip start time"
+                />
+              </label>
+              <span className="muted">to</span>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.84rem' }}>
+                <span className="muted">End</span>
+                <input
+                  type="text"
+                  className="mono"
+                  style={{ width: 100 }}
+                  placeholder="00:05:00"
+                  value={clipRange.end}
+                  onChange={(e) => set({ downloadSections: `*${clipRange.start}-${e.target.value}` })}
+                  aria-label="Clip end time"
+                />
+              </label>
+            </div>
+            {chapters.length > 0 && (
+              <div>
+                <div className="muted small" style={{ marginBottom: 6 }}>Quick-pick chapter:</div>
+                <div className="chip-row" style={{ maxHeight: 130, overflowY: 'auto' }}>
+                  {chapters.map((ch, idx) => {
+                    const startStr = formatSecToTimecode(ch.start_time || 0);
+                    const endStr = formatSecToTimecode(ch.end_time || videoInfo?.duration || (ch.start_time || 0) + 60);
+                    const isSelected = clipRange.start === startStr && clipRange.end === endStr;
+                    return (
+                      <button
+                        key={`${idx}-${ch.start_time}`}
+                        type="button"
+                        className={`chip${isSelected ? ' active' : ''}`}
+                        onClick={() => set({ downloadSections: `*${startStr}-${endStr}` })}
+                        title={`${startStr} – ${endStr}`}
+                      >
+                        {ch.title || `Chapter ${idx + 1}`} <span className="mono-meta">({startStr})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {!isAudioMode && (
           <ToggleRow
             label={`Subtitles (${subLangLabel(subLangs)})`}
@@ -442,6 +537,7 @@ export function summarizeOptions(o) {
   if (o.audioOnly) parts.push('Audio only');
   else parts.push(o.quality ? `${o.quality}p` : 'Best');
   parts.push((o.container || 'mp4').toUpperCase());
+  if (o.downloadSections) parts.push(`Clip ${o.downloadSections.replace(/^\*/, '')}`);
   if (o.sponsorblock) parts.push('SponsorBlock');
   if (o.subtitles && !o.audioOnly) parts.push('Subs');
   if (o.splitLiveChunks) parts.push(`${o.liveChunkDuration >= 60 ? `${o.liveChunkDuration / 60}h` : `${o.liveChunkDuration}m`} chunks`);

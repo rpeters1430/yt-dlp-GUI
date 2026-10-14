@@ -93,9 +93,9 @@ test('GET / returns the bounded list and ?active=1 only running jobs', async (t)
 
 test('GET /history pages and filters; GET /stats counts', async (t) => {
   const { q, call } = await startApp(t);
-  insertJob(q.db, { id: 'a', status: 'failed', title: 'Alpha', createdAt: '2026-01-01 00:00:00' });
+  insertJob(q.db, { id: 'a', status: 'failed', title: 'Alpha', error: 'Video unavailable', createdAt: '2026-01-01 00:00:00' });
   insertJob(q.db, { id: 'b', status: 'completed', title: 'Beta', createdAt: '2026-01-02 00:00:00' });
-  insertJob(q.db, { id: 'c', status: 'failed', title: 'Gamma', createdAt: '2026-01-03 00:00:00' });
+  insertJob(q.db, { id: 'c', status: 'failed', title: 'Gamma', error: 'Read timed out', createdAt: '2026-01-03 00:00:00' });
 
   const failed = await call('GET', '/history?status=failed&limit=1&offset=0');
   assert.equal(failed.body.total, 2);
@@ -103,8 +103,20 @@ test('GET /history pages and filters; GET /stats counts', async (t) => {
   const next = await call('GET', '/history?status=failed&limit=1&offset=1');
   assert.deepEqual(next.body.jobs.map((j) => j.id), ['a']);
   assert.deepEqual((await call('GET', '/history?q=bet')).body.jobs.map((j) => j.id), ['b']);
+  const networkFailures = await call('GET', '/history?status=failed&category=network_or_stalled');
+  assert.deepEqual(networkFailures.body.jobs.map((j) => j.id), ['c']);
+  assert.equal(networkFailures.body.total, 1);
+  assert.deepEqual(networkFailures.body.failureCounts, {
+    all: 2, network_or_stalled: 1, bot_check: 0, auth_required: 0, unavailable: 1,
+  });
 
-  assert.deepEqual((await call('GET', '/stats')).body, { queued: 0, downloading: 0, completed: 1, failed: 2 });
+  const stats = (await call('GET', '/stats')).body;
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(stats).filter(([key]) => ['queued', 'downloading', 'completed', 'failed'].includes(key))),
+    { queued: 0, downloading: 0, completed: 1, failed: 2 }
+  );
+  assert.equal(stats.paused, false);
+  assert.ok(stats.storage === null || typeof stats.storage.freeGb === 'number');
 });
 
 test('log, delete and protect act on a single job', async (t) => {

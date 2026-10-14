@@ -21,6 +21,8 @@ const ALLOWED_SETTINGS_KEYS = new Set([
   'video_folder',
   'default_live_chunk_mins',
   'max_concurrent_downloads',
+  'download_limit_rate',
+  'download_sleep_interval',
 ]);
 
 function saveSetting(key, value) {
@@ -128,6 +130,8 @@ router.get('/', (req, res) => {
   settings.default_live_chunk_mins = parseInt(settings.default_live_chunk_mins || '0', 10);
   // The effective value, which falls back to the MAX_CONCURRENT_DOWNLOADS env var.
   settings.max_concurrent_downloads = queue.getMaxConcurrent();
+  settings.download_limit_rate = settings.download_limit_rate || '';
+  settings.download_sleep_interval = parseInt(settings.download_sleep_interval || '0', 10) || 0;
   res.json(settings);
 });
 
@@ -154,6 +158,22 @@ router.put('/', (req, res) => {
     videoFolder[1] = videoFolder[1] == null ? '' : String(videoFolder[1]).trim();
     const folderError = outputTemplate.validateVideoFolder(videoFolder[1]);
     if (folderError) return res.status(400).json({ error: folderError });
+  }
+
+  const limitRate = entries.find(([key]) => key === 'download_limit_rate');
+  if (limitRate) {
+    limitRate[1] = String(limitRate[1] || '').trim();
+    if (limitRate[1] && !/^\d+(?:\.\d+)?[KMGkmg]?$/.test(limitRate[1])) {
+      return res.status(400).json({ error: 'download_limit_rate must be a valid rate like 5M, 10M, or 500K' });
+    }
+  }
+
+  const sleepInterval = entries.find(([key]) => key === 'download_sleep_interval');
+  if (sleepInterval) {
+    const s = Number(sleepInterval[1]);
+    if (!Number.isInteger(s) || s < 0 || s > 60) {
+      return res.status(400).json({ error: 'download_sleep_interval must be a whole number from 0 to 60 seconds' });
+    }
   }
 
   const concurrency = entries.find(([key]) => key === 'max_concurrent_downloads');

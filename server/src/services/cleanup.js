@@ -29,6 +29,7 @@ function getCleanupConfig() {
     jellyfinApiKey: getSetting('jellyfin_api_key', ''),
     jellyfinUserId: getSetting('jellyfin_user_id', ''),
     keepRecentPerWatch: parseInt(getSetting('cleanup_keep_recent', '0'), 10) || 0,
+    minFreeDiskGb: Math.max(0, parseFloat(getSetting('cleanup_min_free_gb', '0')) || 0),
     plexEnabled: isTruthy(getSetting('cleanup_plex_enabled', '0')),
   };
 }
@@ -38,6 +39,43 @@ function getCleanupConfig() {
 // download whose watch was since deleted stays a candidate instead of silently becoming
 // permanently un-cleanable — it just reads as "not exempt" with no watch name to show.
 // Only the columns the plan uses: d.* would also read every job's yt-dlp log.
+
+// Queries filesystem free/total space on the video/download volume using Node's built-in
+// fs.statfsSync (zero external dependencies). Used by the Library header, Settings storage
+// indicator, and the low-disk safety guard that pauses scheduled Watch downloads.
+function getStorageStats(targetDir = null) {
+  const { VIDEO_DIR, DOWNLOAD_DIR } = require('./ytdlpPaths');
+  const dir = targetDir || VIDEO_DIR || DOWNLOAD_DIR || process.cwd();
+  const minFreeDiskGb = Math.max(0, parseFloat(getSetting('cleanup_min_free_gb', '0')) || 0);
+  try {
+    if (typeof fs.statfsSync !== 'function') return null;
+    const target = fs.existsSync(dir) ? dir : path.dirname(dir);
+    const st = fs.statfsSync(target);
+    const blockSize = Number(st.bsize || st.frsize || 4096);
+    const totalBytes = Number(st.blocks || 0) * blockSize;
+    const freeBytes = Number(st.bavail ?? st.bfree ?? 0) * blockSize;
+    if (totalBytes <= 0) return null;
+    const usedBytes = Math.max(0, totalBytes - freeBytes);
+    const usedPercent = Math.min(100, Math.round((usedBytes / totalBytes) * 1000) / 10);
+    const freeGb = freeBytes / (1024 ** 3);
+    const lowDiskWarning = freeGb < 10;
+    const belowMinFreeDisk = minFreeDiskGb > 0 && freeGb < minFreeDiskGb;
+    return {
+      path: dir,
+      freeBytes,
+      totalBytes,
+      usedBytes,
+      usedPercent,
+      freeGb: Math.round(freeGb * 10) / 10,
+      lowDiskWarning,
+      minFreeDiskGb,
+      belowMinFreeDisk,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 function getCleanupCandidates() {
   return db.prepare(`
     SELECT d.id, d.title, d.url, d.filepath, d.created_at, d.watch_id, d.protected, w.cleanup_exempt AS watch_cleanup_exempt, w.name AS watch_name, w.channel_name AS watch_channel_name
@@ -330,6 +368,7 @@ module.exports = {
   runDbMaintenance,
   computeCleanupPlan,
   getCleanupConfig,
+  getStorageStats,
   deleteDownloadFile,
   removeMediaFiles,
   listSidecars,
