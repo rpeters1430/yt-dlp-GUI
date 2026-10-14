@@ -1,8 +1,16 @@
 import { useEffect, useRef } from 'react';
 
-// Minimal modal accessibility: Escape closes it, and focus moves into the dialog on open
-// and returns to whatever triggered it on close, instead of staying wherever it was
-// (typically the button that opened the modal, invisible behind the backdrop).
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(', ');
+
+// Modal accessibility: Escape closes it, Tab / Shift+Tab stays trapped inside the dialog,
+// and focus moves into the dialog on open and returns to whatever triggered it on close.
 export function useModalA11y(active, onClose) {
   const containerRef = useRef(null);
   const previouslyFocused = useRef(null);
@@ -14,7 +22,35 @@ export function useModalA11y(active, onClose) {
     containerRef.current?.focus();
 
     function handleKeyDown(e) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (e.key === 'Tab' && containerRef.current) {
+        const focusable = Array.from(
+          containerRef.current.querySelectorAll(FOCUSABLE_SELECTOR)
+        ).filter((el) => el.offsetParent !== null || el === document.activeElement);
+
+        if (focusable.length === 0) {
+          e.preventDefault();
+          containerRef.current.focus();
+          return;
+        }
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const current = document.activeElement;
+
+        if (e.shiftKey) {
+          if (current === first || !containerRef.current.contains(current)) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else if (current === last || !containerRef.current.contains(current)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     }
     document.addEventListener('keydown', handleKeyDown);
 
