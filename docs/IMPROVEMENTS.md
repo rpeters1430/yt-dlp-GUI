@@ -79,6 +79,9 @@ delete them) as they land.
   and stats only the current page. Also batch qBittorrent download status lookups and fetch
   watch aggregates/latest runs in one query; nightly cleanup prunes old watch runs/sessions
   and runs SQLite maintenance.
+- [x] **Validate download and watch URLs against private DNS answers**, rate-limit failed
+  Lidarr API-key attempts, and verify FFmpeg/QuickJS downloads before installing them.
+- [x] **Optional Docker PUID/PGID support** for NAS volume ownership and non-root yt-dlp updates.
 
 ### Downloads & queue
 - [ ] **Clear completed** bulk action in History.

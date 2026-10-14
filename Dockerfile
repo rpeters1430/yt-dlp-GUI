@@ -49,10 +49,10 @@ ARG APT_REFRESH=
 
 # python3-pip is kept in the final image (not purged after install) so the Settings page's
 # "Update yt-dlp" action can run `pip3 install -U [--pre] yt-dlp` at runtime.
-# curl, unzip, and xz-utils are kept so the Settings page's "Update FFmpeg" and "Update yt-dlp"
-# actions can download and unpack builds at runtime.
+# curl, unzip, xz-utils, and gosu are kept so runtime binary updates and optional PUID/PGID
+# privilege dropping work out of the box.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
-    python3 python3-pip ca-certificates build-essential curl unzip xz-utils \
+    python3 python3-pip ca-certificates build-essential curl unzip xz-utils gosu \
     && pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements-docker.txt \
     && rm /tmp/requirements-docker.txt \
     && rm -rf /var/lib/apt/lists/*
@@ -103,6 +103,9 @@ RUN cd server && npm ci --omit=dev --omit=optional --no-audit --no-fund \
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 COPY server/ ./server/
 COPY --from=client-build /app/client/dist ./client/dist
 
@@ -110,13 +113,15 @@ ENV NODE_ENV=production \
     PORT=3000 \
     DOWNLOAD_DIR=/downloads \
     CONFIG_DIR=/config \
+    PYTHONUSERBASE=/config/python \
     YTDLP_BIN=yt-dlp \
-    PATH="/config/bin:${PATH}"
+    PATH="/config/bin:/config/python/bin:${PATH}"
 
-RUN mkdir -p /downloads /config
+RUN mkdir -p /downloads /config /config/bin /config/python
 VOLUME ["/downloads", "/config"]
 
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/health', {signal: AbortSignal.timeout(3000)}).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server/src/index.js"]

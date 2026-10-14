@@ -472,7 +472,7 @@ async function resolveArtistChannel(artistName) {
 }
 
 async function inspectUrl(url) {
-  ytdlp.assertPublicUrl(url);
+  await ytdlp.assertPublicUrlResolved(url);
   const info = await ytdlp.getInfo(url, { flatPlaylist: true });
 
   const entries = [];

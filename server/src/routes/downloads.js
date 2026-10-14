@@ -173,7 +173,7 @@ router.post('/', async (req, res) => {
   // anyway once the job actually runs, but that's a queued failure minutes later instead.
   for (const u of cleaned) {
     try {
-      ytdlp.assertPublicUrl(u);
+      await ytdlp.assertPublicUrlResolved(u);
     } catch (e) {
       return res.status(400).json({ error: `${e.message}: ${u}` });
     }

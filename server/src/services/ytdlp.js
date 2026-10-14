@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const dns = require('dns');
 const { spawn } = require('child_process');
 const siteProfiles = require('./siteProfiles');
 const { DEFAULT_TEMPLATE: DEFAULT_OUTPUT_TEMPLATE } = require('./outputTemplate');
@@ -13,6 +14,7 @@ const {
 } = require('./ytdlpCookies');
 const {
   getVersions, updateYtdlp, updateFfmpeg, updateFfmpegIfAvailable, updateQuickjs, updateQuickjsIfAvailable,
+  computeFileSha256, parseSha256ForAsset, verifyExecutableHeader,
 } = require('./ytdlpTools');
 
 function spawnYtdlp(args, options) {
@@ -116,11 +118,9 @@ function commonArgs() {
   ];
 }
 
-// Best-effort SSRF guard: yt-dlp's generic extractor will fetch essentially any URL, so a
-// pasted URL targeting a loopback/private/link-local literal IP could probe the server's own
-// internal network (other Docker services, cloud metadata endpoints, etc). This only checks
-// literal IPs and scheme — it does NOT resolve hostnames, so a hostname that *resolves* to a
-// private address (DNS rebinding) isn't caught. Set ALLOW_LOCAL_URLS=1 to disable entirely
+// SSRF guard: yt-dlp's generic extractor can fetch URLs targeting internal services. The
+// synchronous check below catches literal IPs; assertPublicUrlResolved also checks hostname
+// DNS answers immediately before metadata or download requests. Set ALLOW_LOCAL_URLS=1 only
 // for setups that intentionally target internal mirrors/services.
 function isPrivateOrLoopbackIp(host) {
   const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
@@ -165,6 +165,38 @@ function assertPublicUrl(url) {
   }
 }
 
+// Async SSRF + DNS rebinding guard: runs assertPublicUrl() first, then resolves all A/AAAA
+// records for the hostname via dns.promises.lookup({ all: true }) and rejects if any resolved
+// IPv4/IPv6 address is loopback, RFC1918 private, link-local, or unique-local (e.g. 127.0.0.1.nip.io).
+async function assertPublicUrlResolved(url, { lookup = dns.promises.lookup } = {}) {
+  if (process.env.ALLOW_LOCAL_URLS === '1') return;
+  if (typeof url === 'string' && /^ytsearch/i.test(url)) return;
+  assertPublicUrl(url);
+  const parsed = new URL(url);
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').replace(/\.+$/, '').toLowerCase();
+  // Literal IP addresses were already validated by assertPublicUrl.
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(':')) return;
+
+  let records;
+  try {
+    records = await lookup(host, { all: true, verbatim: true });
+  } catch (err) {
+    // Fail closed: proceeding would let yt-dlp perform a second DNS lookup that could resolve
+    // to a private address after this preflight failed.
+    throw new Error(`Could not validate URL hostname "${host}" (${err.code || err.message})`, { cause: err });
+  }
+  const list = Array.isArray(records) ? records : (records ? [records] : []);
+  if (list.length === 0) {
+    throw new Error(`Could not validate URL hostname "${host}" (no address records)`);
+  }
+  for (const rec of list) {
+    const addr = String(rec?.address || rec || '').replace(/^\[|\]$/g, '').toLowerCase();
+    if (addr && isPrivateOrLoopbackIp(addr)) {
+      throw new Error(`URL hostname "${host}" resolves to a local/private network address (${addr})`);
+    }
+  }
+}
+
 // Reddit's mobile app "Share" button produces short links like
 // https://www.reddit.com/r/<sub>/s/<code>. yt-dlp's Reddit extractor only matches
 // /comments/<id> URLs, so share links fall through to the generic extractor, which Reddit
@@ -205,12 +237,13 @@ const shareResolveCache = new Map();
 
 // Follows one share link's redirect chain with a single user agent. Resolves to the clean
 // post URL, or rejects when that user agent didn't lead to a post.
-async function resolveShareUrlWithAgent(shareUrl, userAgent) {
+async function resolveShareUrlWithAgent(shareUrl, userAgent, validateUrl = assertPublicUrlResolved) {
   // Follow a short redirect chain by hand (e.g. reddit.com -> www.reddit.com -> post) so
   // every hop is checked against the Reddit host guard instead of trusting fetch's follow.
   let current = shareUrl;
   let status = null;
   for (let hop = 0; hop < SHARE_RESOLVE_MAX_HOPS; hop++) {
+    await validateUrl(current);
     const res = await fetch(current, {
       method: 'GET',
       redirect: 'manual',
@@ -238,7 +271,7 @@ async function resolveShareUrlWithAgent(shareUrl, userAgent) {
 
 // Returns the canonical URL for known short/share links, or the input unchanged. Never
 // throws: if resolution fails we let yt-dlp try the original URL and report its own error.
-async function resolveShareUrl(url) {
+async function resolveShareUrl(url, { validateUrl = assertPublicUrlResolved } = {}) {
   if (!isRedditShareUrl(url)) return url;
   const shareUrl = url.trim();
   const cached = shareResolveCache.get(shareUrl);
@@ -247,7 +280,7 @@ async function resolveShareUrl(url) {
   // doesn't add its full timeout in front of the one Reddit actually answers.
   try {
     const resolved = await Promise.any(
-      SHARE_RESOLVE_USER_AGENTS.map((userAgent) => resolveShareUrlWithAgent(shareUrl, userAgent))
+      SHARE_RESOLVE_USER_AGENTS.map((userAgent) => resolveShareUrlWithAgent(shareUrl, userAgent, validateUrl))
     );
     console.log(`[ytdlp] Resolved Reddit share link ${shareUrl} -> ${resolved}`);
     if (shareResolveCache.size >= SHARE_RESOLVE_CACHE_MAX) {
@@ -275,6 +308,7 @@ const GETINFO_TIMEOUT_MS = parseInt(process.env.GETINFO_TIMEOUT_MS || String(2 *
 // minutes (see rememberInfo) instead of running yt-dlp again.
 async function getInfo(url, { resolveShare = true, reuseRecent = false, ...options } = {}) {
   const resolved = resolveShare ? await resolveShareUrl(url) : url;
+  await assertPublicUrlResolved(resolved);
   const cacheable = !options.playlistEnd && !options.playlistStart;
   if (reuseRecent && cacheable) {
     const recent = recallInfo(resolved);
@@ -548,7 +582,7 @@ function runFfmpegCollect(args) {
 async function embedThumbnailFromUrl(filepath, thumbnailUrl) {
   const ext = path.extname(filepath).slice(1).toLowerCase();
   if (!THUMBNAIL_FALLBACK_EXTS.has(ext)) throw new Error(`can't embed a thumbnail into .${ext}`);
-  assertPublicUrl(thumbnailUrl);
+  await assertPublicUrlResolved(thumbnailUrl);
 
   const res = await fetch(thumbnailUrl, { signal: AbortSignal.timeout(30000) });
   if (!res.ok) throw new Error(`HTTP ${res.status} fetching thumbnail`);
@@ -1070,7 +1104,9 @@ function getDownloadIdleTimeoutMs(url, options = {}, timeouts = {}) {
 // Downloads a single URL, streaming progress updates via onProgress({percent, speed, eta})
 // and log messages via onLog(line).
 // Resolves with { filepath, command } once yt-dlp exits successfully.
-function download(url, options = {}, onProgress, onLog) {
+async function download(url, options = {}, onProgress, onLog) {
+  // Queue items may wait before starting, so validate DNS again at dispatch time.
+  await assertPublicUrlResolved(url);
   const args = buildDownloadArgs(url, options);
   const commandStr = formatCommand(YTDLP_BIN, args);
   const jobId = options.jobId ? `job:${options.jobId}` : 'download';
@@ -1086,11 +1122,6 @@ function download(url, options = {}, onProgress, onLog) {
   }
 
   return new Promise((resolve, reject) => {
-    try {
-      assertPublicUrl(url);
-    } catch (e) {
-      return reject(e);
-    }
     // Detached POSIX jobs lead their own process group. On Windows, detached gives yt-dlp
     // a private console/process group for the targeted CTRL+BREAK sent by stopDownload().
     let proc;
@@ -1476,6 +1507,11 @@ module.exports = {
   stopDownload,
   cleanupPartialFiles,
   assertPublicUrl,
+  assertPublicUrlResolved,
+  isPrivateOrLoopbackIp,
+  computeFileSha256,
+  parseSha256ForAsset,
+  verifyExecutableHeader,
   setTwitchAuthCookie,
   hasTwitchAuthCookie,
   getTwitchAuthTokenMasked,
