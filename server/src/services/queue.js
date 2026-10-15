@@ -237,6 +237,11 @@ function emitCounts() {
 
 // `extra` carries log/command_args on the updates that changed them; clients keep the
 // last copy they got, so every other update can leave them out.
+// Ad-hoc live events that aren't job updates (e.g. analyze progress).
+function broadcast(event, payload) {
+  if (io) io.emit(event, payload);
+}
+
 function emit(job, extra) {
   // A job removed from the list mid-run has no row left to report.
   if (io && job) io.emit('job:update', extra ? { ...job, ...extra } : job);
@@ -846,5 +851,5 @@ module.exports = {
   init, enqueue, createQueuedJob, startQueuedJobs, setWatchItemListener, listJobs, searchJobs, getStatusCounts,
   getJobLog, getJob, getJobSummary, listColumns, announceJob, stopJob, removeJob, retryJob, retryFailedJobs,
   clearFailedJobs, findCompletedDuplicates, getActiveCount, getMaxConcurrent, processNext, MAX_CONCURRENT_LIMIT,
-  measureDownloadSize, hasSidecarPoster, isQueuePaused, pauseQueue, resumeQueue, prioritizeJob,
+  measureDownloadSize, hasSidecarPoster, isQueuePaused, pauseQueue, resumeQueue, prioritizeJob, broadcast,
 };

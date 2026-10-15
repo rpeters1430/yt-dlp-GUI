@@ -592,3 +592,13 @@ test('buildDownloadArgs supports rate controls and section trimming', () => {
   assert.notEqual(sectionIdx, -1);
   assert.equal(args[sectionIdx + 1], '*00:01:00-00:03:30');
 });
+
+test('parseStageLine reads yt-dlp status lines and drops the video id', () => {
+  const { parseStageLine } = require('./ytdlp');
+  assert.deepEqual(parseStageLine('[youtube] dQw4w9WgXcQ: Downloading webpage'), { source: 'youtube', message: 'Downloading webpage' });
+  assert.deepEqual(parseStageLine('[youtube] Extracting URL: https://youtu.be/x'), { source: 'youtube', message: 'Extracting URL: https://youtu.be/x' });
+  assert.deepEqual(parseStageLine('[info] abc: Downloading 1 format(s): 22'), { source: 'info', message: 'Downloading 1 format(s): 22' });
+  assert.deepEqual(parseStageLine('[youtube:tab] Downloading playlist PLx - add --no-playlist'), { source: 'youtube:tab', message: 'Downloading playlist PLx - add --no-playlist' });
+  assert.equal(parseStageLine('{"id": "x"}'), null);
+  assert.equal(parseStageLine(''), null);
+});

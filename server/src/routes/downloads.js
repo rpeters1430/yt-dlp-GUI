@@ -10,12 +10,19 @@ router.use(requireAuth);
 
 // Fetch metadata/formats for a URL before download, supporting both single videos and playlists.
 router.post('/info', async (req, res) => {
-  const { url: rawUrl } = req.body || {};
+  const { url: rawUrl, analyzeId: rawAnalyzeId } = req.body || {};
   if (!rawUrl) return res.status(400).json({ error: 'url is required' });
+  // The client picks an id per Analyze and listens for 'analyze:progress' events carrying it,
+  // so it can show what yt-dlp is doing while this request is still open.
+  const analyzeId = typeof rawAnalyzeId === 'string' && /^[\w-]{1,64}$/.test(rawAnalyzeId) ? rawAnalyzeId : null;
+  const report = analyzeId
+    ? (stage) => queue.broadcast('analyze:progress', { id: analyzeId, at: Date.now(), ...stage })
+    : null;
   let url = ytdlp.normalizeUrl(rawUrl);
   try {
+    if (report) report({ source: 'app', message: 'Resolving link' });
     url = await ytdlp.resolveShareUrl(url);
-    let info = await ytdlp.getInfo(url, { flatPlaylist: true, resolveShare: false, reuseRecent: true });
+    let info = await ytdlp.getInfo(url, { flatPlaylist: true, resolveShare: false, reuseRecent: true, onProgress: report });
     const isPlaylist = info._type === 'playlist' || Array.isArray(info.entries);
 
     if (isPlaylist) {
@@ -44,8 +51,9 @@ router.post('/info', async (req, res) => {
     // the full extraction. Re-probing it when formats are empty (scheduled streams, image or
     // text posts) just ran the same slow lookup twice; only a bare URL reference needs it.
     if (info._type === 'url' || info._type === 'url_transparent') {
-      info = await ytdlp.getInfo(info.url || url, { flatPlaylist: false });
+      info = await ytdlp.getInfo(info.url || url, { flatPlaylist: false, onProgress: report });
     }
+    if (report) report({ source: 'app', message: 'Reading formats' });
 
     const heights = [...new Set((info.formats || []).map((f) => f.height).filter(Boolean))].sort((a, b) => b - a);
     const bestVideo = (info.formats || [])

@@ -30,7 +30,7 @@ export const api = {
   logout: () => request('/auth/logout', { method: 'POST' }),
   changePassword: (currentPassword, newPassword) => request('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
 
-  getInfo: (url) => request('/downloads/info', { method: 'POST', body: JSON.stringify({ url }) }),
+  getInfo: (url, analyzeId) => request('/downloads/info', { method: 'POST', body: JSON.stringify({ url, analyzeId }) }),
   enqueue: (payload) => request('/downloads', { method: 'POST', body: JSON.stringify(payload) }),
   listDownloads: () => request('/downloads'),
   searchDownloads: ({ status = 'all', q = '', limit = 50, offset = 0, category = 'all' } = {}) =>
@@ -48,6 +48,11 @@ export const api = {
   retryFailedDownloads: (options = {}) => request('/downloads/retry-failed', { method: 'POST', body: JSON.stringify(options) }),
   checkDuplicates: (items) => request('/downloads/check-duplicates', { method: 'POST', body: JSON.stringify({ items }) }),
   toggleDownloadProtect: (id, protectedFlag) => request(`/downloads/${id}/protect`, { method: 'PATCH', body: JSON.stringify({ protected: protectedFlag }) }),
+
+  crawlLinks: (payload) => request('/linkgrabber/crawl', { method: 'POST', body: JSON.stringify(payload) }),
+  sendLinks: (payload) => request('/linkgrabber/send', { method: 'POST', body: JSON.stringify(payload) }),
+  getLinkGrabberSettings: () => request('/linkgrabber/settings'),
+  updateLinkGrabberSettings: (payload) => request('/linkgrabber/settings', { method: 'PUT', body: JSON.stringify(payload) }),
 
   listWatches: () => request('/watches'),
   inspectWatch: (url) => request('/watches/inspect', { method: 'POST', body: JSON.stringify({ url }) }),

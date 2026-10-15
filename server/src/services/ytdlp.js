@@ -327,6 +327,7 @@ async function getInfo(url, { resolveShare = true, reuseRecent = false, ...optio
     const recent = recallInfo(resolved);
     if (recent) {
       console.log(`[ytdlp:info] Reusing metadata fetched moments ago for ${resolved}`);
+      if (options.onProgress) options.onProgress({ source: 'app', message: 'Using metadata fetched moments ago' });
       return recent;
     }
   }
@@ -369,7 +370,20 @@ function clearRecentCaches() {
   shareResolveCache.clear();
 }
 
-function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, playlistEnd = null } = {}) {
+// yt-dlp's own status lines ("[youtube] abc123: Downloading webpage") as { source, message }.
+// The video id prefix is dropped; null for anything that isn't a "[source] message" line.
+function parseStageLine(line) {
+  const m = String(line || '').trim().match(/^\[([\w:.-]+)\]\s+(.+)$/);
+  if (!m) return null;
+  let message = m[2];
+  if (!/^Extracting URL\b/i.test(message)) message = message.replace(/^[^\s:]+:\s+/, '');
+  return { source: m[1], message: message.slice(0, 300) };
+}
+
+// onProgress, when given, receives each parseStageLine() result while yt-dlp works. -J is
+// quiet by default; --no-quiet prints those status lines on stdout ahead of the single JSON
+// line, so they're split off from the JSON below.
+function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, playlistEnd = null, onProgress = null } = {}) {
   return new Promise((resolve, reject) => {
     try {
       assertPublicUrl(url);
@@ -383,6 +397,7 @@ function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, play
     if (flatPlaylist) args.push('--flat-playlist');
     if (playlistStart && playlistStart > 0) args.push('--playlist-start', String(playlistStart));
     if (playlistEnd) args.push('--playlist-end', String(playlistEnd));
+    if (onProgress) args.push('--no-quiet');
     args.push(url);
 
     console.log(`[ytdlp:info] Fetching metadata for ${url}`);
@@ -397,10 +412,31 @@ function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, play
       killProcessTree(proc, 'SIGKILL');
     }, GETINFO_TIMEOUT_MS);
 
-    proc.stdout.on('data', (d) => (stdout += d));
+    let pending = '';
+    const takeLines = (chunk) => {
+      pending += chunk;
+      const lines = pending.split('\n');
+      pending = lines.pop();
+      for (const line of lines) {
+        const stage = line.startsWith('[') ? parseStageLine(line) : null;
+        if (stage) {
+          try { onProgress(stage); } catch (_) {}
+        } else {
+          stdout += line + '\n';
+        }
+      }
+    };
+    proc.stdout.on('data', (d) => {
+      if (onProgress) takeLines(String(d));
+      else stdout += d;
+    });
     proc.stderr.on('data', (d) => (stderr += d));
     proc.on('close', (code) => {
       clearTimeout(timeout);
+      if (onProgress && pending) {
+        stdout += pending;
+        pending = '';
+      }
       if (timedOut) {
         return reject(new Error(`Metadata lookup timed out after ${Math.round(GETINFO_TIMEOUT_MS / 1000)}s`));
       }
@@ -1550,6 +1586,7 @@ module.exports = {
   isSubtitleDownloadError,
   BOT_CHECK_HINT,
   normalizeUrl,
+  parseStageLine,
   isNotLiveError,
   parseNotLiveError,
   withPrivateCookies,

@@ -2,12 +2,19 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { api } from '../api.js';
 import { defaultDownloadOptions, isWatchableUrl, normalizeUrl } from '../components/DownloadOptionsFields.jsx';
 import { getStoredDownloadDefaults, storeDownloadDefaults } from '../prefs.js';
+import { useDownloads } from './DownloadsContext.jsx';
 
 // Links pasted on Home wait here ("Ready to download") until they're queued. It lives above
 // the routes so the tray survives a trip to another page and back.
 const StagingContext = createContext(null);
 
 let nextId = 1;
+const MAX_STEPS = 40;
+
+// Ties this tab's Analyze requests to the server's 'analyze:progress' events.
+function newAnalyzeId() {
+  return `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
 
 export function parseLinks(text) {
   return String(text || '')
@@ -64,6 +71,7 @@ export function stagedAction(item) {
 
 export function StagingProvider({ children }) {
   const [staged, setStaged] = useState([]);
+  const { subscribeAnalyzeProgress } = useDownloads();
   const [defaults, setDefaultsState] = useState(() => defaultDownloadOptions(getStoredDownloadDefaults() || {}));
   const [committing, setCommitting] = useState(false);
   // The tray as of the last render, read by analyze/commit without re-creating them.
@@ -86,6 +94,17 @@ export function StagingProvider({ children }) {
     storeDownloadDefaults(next);
   }, []);
 
+  // Live yt-dlp status lines for links still being analyzed; shown by the tray's animation.
+  useEffect(() => subscribeAnalyzeProgress((event) => {
+    if (!event || !event.id) return;
+    setStaged((prev) => {
+      if (!prev.some((it) => it.analyzeId === event.id && it.loading)) return prev;
+      return prev.map((it) => (it.analyzeId === event.id && it.loading
+        ? { ...it, steps: [...(it.steps || []), { source: event.source, message: event.message, at: event.at }].slice(-MAX_STEPS) }
+        : it));
+    });
+  }), [subscribeAnalyzeProgress]);
+
   const update = useCallback((id, patch) => {
     setStaged((prev) => prev.map((it) => (it.id === id ? { ...it, ...(typeof patch === 'function' ? patch(it) : patch) } : it)));
   }, []);
@@ -100,6 +119,8 @@ export function StagingProvider({ children }) {
         id: nextId++,
         url,
         loading: true,
+        analyzeId: newAnalyzeId(),
+        steps: [],
         error: '',
         info: null,
         dup: null,
@@ -114,7 +135,7 @@ export function StagingProvider({ children }) {
     setStaged((prev) => [...prev, ...fresh]);
 
     for (const item of fresh) {
-      api.getInfo(item.url)
+      api.getInfo(item.url, item.analyzeId)
         .then((info) => {
           update(item.id, { loading: false, info });
           if (info.isPlaylist) return;

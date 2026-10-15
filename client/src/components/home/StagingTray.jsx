@@ -1,6 +1,7 @@
 import React from 'react';
 import { X } from 'lucide-react';
 import Art from '../Art.jsx';
+import AnalyzeSteps, { AnalyzeArt } from './AnalyzeProgress.jsx';
 import { useStaging, stagedAction } from '../../context/StagingContext.jsx';
 import { summarizeOptions } from '../DownloadOptionsFields.jsx';
 import { formatCount, formatDuration, shortDate, siteName } from '../../format.js';
@@ -35,7 +36,8 @@ function StagedCard({ item, defaults, onOptions }) {
 
   return (
     <div className="staged-card">
-      <Art src={info?.thumbnail} className="staged-art" label={loading ? 'analyzing…' : null}>
+      <Art src={info?.thumbnail} className="staged-art">
+        {loading && <AnalyzeArt steps={item.steps} />}
         {isLive && <span className="badge badge-live">● LIVE</span>}
         {!isLive && info?.duration ? <span className="badge badge-duration">{formatDuration(info.duration)}</span> : null}
       </Art>
@@ -45,7 +47,7 @@ function StagedCard({ item, defaults, onOptions }) {
         {error ? (
           <div className="staged-format text-accent">Couldn&apos;t analyze: {error} · will try anyway</div>
         ) : loading ? (
-          <div className="staged-format muted">analyzing…</div>
+          <AnalyzeSteps steps={item.steps} />
         ) : (
           <div className="staged-format">{formatLine(item, opts)}{item.opts ? ' · custom options' : ''}</div>
         )}
