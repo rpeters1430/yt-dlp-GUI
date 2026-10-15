@@ -1,4 +1,4 @@
-const path = require('path');
+const { resolveMusicDir } = require('../ytdlpPaths');
 const { evaluateEntry, watchConfigError } = require('./filters');
 const { scanToBoundary, HARD_SCAN_LIMIT, FULL_BACKFILL_LIMIT } = require('./discovery');
 const { CONTENT_TYPES, scanSources, mergeNewestFirst, isMissingTabError, parseContentTypes, watchContentTypes } = require('./tabs');
@@ -14,7 +14,7 @@ function extractThumbnail(info) {
 }
 
 // Queue options for a download triggered by this watch.
-function buildDownloadOptions(watch, downloadDir) {
+function buildDownloadOptions(watch) {
   const sponsorblockCategories = watch.sponsorblock
     ? (watch.sponsorblock_categories ? watch.sponsorblock_categories.split(',').map((s) => s.trim()).filter(Boolean) : ['sponsor'])
     : [];
@@ -22,8 +22,7 @@ function buildDownloadOptions(watch, downloadDir) {
   let outputTemplate = null;
   let audioQuality = null;
   if (watch.is_music) {
-    const musicFolder = watch.music_folder || 'Music';
-    const resolvedMusicDir = path.isAbsolute(musicFolder) ? musicFolder : path.join(downloadDir || '', musicFolder);
+    const resolvedMusicDir = resolveMusicDir(watch.music_folder);
     // No album/playlist tag (a single, not part of a release) leaves this segment empty;
     // yt-dlp collapses the resulting "//" so the file lands directly in the artist
     // folder instead of a redundant subfolder that just repeats the artist's name.
@@ -135,7 +134,7 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
 
   // Creates and links download jobs for these items in one transaction, then starts them.
   function queueItems(watch, items, runId) {
-    const options = buildDownloadOptions(watch, ytdlp.DOWNLOAD_DIR);
+    const options = buildDownloadOptions(watch);
     const created = repository.transaction(() => items.map((item) => {
       const url = item.url || `https://www.youtube.com/watch?v=${item.video_id}`;
       const { id } = queue.createQueuedJob(url, { ...options, watchItemId: item.id });
@@ -202,7 +201,25 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
       // A tab switched off stops queueing, including its pending backlog and retries.
       const selectedTabs = scanSources(watch).some((src) => src.tab) ? watchContentTypes(watch) : null;
       const candidates = repository.queueCandidates(watch.id, repository.now(), budget, { tabs: selectedTabs });
-      const queued = queueItems(watch, candidates, runId);
+      let lowDiskGuardError = null;
+      let canQueue = true;
+      if (candidates.length > 0) {
+        try {
+          const cleanup = require('../cleanup');
+          let storage = cleanup.getStorageStats ? cleanup.getStorageStats() : null;
+          if (storage && storage.belowMinFreeDisk) {
+            log(watch, runId, `free disk space (${storage.freeGb} GB) is below minimum guard (${storage.minFreeDiskGb} GB); triggering auto-delete check`);
+            await cleanup.runCleanup().catch(() => {});
+            storage = cleanup.getStorageStats ? cleanup.getStorageStats() : null;
+          }
+          if (storage && storage.belowMinFreeDisk) {
+            canQueue = false;
+            lowDiskGuardError = `Paused queueing: free disk space (${storage.freeGb} GB) is below minimum guard (${storage.minFreeDiskGb} GB)`;
+            log(watch, runId, lowDiskGuardError);
+          }
+        } catch (_) {}
+      }
+      const queued = canQueue ? queueItems(watch, candidates, runId) : [];
 
       const agg = repository.aggregateWatch(watch.id);
       // A full backfill that hit its limit is reported like a partial scan, so the Watch card
@@ -227,9 +244,11 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
       repository.updateWatchStatus(watch.id, {
         last_checked_at: repository.nowSql(),
         last_status: 'ok',
-        last_error: backfillTruncated
-          ? `Only the newest ${FULL_BACKFILL_LIMIT} videos were downloaded; older ones were skipped`
-          : (partial ? 'Scan limit reached before known content' : null),
+        last_error: lowDiskGuardError
+          ? lowDiskGuardError
+          : (backfillTruncated
+            ? `Only the newest ${FULL_BACKFILL_LIMIT} videos were downloaded; older ones were skipped`
+            : (partial ? 'Scan limit reached before known content' : null)),
         last_new_count: counts.new,
         thumbnail: latest.thumbnail || extractThumbnail(scan.info),
         channel_name: latest.channel_name || scan.info.uploader || scan.info.channel || null,

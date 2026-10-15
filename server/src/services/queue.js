@@ -1,5 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
+const path = require('path');
 const db = require('../db');
 const ytdlp = require('./ytdlp');
 const siteProfiles = require('./siteProfiles');
@@ -9,6 +10,38 @@ const plexSync = require('./plexSync');
 const outputTemplate = require('./outputTemplate');
 const notify = require('./notify');
 const liveSplitter = require('./liveSplitter');
+
+// Computes total byte size across a completed download (or its split chunks) and checks for
+// a sidecar poster image so /api/library can sort and filter in SQL without statting every file.
+function measureDownloadSize(filepath, splitParts = null) {
+  const paths = Array.isArray(splitParts) && splitParts.length > 1
+    ? splitParts
+    : (filepath ? [filepath] : []);
+  let total = 0;
+  let found = false;
+  for (const p of paths) {
+    if (!p) continue;
+    try {
+      const st = fs.statSync(p);
+      if (st.isFile()) {
+        total += st.size;
+        found = true;
+      }
+    } catch (_) {}
+  }
+  return found ? total : null;
+}
+
+function hasSidecarPoster(filepath) {
+  if (!filepath) return 0;
+  const ext = path.extname(filepath);
+  const poster = `${filepath.slice(0, filepath.length - ext.length)}.jpg`;
+  try {
+    return fs.statSync(poster).isFile() ? 1 : 0;
+  } catch (_) {
+    return 0;
+  }
+}
 
 // The channel's own page, for its name, description, avatar and banner (TV-layout show
 // artwork). One entry per tab is enough; only the channel-level fields are used.
@@ -21,10 +54,54 @@ function isNfoEnabled() {
   return !row || row.value !== '0'; // opt-out, defaults to enabled
 }
 
-const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_DOWNLOADS || '2', 10);
+const ENV_MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_DOWNLOADS || '2', 10) || 2;
+const MAX_CONCURRENT_LIMIT = 10;
+
+// How many downloads run at once: the Settings value when one is saved, else the
+// MAX_CONCURRENT_DOWNLOADS env var (default 2).
+function getMaxConcurrent() {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'max_concurrent_downloads'").get();
+  const saved = row ? parseInt(row.value, 10) : NaN;
+  if (saved >= 1 && saved <= MAX_CONCURRENT_LIMIT) return saved;
+  return ENV_MAX_CONCURRENT;
+}
 
 let io = null;
 let activeCount = 0;
+
+function isQueuePaused() {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'queue_paused'").get();
+  return !!(row && row.value === '1');
+}
+
+function setQueuePaused(paused) {
+  db.prepare(`
+    INSERT INTO settings (key, value) VALUES ('queue_paused', ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(paused ? '1' : '0');
+  emitCounts();
+  if (!paused) processNext();
+  return isQueuePaused();
+}
+
+function pauseQueue() {
+  return setQueuePaused(true);
+}
+
+function resumeQueue() {
+  return setQueuePaused(false);
+}
+
+function getRateAndSleepSettings() {
+  const rows = db.prepare("SELECT key, value FROM settings WHERE key IN ('download_limit_rate', 'download_sleep_interval')").all();
+  const map = {};
+  for (const r of rows) map[r.key] = r.value;
+  return {
+    limitRate: (map.download_limit_rate || '').trim(),
+    sleepInterval: parseInt(map.download_sleep_interval || '0', 10) || 0,
+  };
+}
+
 
 function init(socketIo) {
   io = socketIo;
@@ -100,7 +177,7 @@ function byNewest(a, b) {
 }
 
 // Paged, filtered view of the whole history for the History page.
-function searchJobs({ status, q, limit, offset } = {}) {
+function searchJobs({ status, q, limit, offset, category = 'all' } = {}) {
   const where = [];
   const params = [];
   if (status && status !== 'all') {
@@ -116,6 +193,22 @@ function searchJobs({ status, q, limit, offset } = {}) {
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const pageSize = clampLimit(limit, 50);
   const skip = Math.max(0, parseInt(offset, 10) || 0);
+  if (status === 'failed') {
+    const rows = db.prepare(`SELECT id, error FROM downloads ${whereSql} ORDER BY created_at DESC, rowid DESC`).all(...params);
+    const failureCounts = { all: rows.length, network_or_stalled: 0, bot_check: 0, auth_required: 0, unavailable: 0 };
+    for (const row of rows) failureCounts[ytdlp.classifyFailure(row.error)]++;
+    const validCategories = new Set(['all', 'network_or_stalled', 'bot_check', 'auth_required', 'unavailable']);
+    const selected = validCategories.has(category) && category !== 'all'
+      ? rows.filter((row) => ytdlp.classifyFailure(row.error) === category)
+      : rows;
+    const pageRows = selected.slice(skip, skip + pageSize);
+    const pageIds = pageRows.map((row) => row.id);
+    const jobs = pageIds.length
+      ? db.prepare(`SELECT ${listColumns()} FROM downloads WHERE id IN (${pageIds.map(() => '?').join(',')})`).all(...pageIds)
+      : [];
+    const byId = new Map(jobs.map((job) => [job.id, job]));
+    return { jobs: pageIds.map((id) => byId.get(id)).filter(Boolean), total: selected.length, failureCounts };
+  }
   const total = db.prepare(`SELECT COUNT(*) AS c FROM downloads ${whereSql}`).get(...params).c;
   const jobs = db.prepare(`
     SELECT ${listColumns()} FROM downloads ${whereSql}
@@ -126,9 +219,14 @@ function searchJobs({ status, q, limit, offset } = {}) {
 
 // Count of jobs per status across the whole history, for the dashboard's stat cards.
 function getStatusCounts() {
-  const counts = { queued: 0, downloading: 0, completed: 0, failed: 0 };
+  const counts = { queued: 0, downloading: 0, completed: 0, failed: 0, paused: isQueuePaused() };
   for (const row of db.prepare('SELECT status, COUNT(*) AS c FROM downloads GROUP BY status').all()) {
     counts[row.status] = row.c;
+  }
+  try {
+    counts.storage = require('./cleanup').getStorageStats();
+  } catch (_) {
+    counts.storage = null;
   }
   return counts;
 }
@@ -167,9 +265,10 @@ function createQueuedJob(url, options = {}) {
     } catch (_) {}
   }
 
+  const priority = Number.isFinite(options.priority) ? options.priority : (options.watchId ? 0 : 10);
   db.prepare(`
-    INSERT INTO downloads (id, url, status, format_selector, audio_only, subtitles, quality, container, sub_langs, watch_id, watch_item_id, is_live, live_chunk_mins, options_json, command_args, log)
-    VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+    INSERT INTO downloads (id, url, status, format_selector, audio_only, subtitles, quality, container, sub_langs, watch_id, watch_item_id, is_live, live_chunk_mins, options_json, priority, command_args, log)
+    VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
   `).run(
     id,
     url,
@@ -183,7 +282,8 @@ function createQueuedJob(url, options = {}) {
     options.watchItemId || null,
     isLive,
     liveChunkMins,
-    optionsJson
+    optionsJson,
+    priority
   );
   return { id, job: getJob(id) };
 }
@@ -250,18 +350,20 @@ function startJob(job, usesSlot) {
 }
 
 function processNext() {
+  if (isQueuePaused()) return;
   // A job waiting for a scheduled broadcast can sit idle for hours or days, and must be
   // running when the stream starts — so it never waits for (or holds) a download slot.
   const waiting = db.prepare(`SELECT * FROM downloads WHERE status = 'queued' AND ${WAIT_FOR_LIVE_SQL}`).all();
   for (const job of waiting) startJob(job, false);
 
   // Only read as many queued rows as there are free slots; a big playlist backfill can
-  // leave thousands queued, and this runs every time a download finishes.
-  const free = MAX_CONCURRENT - activeCount;
+  // leave thousands queued, and this runs every time a download finishes. Manual downloads
+  // default to priority 10 and Watch backfills to priority 0, so manual jobs jump ahead.
+  const free = getMaxConcurrent() - activeCount;
   if (free <= 0) return;
   const next = db.prepare(`
     SELECT * FROM downloads WHERE status = 'queued' AND NOT coalesce(${WAIT_FOR_LIVE_SQL}, 0)
-    ORDER BY created_at ASC, rowid ASC LIMIT ?
+    ORDER BY COALESCE(priority, 0) DESC, created_at ASC, rowid ASC LIMIT ?
   `).all(free);
   for (const job of next) startJob(job, true);
 }
@@ -281,6 +383,7 @@ async function runJob(job) {
     } catch (_) {}
   }
 
+  const { limitRate, sleepInterval } = getRateAndSleepSettings();
   const downloadOptions = {
     audioOnly: !!job.audio_only,
     formatSelector: job.format_selector,
@@ -290,6 +393,8 @@ async function runJob(job) {
     subLangs: job.sub_langs,
     isLive: !!job.is_live,
     jobId: job.id,
+    ...(limitRate ? { limitRate } : {}),
+    ...(sleepInterval > 0 ? { sleepInterval } : {}),
     ...extraOptions,
   };
   // Music downloads carry their own library layout; everything else follows the Watch's
@@ -302,6 +407,7 @@ async function runJob(job) {
   const ffmpegDir = ytdlp.getFfmpegDir();
 
   appendLog(`Download job started`);
+  for (const attempt of extraOptions.previousAttempts || []) appendLog(`Previous match ${attempt}`);
   appendLog(`URL: ${job.url}`);
   if (ffmpegDir) {
     appendLog(`FFmpeg path: ${ffmpegDir}`);
@@ -508,12 +614,16 @@ async function runJob(job) {
 
     appendLog(completionMsg);
     console.log(`[queue] [job:${job.id}] ${completionMsg}`);
+    const filesize = measureDownloadSize(result.filepath, result.splitParts);
+    const hasPoster = hasSidecarPoster(result.filepath);
     updateJob(job.id, {
       status: 'completed',
       percent: 100,
       stage: result.splitParts && result.splitParts.length > 1 ? `Split into ${result.splitParts.length} chunks` : 'Completed',
       filepath: result.filepath || null,
       split_parts: result.splitParts ? JSON.stringify(result.splitParts) : null,
+      filesize,
+      has_poster: hasPoster,
       pid: null,
       log: logLines.join('\n'),
     });
@@ -528,6 +638,11 @@ async function runJob(job) {
         const targetPath = filesToTag[i];
         const partInfo = filesToTag.length > 1 ? { ...nfoInfo, title: `${nfoInfo.title} (Part ${i + 1})` } : nfoInfo;
         nfo.writeSidecarFiles(targetPath, partInfo, { fetchChannelInfo: fetchChannelListing })
+          .then(() => {
+            if (i === 0 && hasSidecarPoster(result.filepath)) {
+              db.prepare('UPDATE downloads SET has_poster = 1 WHERE id = ?').run(job.id);
+            }
+          })
           .catch((e) => console.error(`[queue] [job:${job.id}] Failed to write .nfo/poster for ${targetPath}: ${e.message}`));
       }
     }
@@ -542,26 +657,18 @@ async function runJob(job) {
       console.error(`[queue] [job:${job.id}] Jellyfin library scan schedule failed: ${e.message}`);
     }
 
-    // Best-effort: Jellyfin may not have scanned this file into its library yet, in which
-    // case this is a no-op and the periodic sync job (jellyfinSync.start) picks it up later.
-    if (job.watch_id) {
-      const syncConfig = jellyfinSync.getSyncConfig();
-      if (syncConfig.enabled) {
-        jellyfinSync.syncWatch(job.watch_id, { config: syncConfig })
-          .catch((e) => console.error(`[queue] [job:${job.id}] Jellyfin playlist sync failed: ${e.message}`));
-      }
+    // Playlist sync waits until the library scan above has had time to find the file, and
+    // runs once per watch after a batch of downloads; the periodic job catches up on the rest.
+    if (job.watch_id && jellyfinSync.getSyncConfig().enabled) {
+      jellyfinSync.scheduleWatchSync(job.watch_id);
     }
 
-    // Same two steps for Plex: a debounced library refresh, then a best-effort playlist sync
-    // that the periodic job (plexSync.start) catches up on once Plex has scanned the file.
+    // Same two steps for Plex: a debounced library refresh, then a delayed playlist sync.
     try {
       const plexConfig = plexSync.getPlexConfig();
       if (plexSync.isConfigured(plexConfig)) {
         plexSync.scheduleLibraryScan();
-        if (job.watch_id && plexConfig.syncEnabled) {
-          plexSync.syncWatch(job.watch_id, { config: plexConfig })
-            .catch((e) => console.error(`[queue] [job:${job.id}] Plex playlist sync failed: ${e.message}`));
-        }
+        if (job.watch_id && plexConfig.syncEnabled) plexSync.scheduleWatchSync(job.watch_id);
       }
     } catch (e) {
       console.error(`[queue] [job:${job.id}] Plex scan/sync schedule failed: ${e.message}`);
@@ -579,6 +686,22 @@ async function runJob(job) {
   } catch (err) {
     if (!getJob(job.id)) {
       console.log(`[queue] [job:${job.id}] Removed during download (${err.message})`);
+      return;
+    }
+    // A music track matched by search can fall back to the next YouTube match, but only when
+    // this video can't be had: that fails before anything is written, while a disk, ffmpeg or
+    // network failure would hit the next match too (and could leave a .part file it resumes).
+    const fallbackUrls = Array.isArray(extraOptions.fallbackUrls) ? extraOptions.fallbackUrls : [];
+    if (fallbackUrls.length && ytdlp.isVideoUnavailableError(err.message)) {
+      const [nextUrl, ...rest] = fallbackUrls;
+      appendLog(`ERROR: ${err.message}`);
+      appendLog(`Retrying with the next YouTube match: ${nextUrl}`);
+      console.warn(`[queue] [job:${job.id}] Failed (${err.message}); retrying with ${nextUrl}`);
+      db.prepare('UPDATE downloads SET url = ?, options_json = ? WHERE id = ?')
+        .run(nextUrl, JSON.stringify({ ...extraOptions, fallbackUrls: rest, previousAttempts: [...(extraOptions.previousAttempts || []), `${job.url} failed: ${err.message}`] }), job.id);
+      updateJob(job.id, {
+        status: 'queued', percent: 0, speed: null, eta: null, stage: 'Retrying with another match…', pid: null, log: logLines.join('\n'),
+      });
       return;
     }
     const errorMsg = ytdlp.isBotCheckError(err.message)
@@ -614,9 +737,12 @@ function stopJob(id) {
   return stopped;
 }
 
-function removeJob(id) {
+function removeJob(id, { deleteFile = false } = {}) {
   const job = getJobSummary(id);
-  ytdlp.stopDownload(id);
+  ytdlp.stopDownload(id, { abort: true });
+  if (deleteFile && job && job.filepath) {
+    require('./cleanup').removeMediaFiles(id, job.filepath, job.split_parts);
+  }
   db.prepare('DELETE FROM downloads WHERE id = ?').run(id);
   if (!job) return false;
   notifyWatchItem({ ...job, status: 'removed' });
@@ -625,11 +751,100 @@ function removeJob(id) {
   return true;
 }
 
+// Queues a failed job again with the same URL and options. A Watch-linked job takes its
+// Watch item back to queued too (via notifyWatchItem).
+function retryJob(id) {
+  const job = getJobSummary(id);
+  if (!job || job.status !== 'failed') return false;
+  updateJob(id, { status: 'queued', error: null, percent: 0, speed: null, eta: null, stage: null, pid: null });
+  processNext();
+  return true;
+}
+
+// Queues every failed job again (see retryJob). Returns how many were requeued.
+// One bulk update and one list broadcast, so a large failure backlog doesn't send every
+// client a job:update per row.
+function prioritizeJob(id) {
+  const job = getJobSummary(id);
+  if (!job || job.status !== 'queued') return false;
+  const maxRow = db.prepare("SELECT COALESCE(MAX(priority), 10) AS m FROM downloads WHERE status = 'queued'").get();
+  const nextPriority = Math.max(20, (maxRow?.m || 10) + 10);
+  updateJob(id, { priority: nextPriority, stage: 'Prioritized (up next)' });
+  processNext();
+  return true;
+}
+
+function retryFailedJobs({ transientOnly = false, category = null } = {}) {
+  const ids = db.transaction(() => {
+    const rows = db.prepare("SELECT id, error FROM downloads WHERE status = 'failed'").all();
+    const matchedIds = rows
+      .filter((r) => {
+        const cat = ytdlp.classifyFailure(r.error);
+        if (category && category !== 'all') return cat === category;
+        if (transientOnly) return cat !== 'unavailable';
+        return true;
+      })
+      .map((r) => r.id);
+    if (matchedIds.length === 0) return [];
+    const updateStmt = db.prepare(`
+      UPDATE downloads SET status = 'queued', error = NULL, percent = 0, speed = NULL, eta = NULL,
+        stage = NULL, pid = NULL, updated_at = datetime('now')
+      WHERE id = ?
+    `);
+    for (const id of matchedIds) updateStmt.run(id);
+    return matchedIds;
+  })();
+  if (ids.length === 0) return 0;
+  for (const id of ids) notifyWatchItem(getJobSummary(id));
+  if (io) io.emit('jobs:init', listJobs());
+  emitCounts();
+  processNext();
+  return ids.length;
+}
+
+// Completed downloads matching any of the given links, by URL or by (extractor, video ID),
+// so the UI can flag a link that's already in the library before it's queued again.
+// `items` is [{ url, id, extractor }]; returns { [url]: { id, title, completedAt } }.
+function findCompletedDuplicates(items) {
+  const byUrl = db.prepare(`
+    SELECT id, title, updated_at FROM downloads
+    WHERE status = 'completed' AND url = ? ORDER BY updated_at DESC LIMIT 1
+  `);
+  const byVideoId = db.prepare(`
+    SELECT id, title, updated_at FROM downloads
+    WHERE status = 'completed' AND video_id = ? AND (? IS NULL OR extractor IS NULL OR lower(extractor) = lower(?))
+    ORDER BY updated_at DESC LIMIT 1
+  `);
+  const found = {};
+  for (const item of items || []) {
+    if (!item || typeof item.url !== 'string' || !item.url) continue;
+    const extractor = typeof item.extractor === 'string' && item.extractor ? item.extractor : null;
+    const row = byUrl.get(item.url)
+      || (item.id ? byVideoId.get(String(item.id), extractor, extractor) : null);
+    if (row) found[item.url] = { id: row.id, title: row.title, completedAt: row.updated_at };
+  }
+  return found;
+}
+
+// Drops every failed job from the history (their Watch items keep their own failure record).
+function clearFailedJobs() {
+  const ids = db.transaction(() => {
+    const rows = db.prepare("SELECT id FROM downloads WHERE status = 'failed'").all().map((r) => r.id);
+    db.prepare("DELETE FROM downloads WHERE status = 'failed'").run();
+    return rows;
+  })();
+  if (io) for (const id of ids) io.emit('job:removed', { id });
+  if (ids.length) emitCounts();
+  return ids.length;
+}
+
 function getActiveCount() {
   return activeCount;
 }
 
 module.exports = {
   init, enqueue, createQueuedJob, startQueuedJobs, setWatchItemListener, listJobs, searchJobs, getStatusCounts,
-  getJobLog, getJob, getJobSummary, announceJob, stopJob, removeJob, getActiveCount,
+  getJobLog, getJob, getJobSummary, listColumns, announceJob, stopJob, removeJob, retryJob, retryFailedJobs,
+  clearFailedJobs, findCompletedDuplicates, getActiveCount, getMaxConcurrent, processNext, MAX_CONCURRENT_LIMIT,
+  measureDownloadSize, hasSidecarPoster, isQueuePaused, pauseQueue, resumeQueue, prioritizeJob,
 };

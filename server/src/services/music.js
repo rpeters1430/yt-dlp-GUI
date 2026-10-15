@@ -3,8 +3,13 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const ytdlp = require('./ytdlp');
-const queue = require('./queue');
-const db = require('../db');
+function getQueue() {
+  return require('./queue');
+}
+function getDb() {
+  return require('../db');
+}
+const { resolveMusicDir } = require('./ytdlpPaths');
 
 // Only replacing path separators/reserved characters isn't enough: a name that sanitizes to
 // exactly ".." (or ".") is still a valid path segment that walks up a directory when joined
@@ -170,7 +175,7 @@ async function searchArtists(query, limit = 20) {
   );
 }
 
-async function searchAlbums(query, limit = 50) {
+async function searchAlbums(query, limit = 50, { includeArtist = true } = {}) {
   const q = String(query || '').trim();
   if (!q) return { results: [], matchedArtist: null };
 
@@ -179,7 +184,7 @@ async function searchAlbums(query, limit = 50) {
 
   const [albumData, artistData] = await Promise.all([
     fetchJson(albumUrl).catch(() => ({ results: [] })),
-    fetchJson(artistUrl).catch(() => ({ results: [] })),
+    includeArtist ? fetchJson(artistUrl).catch(() => ({ results: [] })) : { results: [] },
   ]);
 
   const rawResults = albumData.results || [];
@@ -244,13 +249,16 @@ async function searchAlbums(query, limit = 50) {
 
 async function getAlbumDetails(collectionId) {
   if (!collectionId) throw new Error('Collection ID is required');
-  const url = `https://itunes.apple.com/lookup?id=${encodeURIComponent(collectionId)}&entity=song`;
+  const url = `https://itunes.apple.com/lookup?id=${encodeURIComponent(collectionId)}&entity=song&limit=200`;
   const data = await fetchJson(url);
   const items = data.results || [];
   if (items.length === 0) throw new Error('Album not found');
 
   const albumItem = items.find((i) => i.wrapperType === 'collection') || items[0];
   const songItems = items.filter((i) => i.wrapperType === 'track');
+  if (!songItems.length || (albumItem.trackCount && songItems.length < albumItem.trackCount)) {
+    throw new Error('Album track list incomplete');
+  }
 
   const album = {
     id: albumItem.collectionId,
@@ -314,6 +322,17 @@ async function searchTracks(query, limit = 25) {
   }));
 }
 
+// Lowercased letters and digits only, for comparing titles across punctuation differences.
+function compactText(text) {
+  return String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+// The song's own name, without "(feat. X)", "[Remastered]" or " - Live at …" decorations
+// that YouTube uploads often word differently.
+function coreTitle(title) {
+  return compactText(String(title || '').replace(/\s*[([].*?[)\]]/g, '').replace(/\s+-\s+.*$/, ''));
+}
+
 function scoreCandidate(c, artist, title, targetDuration) {
   let score = 0;
   if (targetDuration && c.duration) {
@@ -329,15 +348,21 @@ function scoreCandidate(c, artist, title, targetDuration) {
   const cUploader = (c.uploader || '').toLowerCase();
   const artLower = (artist || '').toLowerCase();
   const titLower = (title || '').toLowerCase();
+  // Whole words only: "live" must not match "Oliver" or "Alive", nor "cover" "Discover".
+  const has = (text, word) => new RegExp(`\\b${word}\\b`).test(text);
+  const flagged = (word) => has(cTitle, word) && !has(titLower, word);
 
   // YouTube auto-generated Topic channels provide the pure record-label studio album audio
-  const isTopicChannel = cUploader.endsWith('- topic') || cUploader.includes('topic');
+  const isTopicChannel = cUploader.includes('topic');
   if (isTopicChannel) score += 55;
   else if (artLower && cUploader.includes(artLower)) score += 30;
   if (cUploader.includes('vevo')) score += 20;
 
-  // Title matching
+  // Title matching. A result that doesn't name the song is most likely a different track by
+  // the same artist (Topic channels upload every song on the album).
+  const core = coreTitle(title);
   if (titLower && cTitle.includes(titLower)) score += 25;
+  else if (core && !compactText(cTitle).includes(core)) score -= 60;
   if (cTitle.includes('official audio') || cTitle.includes('original audio')) score += 35;
   if (cTitle.includes('provided to youtube')) score += 40;
   if (cTitle.includes('remaster')) score += 10;
@@ -346,14 +371,14 @@ function scoreCandidate(c, artist, title, targetDuration) {
   if (cTitle.includes('music video') || cTitle.includes('official video')) score -= 15;
 
   // Heavy penalties for non-studio versions
-  if (cTitle.includes('live') && !titLower.includes('live')) score -= 50;
-  if (cTitle.includes('cover') && !titLower.includes('cover')) score -= 60;
-  if (cTitle.includes('karaoke') || (cTitle.includes('instrumental') && !titLower.includes('instrumental'))) score -= 60;
-  if (cTitle.includes('reaction') || cTitle.includes('review') || cTitle.includes('parody')) score -= 100;
-  if (cTitle.includes('slowed') || cTitle.includes('reverb') || cTitle.includes('bass boosted') || cTitle.includes('nightcore') || cTitle.includes('8d audio')) score -= 80;
-  if (cTitle.includes('teaser') || cTitle.includes('trailer') || cTitle.includes('snippet')) score -= 90;
-  if (cTitle.includes('clean') && !titLower.includes('clean')) score -= 25;
-  if (cTitle.includes('censored')) score -= 40;
+  if (flagged('live')) score -= 50;
+  if (flagged('cover')) score -= 60;
+  if (has(cTitle, 'karaoke') || flagged('instrumental')) score -= 60;
+  if (has(cTitle, 'reaction') || has(cTitle, 'review') || has(cTitle, 'parody')) score -= 100;
+  if (has(cTitle, 'slowed') || has(cTitle, 'reverb') || cTitle.includes('bass boosted') || has(cTitle, 'nightcore') || cTitle.includes('8d audio')) score -= 80;
+  if (has(cTitle, 'teaser') || has(cTitle, 'trailer') || has(cTitle, 'snippet')) score -= 90;
+  if (flagged('clean')) score -= 25;
+  if (has(cTitle, 'censored')) score -= 40;
 
   return score;
 }
@@ -369,20 +394,17 @@ async function getMatchCandidates(track, limit = 5) {
     `${artist} ${title}`,
   ];
 
+  // The first two searches almost always fill the candidate list, so run them side by side
+  // (each is a yt-dlp process taking seconds); the broad search is only a fallback.
   const candidateMap = new Map();
-  for (const q of queries) {
-    try {
-      const results = await ytdlp.searchYouTube(q, 3);
-      if (results && results.length > 0) {
-        for (const item of results) {
-          if (item && item.id && !candidateMap.has(item.id)) {
-            candidateMap.set(item.id, item);
-          }
-        }
-      }
-      if (candidateMap.size >= 6) break;
-    } catch (_) {}
-  }
+  const addResults = (results) => {
+    for (const item of results || []) {
+      if (item && item.id && !candidateMap.has(item.id)) candidateMap.set(item.id, item);
+    }
+  };
+  const search = (q) => ytdlp.searchYouTube(q, 3).catch(() => []);
+  (await Promise.all(queries.slice(0, 2).map(search))).forEach(addResults);
+  if (candidateMap.size < 6) addResults(await search(queries[2]));
 
   const list = Array.from(candidateMap.values());
   if (list.length === 0) return [];
@@ -406,7 +428,14 @@ async function matchTrackToYouTube(track) {
     throw new Error(`Could not find a YouTube match for "${track.artist || ''} - ${track.title || ''}"`);
   }
   const best = candidates[0];
+  // Close runners-up, tried in turn if the best match won't download (age-restricted,
+  // blocked in this country, removed since the search).
+  const fallbackUrls = candidates.slice(1)
+    .filter((c) => c.youtubeUrl && c.score > 0 && c.score >= best.score - 60)
+    .slice(0, 2)
+    .map((c) => c.youtubeUrl);
   return {
+    fallbackUrls,
     youtubeUrl: best.youtubeUrl,
     videoId: best.videoId,
     title: best.title,
@@ -418,8 +447,36 @@ async function matchTrackToYouTube(track) {
   };
 }
 
+// Resolves an artist name to a canonical YouTube channel URL (preferring their Topic or
+// official channel) so Music Watches use a valid yt-dlp channel URL instead of a /results?search_query= page.
+async function resolveArtistChannel(artistName) {
+  const artist = String(artistName || '').trim();
+  if (!artist) throw new Error('Artist name is required');
+
+  const queries = [`${artist} - Topic`, `${artist} official`];
+  const results = (await Promise.all(
+    queries.map((q) => ytdlp.searchYouTube(q, 5).catch(() => []))
+  )).flat();
+
+  const artLower = artist.toLowerCase();
+  const topicMatch = results.find((r) => r && r.channelUrl && (r.uploader || '').toLowerCase() === `${artLower} - topic`);
+  if (topicMatch) return { url: topicMatch.channelUrl, uploader: topicMatch.uploader, isTopic: true };
+
+  const anyTopic = results.find((r) => r && r.channelUrl && (r.uploader || '').toLowerCase().includes('topic') && (r.uploader || '').toLowerCase().includes(artLower));
+  if (anyTopic) return { url: anyTopic.channelUrl, uploader: anyTopic.uploader, isTopic: true };
+
+  const exactUploader = results.find((r) => r && r.channelUrl && (r.uploader || '').toLowerCase() === artLower);
+  if (exactUploader) return { url: exactUploader.channelUrl, uploader: exactUploader.uploader, isTopic: false };
+
+  const firstWithChannel = results.find((r) => r && r.channelUrl);
+  if (firstWithChannel) return { url: firstWithChannel.channelUrl, uploader: firstWithChannel.uploader || artist, isTopic: false };
+
+  const handle = artist.replace(/[^a-zA-Z0-9._-]/g, '');
+  return { url: `https://www.youtube.com/@${handle || 'music'}`, uploader: artist, isTopic: false };
+}
+
 async function inspectUrl(url) {
-  ytdlp.assertPublicUrl(url);
+  await ytdlp.assertPublicUrlResolved(url);
   const info = await ytdlp.getInfo(url, { flatPlaylist: true });
 
   const entries = [];
@@ -456,25 +513,42 @@ async function saveCoverArt(targetDir, artworkUrl) {
   const coverPath = path.join(targetDir, 'cover.jpg');
   if (fs.existsSync(coverPath)) return;
 
+  const artwork = await fetchArtwork(artworkUrl);
+  if (!artwork || fs.existsSync(coverPath)) return;
   try {
-    const res = await fetch(artworkUrl);
-    if (!res.ok) return;
-    const arrayBuffer = await res.arrayBuffer();
-    fs.writeFileSync(coverPath, Buffer.from(arrayBuffer));
+    fs.writeFileSync(coverPath, artwork.data);
   } catch (err) {
     console.error(`[music] Failed to save cover art: ${err.message}`);
   }
 }
 
-async function fetchArtwork(url) {
-  if (!url) return null;
+// Every track of an album embeds the same artwork, and the album's tracks finish within
+// minutes of each other, so recent fetches are shared instead of downloaded per track.
+const ARTWORK_CACHE_TTL_MS = 15 * 60 * 1000;
+const ARTWORK_CACHE_MAX = 8;
+const artworkCache = new Map();
+
+function fetchArtwork(url) {
+  if (!url) return Promise.resolve(null);
+  const cached = artworkCache.get(url);
+  if (cached && cached.expires > Date.now()) return cached.promise;
+  artworkCache.delete(url);
+  const promise = fetchArtworkUncached(url);
+  if (artworkCache.size >= ARTWORK_CACHE_MAX) artworkCache.delete(artworkCache.keys().next().value);
+  artworkCache.set(url, { promise, expires: Date.now() + ARTWORK_CACHE_TTL_MS });
+  // A failed fetch isn't cached, so the next track tries again.
+  promise.then((art) => { if (!art) artworkCache.delete(url); });
+  return promise;
+}
+
+async function fetchArtworkUncached(url) {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
     if (!res.ok) return null;
     const mime = /png/i.test(res.headers.get('content-type') || '') ? 'image/png' : 'image/jpeg';
     return { data: Buffer.from(await res.arrayBuffer()), mime };
   } catch (err) {
-    console.error(`[music] Failed to fetch artwork for embedding: ${err.message}`);
+    console.error(`[music] Failed to fetch artwork: ${err.message}`);
     return null;
   }
 }
@@ -589,12 +663,14 @@ async function tagMusicFile(filepath, meta = {}) {
 
 function getMusicSettings() {
   const keys = ['music_folder', 'music_format', 'music_quality', 'music_save_cover'];
-  const rows = db.prepare(`SELECT key, value FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).all(...keys);
+  const rows = getDb().prepare(`SELECT key, value FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).all(...keys);
   const map = {};
   for (const r of rows) map[r.key] = r.value;
 
   return {
-    musicFolder: map.music_folder || 'Music',
+    musicFolder: map.music_folder || ytdlp.MUSIC_DIR || 'Music',
+    // Where that folder actually is on disk, for display.
+    musicDir: resolveMusicDir(map.music_folder),
     musicFormat: map.music_format || 'mp3',
     musicQuality: map.music_quality || '320k',
     saveCover: map.music_save_cover !== '0',
@@ -602,12 +678,12 @@ function getMusicSettings() {
 }
 
 function updateMusicSettings({ musicFolder, musicFormat, musicQuality, saveCover }) {
-  const upsert = db.prepare(`
+  const upsert = getDb().prepare(`
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `);
 
-  if (musicFolder !== undefined) upsert.run('music_folder', String(musicFolder).trim() || 'Music');
+  if (musicFolder !== undefined) upsert.run('music_folder', String(musicFolder).trim() || ytdlp.MUSIC_DIR || 'Music');
   if (musicFormat !== undefined) upsert.run('music_format', String(musicFormat).trim() || 'mp3');
   if (musicQuality !== undefined) upsert.run('music_quality', String(musicQuality).trim() || '320k');
   if (saveCover !== undefined) upsert.run('music_save_cover', saveCover ? '1' : '0');
@@ -622,6 +698,7 @@ async function enqueueMusicDownload({
   musicFolder = 'Music',
   saveCover = true,
   extraOptions = {},
+  queueImpl = null,
 }) {
   let youtubeUrl = track.youtubeUrl;
   let matchedInfo;
@@ -631,10 +708,7 @@ async function enqueueMusicDownload({
     youtubeUrl = matchedInfo.youtubeUrl;
   }
 
-  const baseFolder = String(musicFolder || 'Music').trim();
-  const resolvedBaseDir = path.isAbsolute(baseFolder)
-    ? baseFolder
-    : path.join(ytdlp.DOWNLOAD_DIR, baseFolder);
+  const resolvedBaseDir = resolveMusicDir(musicFolder);
 
   // Group by album artist so "Artist feat. X" tracks stay in the album's folder.
   const artistDir = sanitizeFilename(track.albumArtist || track.artist || 'Unknown Artist');
@@ -661,12 +735,14 @@ async function enqueueMusicDownload({
 
   const albumArtist = track.albumArtist || track.artist;
 
-  const jobId = queue.enqueue(youtubeUrl, {
+  const activeQueue = queueImpl || getQueue();
+  const jobId = activeQueue.enqueue(youtubeUrl, {
     audioOnly: true,
     container: audioFormat || 'mp3',
     quality: null,
     optionsJson: {
       ...extraOptions,
+      ...(matchedInfo?.fallbackUrls?.length ? { fallbackUrls: matchedInfo.fallbackUrls } : {}),
       audioQuality: audioQuality || '320k',
       outputTemplate,
       sponsorblockRemove: 'music_offtopic',
@@ -705,10 +781,12 @@ module.exports = {
   searchArtists,
   getArtistDiscography,
   classifyRelease,
+  scoreCandidate,
   getAlbumDetails,
   searchTracks,
   matchTrackToYouTube,
   getMatchCandidates,
+  resolveArtistChannel,
   inspectUrl,
   saveCoverArt,
   tagMusicFile,

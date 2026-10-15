@@ -12,6 +12,7 @@ export default function ConfirmDialog({
   danger = true,
   onConfirm,
   onCancel,
+  children,
 }) {
   const containerRef = useModalA11y(open, onCancel);
   if (!open) return null;
@@ -35,6 +36,7 @@ export default function ConfirmDialog({
         </div>
         <div className="modal-body">
           <p style={{ margin: 0 }}>{message}</p>
+          {children}
         </div>
         <div className="modal-footer">
           <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>

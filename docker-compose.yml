@@ -11,6 +11,15 @@ services:
     environment:
       - MAX_CONCURRENT_DOWNLOADS=2
       - TZ=America/Los_Angeles
+      # Optional NAS user/group IDs so downloaded files match your host user permissions:
+      # - PUID=1000
+      # - PGID=1000
+      # Separate folders for videos and music. Remove these (and their mounts below) to keep
+      # everything under /downloads. Settings → File naming / Music can still override them.
+      - VIDEO_DIR=/videos
+      - MUSIC_DIR=/music
     volumes:
       - ./downloads:/downloads
+      - ./videos:/videos
+      - ./music:/music
       - ./config:/config

@@ -1,11 +1,29 @@
 import React, { useEffect, useState } from 'react';
-import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload, Trash2, ListMusic, Scissors } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload, Trash2, ListMusic, } from 'lucide-react';
 import { api } from '../api.js';
 import FileNamingSettings from '../components/FileNamingSettings.jsx';
 import NotificationSettings from '../components/NotificationSettings.jsx';
 import PlexSettings from '../components/PlexSettings.jsx';
+import DownloadsSettings from '../components/settings/DownloadsSettings.jsx';
+import AppearanceSettings from '../components/settings/AppearanceSettings.jsx';
 
-export default function Settings() {
+const SECTIONS = [
+  { id: 'downloads', label: 'Downloads', description: 'Defaults used when you analyze a link. You can still change them per download.' },
+  { id: 'naming', label: 'File naming', description: 'Where downloads are saved and how files are named.' },
+  { id: 'cookies', label: 'Cookies', description: 'Sign-in cookies for members-only, age-restricted or bot-checked videos.' },
+  { id: 'tools', label: 'Tools', description: 'yt-dlp, FFmpeg and QuickJS versions and updates.' },
+  { id: 'media', label: 'Media servers', description: 'Jellyfin and Plex playlists, library scans and .nfo metadata.' },
+  { id: 'autodelete', label: 'Auto-delete', description: 'Remove downloads once they have been watched.' },
+  { id: 'notifications', label: 'Notifications', description: 'Get told when downloads finish or fail.' },
+  { id: 'account', label: 'Account', description: 'Appearance, password and sign-out.' },
+];
+
+export default function Settings({ username, onLogout }) {
+  const [params, setParams] = useSearchParams();
+  const section = SECTIONS.some((s) => s.id === params.get('section')) ? params.get('section') : 'downloads';
+  const current = SECTIONS.find((s) => s.id === section);
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState('');
@@ -28,9 +46,9 @@ export default function Settings() {
   const [ffmpegMessage, setFfmpegMessage] = useState('');
   const [ffmpegError, setFfmpegError] = useState('');
 
-  const [denoBusy, setDenoBusy] = useState(false);
-  const [denoMessage, setDenoMessage] = useState('');
-  const [denoError, setDenoError] = useState('');
+  const [quickjsBusy, setQuickjsBusy] = useState(false);
+  const [quickjsMessage, setQuickjsMessage] = useState('');
+  const [quickjsError, setQuickjsError] = useState('');
 
   const [cleanupSettings, setCleanupSettings] = useState(null);
   const [jellyfinApiKeyInput, setJellyfinApiKeyInput] = useState('');
@@ -50,9 +68,6 @@ export default function Settings() {
   const [nfoBusy, setNfoBusy] = useState(false);
   const [nfoMessage, setNfoMessage] = useState('');
 
-  const [defaultLiveChunkMins, setDefaultLiveChunkMins] = useState(0);
-  const [liveChunkBusy, setLiveChunkBusy] = useState(false);
-  const [liveChunkMessage, setLiveChunkMessage] = useState('');
 
   const [jellyfinSync, setJellyfinSync] = useState(null);
   const [jellyfinSyncBusy, setJellyfinSyncBusy] = useState(false);
@@ -75,9 +90,6 @@ export default function Settings() {
     api.getSettings().then((s) => {
       if (s.ytdlpChannel) setChannel(s.ytdlpChannel);
       setNfoEnabled(s.nfo_enabled !== '0');
-      if (s.default_live_chunk_mins !== undefined) {
-        setDefaultLiveChunkMins(parseInt(s.default_live_chunk_mins, 10) || 0);
-      }
     }).catch(() => {});
   }, []);
   useEffect(() => {
@@ -100,8 +112,9 @@ export default function Settings() {
       return;
     }
     try {
-      await api.changePassword(newPassword);
+      await api.changePassword(currentPassword, newPassword);
       setMessage('Password updated.');
+      setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
     } catch (err) {
@@ -187,18 +200,18 @@ export default function Settings() {
     }
   }
 
-  async function handleUpdateDeno() {
-    setDenoMessage('');
-    setDenoError('');
-    setDenoBusy(true);
+  async function handleUpdateQuickjs() {
+    setQuickjsMessage('');
+    setQuickjsError('');
+    setQuickjsBusy(true);
     try {
-      const result = await api.updateDeno();
+      const result = await api.updateQuickjs();
       setVersions(result);
-      setDenoMessage(`Deno is now updated (${result.deno || 'latest'}).`);
+      setQuickjsMessage(`QuickJS-ng is now updated (${result.quickjs || 'latest'}).`);
     } catch (err) {
-      setDenoError(err.message);
+      setQuickjsError(err.message);
     } finally {
-      setDenoBusy(false);
+      setQuickjsBusy(false);
     }
   }
 
@@ -218,6 +231,8 @@ export default function Settings() {
         jellyfinEnabled: !!cleanupSettings.jellyfinEnabled,
         jellyfinUrl: cleanupSettings.jellyfinUrl || '',
         jellyfinUserId: cleanupSettings.jellyfinUserId || '',
+        keepRecentPerWatch: parseInt(cleanupSettings.keepRecentPerWatch, 10) || 0,
+        minFreeDiskGb: Math.max(0, parseFloat(cleanupSettings.minFreeDiskGb) || 0),
       };
       if (jellyfinApiKeyInput) payload.jellyfinApiKey = jellyfinApiKeyInput;
       const updated = await api.updateCleanupSettings(payload);
@@ -286,24 +301,6 @@ export default function Settings() {
       setNfoEnabled(!checked);
     } finally {
       setNfoBusy(false);
-    }
-  }
-
-  async function handleDefaultLiveChunkChange(mins) {
-    setDefaultLiveChunkMins(mins);
-    setLiveChunkMessage('');
-    setLiveChunkBusy(true);
-    try {
-      await api.updateSettings({ default_live_chunk_mins: String(mins) });
-      setLiveChunkMessage(
-        mins > 0
-          ? `Default chunk split set to ${mins < 60 ? `${mins} minutes` : `${mins / 60} hour(s)`}.`
-          : 'Live stream chunk splitting disabled by default.'
-      );
-    } catch (err) {
-      setLiveChunkMessage(err.message);
-    } finally {
-      setLiveChunkBusy(false);
     }
   }
 
@@ -381,46 +378,62 @@ export default function Settings() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Settings</h1>
-          <p>Account, cookies, dependencies, file naming, notifications, and media server options.</p>
-        </div>
+      <div className="page-title-row">
+        <h1>Settings</h1>
       </div>
 
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="Settings sections">
+          {SECTIONS.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={section === s.id ? 'active' : ''}
+              aria-current={section === s.id ? 'page' : undefined}
+              onClick={() => setParams(s.id === 'downloads' ? {} : { section: s.id }, { replace: true })}
+            >
+              {s.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="settings-main">
+          <div className="settings-head">
+            <h2>{current.label}</h2>
+            <p>{current.description}</p>
+          </div>
+
+          {section === 'downloads' && <DownloadsSettings />}
+
+          {section === 'naming' && (
+            <>
+              <FileNamingSettings />
       <section className="panel">
         <div className="panel-header">
-          <h2><KeyRound size={16} /> Account</h2>
+          <h2><PackageCheck size={16} /> Media server metadata (.nfo)</h2>
         </div>
-        <form onSubmit={handleChangePassword} className="settings-form">
-          <label className="field-label">
-            New password
-            <input
-              type="password"
-              placeholder="At least 8 characters"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              autoComplete="new-password"
-            />
-          </label>
-          <label className="field-label">
-            Confirm new password
-            <input
-              type="password"
-              placeholder="Re-enter new password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              autoComplete="new-password"
-            />
-          </label>
-          <div>
-            <button type="submit" disabled={!newPassword || !confirmPassword}>Update password</button>
-          </div>
-          {message && <div className="alert alert-success"><CheckCircle2 size={15} />{message}</div>}
-          {error && <div className="alert alert-error"><AlertCircle size={15} />{error}</div>}
-        </form>
+        <p className="panel-description">
+          Writes a Kodi/Jellyfin/Emby-compatible <code>.nfo</code> file and a matching poster
+          image next to every new download, so title, description, and artwork get scraped
+          reliably instead of depending on each media server's support for reading metadata
+          embedded inside the video file itself. Only affects downloads made after this is
+          turned on.
+        </p>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={nfoEnabled}
+            onChange={(e) => handleToggleNfo(e.target.checked)}
+            disabled={nfoBusy}
+          />
+          Write .nfo + poster files for new downloads
+        </label>
+        {nfoMessage && <div className="alert alert-success" style={{ marginTop: 10 }}><CheckCircle2 size={15} />{nfoMessage}</div>}
       </section>
+            </>
+          )}
 
+          {section === 'cookies' && (
       <section className="panel">
         <div className="panel-header">
           <h2><Cookie size={16} /> Site cookies</h2>
@@ -468,7 +481,9 @@ export default function Settings() {
           {cookiesError && <div className="alert alert-error"><AlertCircle size={15} />{cookiesError}</div>}
         </form>
       </section>
+          )}
 
+          {section === 'tools' && (
       <section className="panel">
         <div className="panel-header">
           <h2><PackageCheck size={16} /> yt-dlp &amp; dependencies</h2>
@@ -477,7 +492,7 @@ export default function Settings() {
           <dt>yt-dlp</dt><dd>{versions ? versions.ytdlp || 'unknown' : 'Loading…'}</dd>
           <dt>ffmpeg</dt><dd>{versions ? versions.ffmpeg || 'unknown' : 'Loading…'}</dd>
           <dt>Node.js</dt><dd>{versions ? versions.node || 'unknown' : 'Loading…'}</dd>
-          {versions && versions.deno && (<><dt>Deno</dt><dd>{versions.deno}</dd></>)}
+          <dt>QuickJS-ng</dt><dd>{versions ? versions.quickjs || 'unknown' : 'Loading…'}</dd>
         </dl>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '16px' }}>
@@ -526,26 +541,107 @@ export default function Settings() {
           </div>
 
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
-            <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>Deno</h3>
+            <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>QuickJS-ng</h3>
             <p className="panel-description" style={{ marginBottom: '10px' }}>
               The JavaScript runtime used by yt-dlp to solve YouTube video extraction and JavaScript challenges.
-              The app automatically checks for newer Deno releases nightly at 3:45 AM and updates when available.
+              The app automatically checks for newer QuickJS-ng releases nightly at 3:45 AM and updates when available.
             </p>
             <div className="options-row" style={{ marginTop: 0 }}>
-              <button type="button" onClick={handleUpdateDeno} disabled={denoBusy}>
-                {denoBusy ? 'Updating Deno…' : 'Update Deno'}
+              <button type="button" onClick={handleUpdateQuickjs} disabled={quickjsBusy}>
+                {quickjsBusy ? 'Updating QuickJS…' : 'Update QuickJS'}
               </button>
             </div>
-            {denoMessage && <div className="alert alert-success" style={{ marginTop: '10px' }}><CheckCircle2 size={15} />{denoMessage}</div>}
-            {denoError && <div className="alert alert-error" style={{ marginTop: '10px' }}><AlertCircle size={15} />{denoError}</div>}
+            {quickjsMessage && <div className="alert alert-success" style={{ marginTop: '10px' }}><CheckCircle2 size={15} />{quickjsMessage}</div>}
+            {quickjsError && <div className="alert alert-error" style={{ marginTop: '10px' }}><AlertCircle size={15} />{quickjsError}</div>}
           </div>
         </div>
       </section>
+          )}
 
-      <FileNamingSettings />
+          {section === 'media' && (
+            <>
+      <section className="panel">
+        <div className="panel-header">
+          <h2><ListMusic size={16} /> Jellyfin playlist sync</h2>
+        </div>
+        <p className="panel-description">
+          Builds a Jellyfin playlist per Watch (named after the channel/playlist), keeping it
+          filled with every video that Watch has downloaded — so browsing playlists in Jellyfin
+          mirrors what's being auto-monitored here. Uses the same Jellyfin server URL, API key,
+          and user configured above in <em>Auto-delete watched downloads</em> — a specific
+          user is required here, since a playlist always belongs to one Jellyfin user. A video
+          only gets added once Jellyfin has scanned it into its library, so newly downloaded
+          videos may take one library scan before appearing in the playlist.
+        </p>
+        {!jellyfinSync ? (
+          <div className="empty-state"><div className="spinner" /></div>
+        ) : (
+          <div className="settings-form">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={jellyfinSync.autoScanEnabled !== false}
+                onChange={(e) => handleToggleJellyfinAutoScan(e.target.checked)}
+                disabled={jellyfinSyncBusy}
+              />
+              Automatically trigger Jellyfin library scan when downloads complete (video &amp; music)
+            </label>
 
-      <NotificationSettings />
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={!!jellyfinSync.syncEnabled}
+                onChange={(e) => handleToggleJellyfinSync(e.target.checked)}
+                disabled={jellyfinSyncBusy}
+              />
+              Automatically sync playlists (after each download, and every 15 minutes)
+            </label>
 
+            {jellyfinSync.syncEnabled && !jellyfinSync.userId && (
+              <div className="alert alert-warning">
+                <AlertCircle size={14} />
+                <span>No Jellyfin user set above — sync will do nothing until one is configured.</span>
+              </div>
+            )}
+
+            <div className="options-row" style={{ marginTop: 0 }}>
+              <button type="button" className="btn-secondary" onClick={handleSyncJellyfinNow} disabled={jellyfinSyncNowBusy}>
+                {jellyfinSyncNowBusy ? 'Syncing…' : 'Sync all playlists now'}
+              </button>
+            </div>
+
+            {jellyfinSyncMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{jellyfinSyncMessage}</div>}
+            {jellyfinSyncNowError && <div className="alert alert-error"><AlertCircle size={15} />{jellyfinSyncNowError}</div>}
+
+            {jellyfinSyncNowResult && (
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                {jellyfinSyncNowResult.length === 0 ? (
+                  <p className="muted small" style={{ margin: 0 }}>No watches have any completed downloads yet.</p>
+                ) : (
+                  <ul className="cleanup-preview-list">
+                    {jellyfinSyncNowResult.map((r) => (
+                      <li key={r.watchId}>
+                        <span className="cleanup-preview-title">{r.playlistName || `Watch #${r.watchId}`}</span>
+                        <span className="muted small">
+                          {r.error
+                            ? r.error
+                            : `+${r.added} added${r.alreadyPresent ? `, ${r.alreadyPresent} already present` : ''}${r.missingFromLibrary ? `, ${r.missingFromLibrary} not yet in Jellyfin` : ''}`}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+              <PlexSettings />
+
+            </>
+          )}
+
+          {section === 'autodelete' && (
       <section className="panel">
         <div className="panel-header">
           <h2><Trash2 size={16} /> Auto-delete watched downloads</h2>
@@ -613,6 +709,28 @@ export default function Settings() {
                 value={cleanupSettings.jellyfinUserId || ''}
                 onChange={(e) => updateCleanupField('jellyfinUserId', e.target.value)}
               />
+            </label>
+
+            {cleanupSettings.storage && (
+              <div className="notice" style={{ marginBottom: 8 }}>
+                <strong>Disk volume ({cleanupSettings.storage.path}):</strong> {cleanupSettings.storage.freeGb} GB free ({cleanupSettings.storage.usedPercent}% used)
+              </div>
+            )}
+
+            <label className="field-label">
+              Minimum free disk space guard (GB)
+              <input
+                type="number"
+                min="0"
+                step="0.5"
+                style={{ width: '90px' }}
+                value={cleanupSettings.minFreeDiskGb ?? 0}
+                onChange={(e) => updateCleanupField('minFreeDiskGb', e.target.value)}
+              />
+              <span className="muted small">
+                If free space on your media volume drops below this threshold, scheduled Watch checks
+                trigger an automatic cleanup pass and pause queueing until space is freed. 0 disables this guard.
+              </span>
             </label>
 
             <label className="field-label">
@@ -708,145 +826,66 @@ export default function Settings() {
           </form>
         )}
       </section>
+          )}
 
+          {section === 'notifications' && <NotificationSettings />}
+
+          {section === 'account' && (
+            <>
+              <AppearanceSettings />
       <section className="panel">
         <div className="panel-header">
-          <h2><ListMusic size={16} /> Jellyfin playlist sync</h2>
+          <h2><KeyRound size={16} /> Password</h2>
         </div>
-        <p className="panel-description">
-          Builds a Jellyfin playlist per Watch (named after the channel/playlist), keeping it
-          filled with every video that Watch has downloaded — so browsing playlists in Jellyfin
-          mirrors what's being auto-monitored here. Uses the same Jellyfin server URL, API key,
-          and user configured above in <em>Auto-delete watched downloads</em> — a specific
-          user is required here, since a playlist always belongs to one Jellyfin user. A video
-          only gets added once Jellyfin has scanned it into its library, so newly downloaded
-          videos may take one library scan before appearing in the playlist.
-        </p>
-        {!jellyfinSync ? (
-          <div className="empty-state"><div className="spinner" /></div>
-        ) : (
-          <div className="settings-form">
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={jellyfinSync.autoScanEnabled !== false}
-                onChange={(e) => handleToggleJellyfinAutoScan(e.target.checked)}
-                disabled={jellyfinSyncBusy}
-              />
-              Automatically trigger Jellyfin library scan when downloads complete (video &amp; music)
-            </label>
-
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={!!jellyfinSync.syncEnabled}
-                onChange={(e) => handleToggleJellyfinSync(e.target.checked)}
-                disabled={jellyfinSyncBusy}
-              />
-              Automatically sync playlists (after each download, and every 15 minutes)
-            </label>
-
-            {jellyfinSync.syncEnabled && !jellyfinSync.userId && (
-              <div className="alert alert-warning">
-                <AlertCircle size={14} />
-                <span>No Jellyfin user set above — sync will do nothing until one is configured.</span>
+        <form onSubmit={handleChangePassword} className="settings-form">
+          <label className="field-label">
+            Current password
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+          </label>
+          <label className="field-label">
+            New password
+            <input
+              type="password"
+              placeholder="At least 8 characters"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              autoComplete="new-password"
+            />
+          </label>
+          <label className="field-label">
+            Confirm new password
+            <input
+              type="password"
+              placeholder="Re-enter new password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+            />
+          </label>
+          <div>
+            <button type="submit" disabled={!currentPassword || !newPassword || !confirmPassword}>Update password</button>
+          </div>
+          {message && <div className="alert alert-success"><CheckCircle2 size={15} />{message}</div>}
+          {error && <div className="alert alert-error"><AlertCircle size={15} />{error}</div>}
+        </form>
+      </section>
+              <div className="setting-row">
+                <div className="setting-row-text">
+                  <div className="setting-row-label">Signed in as {username}</div>
+                </div>
+                <div className="setting-row-control">
+                  <button type="button" className="btn-ghost" onClick={onLogout}>Log out</button>
+                </div>
               </div>
-            )}
-
-            <div className="options-row" style={{ marginTop: 0 }}>
-              <button type="button" className="btn-secondary" onClick={handleSyncJellyfinNow} disabled={jellyfinSyncNowBusy}>
-                {jellyfinSyncNowBusy ? 'Syncing…' : 'Sync all playlists now'}
-              </button>
-            </div>
-
-            {jellyfinSyncMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{jellyfinSyncMessage}</div>}
-            {jellyfinSyncNowError && <div className="alert alert-error"><AlertCircle size={15} />{jellyfinSyncNowError}</div>}
-
-            {jellyfinSyncNowResult && (
-              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                {jellyfinSyncNowResult.length === 0 ? (
-                  <p className="muted small" style={{ margin: 0 }}>No watches have any completed downloads yet.</p>
-                ) : (
-                  <ul className="cleanup-preview-list">
-                    {jellyfinSyncNowResult.map((r) => (
-                      <li key={r.watchId}>
-                        <span className="cleanup-preview-title">{r.playlistName || `Watch #${r.watchId}`}</span>
-                        <span className="muted small">
-                          {r.error
-                            ? r.error
-                            : `+${r.added} added${r.alreadyPresent ? `, ${r.alreadyPresent} already present` : ''}${r.missingFromLibrary ? `, ${r.missingFromLibrary} not yet in Jellyfin` : ''}`}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </section>
-
-      <PlexSettings />
-
-      <section className="panel">
-        <div className="panel-header">
-          <h2><Scissors size={16} /> Live stream chunk splitting</h2>
+            </>
+          )}
         </div>
-        <p className="panel-description">
-          Configure a default chunk duration for live stream recordings (YouTube Live, Twitch, TikTok, etc.).
-          When enabled, completed recordings are automatically and losslessly segmented into smaller video files (using FFmpeg stream copy) so long broadcasts are easy to navigate, edit, and archive.
-          This can also be customized individually per download or per watch.
-        </p>
-        <div className="options-row" style={{ marginTop: 12 }}>
-          <div className="segmented segmented-split">
-            {[
-              { mins: 0, label: 'Off (Single file)' },
-              { mins: 15, label: '15 minutes' },
-              { mins: 30, label: '30 minutes' },
-              { mins: 60, label: '1 hour' },
-              { mins: 120, label: '2 hours' },
-            ].map((opt) => (
-              <button
-                key={opt.mins}
-                type="button"
-                disabled={liveChunkBusy}
-                className={defaultLiveChunkMins === opt.mins ? 'active' : ''}
-                onClick={() => handleDefaultLiveChunkChange(opt.mins)}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        {liveChunkMessage && (
-          <div className="alert alert-success" style={{ marginTop: 10 }}>
-            <CheckCircle2 size={15} />{liveChunkMessage}
-          </div>
-        )}
-      </section>
-
-      <section className="panel">
-        <div className="panel-header">
-          <h2><PackageCheck size={16} /> Media server metadata (.nfo)</h2>
-        </div>
-        <p className="panel-description">
-          Writes a Kodi/Jellyfin/Emby-compatible <code>.nfo</code> file and a matching poster
-          image next to every new download, so title, description, and artwork get scraped
-          reliably instead of depending on each media server's support for reading metadata
-          embedded inside the video file itself. Only affects downloads made after this is
-          turned on.
-        </p>
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={nfoEnabled}
-            onChange={(e) => handleToggleNfo(e.target.checked)}
-            disabled={nfoBusy}
-          />
-          Write .nfo + poster files for new downloads
-        </label>
-        {nfoMessage && <div className="alert alert-success" style={{ marginTop: 10 }}><CheckCircle2 size={15} />{nfoMessage}</div>}
-      </section>
+      </div>
     </>
   );
 }

@@ -28,17 +28,25 @@ export const api = {
   me: () => request('/auth/me'),
   login: (username, password) => request('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
   logout: () => request('/auth/logout', { method: 'POST' }),
-  changePassword: (newPassword) => request('/auth/change-password', { method: 'POST', body: JSON.stringify({ newPassword }) }),
+  changePassword: (currentPassword, newPassword) => request('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
 
   getInfo: (url) => request('/downloads/info', { method: 'POST', body: JSON.stringify({ url }) }),
   enqueue: (payload) => request('/downloads', { method: 'POST', body: JSON.stringify(payload) }),
   listDownloads: () => request('/downloads'),
-  searchDownloads: ({ status = 'all', q = '', limit = 50, offset = 0 } = {}) =>
-    request(`/downloads/history?${new URLSearchParams({ status, q, limit: String(limit), offset: String(offset) })}`),
+  searchDownloads: ({ status = 'all', q = '', limit = 50, offset = 0, category = 'all' } = {}) =>
+    request(`/downloads/history?${new URLSearchParams({ status, q, limit: String(limit), offset: String(offset), category })}`),
   getDownloadStats: () => request('/downloads/stats'),
   getDownloadLog: (id) => request(`/downloads/${id}/log`),
-  deleteDownload: (id) => request(`/downloads/${id}`, { method: 'DELETE' }),
+  deleteDownload: (id, { deleteFile = false } = {}) =>
+    request(`/downloads/${id}${deleteFile ? '?deleteFile=1' : ''}`, { method: 'DELETE' }),
   stopDownload: (id) => request(`/downloads/${id}/stop`, { method: 'POST' }),
+  retryDownload: (id) => request(`/downloads/${id}/retry`, { method: 'POST' }),
+  prioritizeDownload: (id) => request(`/downloads/${id}/prioritize`, { method: 'POST' }),
+  pauseQueue: () => request('/downloads/pause', { method: 'POST' }),
+  resumeQueue: () => request('/downloads/resume', { method: 'POST' }),
+  clearFailedDownloads: () => request('/downloads/clear-failed', { method: 'POST' }),
+  retryFailedDownloads: (options = {}) => request('/downloads/retry-failed', { method: 'POST', body: JSON.stringify(options) }),
+  checkDuplicates: (items) => request('/downloads/check-duplicates', { method: 'POST', body: JSON.stringify({ items }) }),
   toggleDownloadProtect: (id, protectedFlag) => request(`/downloads/${id}/protect`, { method: 'PATCH', body: JSON.stringify({ protected: protectedFlag }) }),
 
   listWatches: () => request('/watches'),
@@ -69,7 +77,7 @@ export const api = {
   getYtdlpVersions: () => request('/settings/ytdlp/version'),
   updateYtdlp: (channel) => request('/settings/ytdlp/update', { method: 'POST', body: JSON.stringify({ channel }) }),
   updateFfmpeg: () => request('/settings/ffmpeg/update', { method: 'POST' }),
-  updateDeno: () => request('/settings/deno/update', { method: 'POST' }),
+  updateQuickjs: () => request('/settings/quickjs/update', { method: 'POST' }),
 
   // Auto-delete / Jellyfin cleanup
   getCleanupSettings: () => request('/cleanup/settings'),
@@ -95,7 +103,6 @@ export const api = {
 
   // Twitch
   getTwitchChannel: (channel) => request(`/twitch/channel/${encodeURIComponent(channel)}`),
-  getTwitchVods: (channel) => request(`/twitch/vods/${encodeURIComponent(channel)}`),
   getTwitchVodInfo: (url) => request(`/twitch/vod-info?url=${encodeURIComponent(url)}`),
   downloadTwitch: (payload) => request('/twitch/download', { method: 'POST', body: JSON.stringify(payload) }),
   stopTwitchJob: (id) => request(`/twitch/stop/${id}`, { method: 'POST' }),
@@ -107,6 +114,7 @@ export const api = {
   searchMusic: (q, type = 'album') => request(`/music/search?q=${encodeURIComponent(q)}&type=${encodeURIComponent(type)}`),
   getMusicAlbum: (id) => request(`/music/album/${encodeURIComponent(id)}`),
   getMusicArtist: (id) => request(`/music/artist/${encodeURIComponent(id)}`),
+  resolveMusicArtistChannel: (name) => request(`/music/artist-channel?name=${encodeURIComponent(name)}`),
   matchMusicTrack: (track) => request('/music/match-track', { method: 'POST', body: JSON.stringify({ track }) }),
   getMusicMatchCandidates: (track, limit = 5) => request('/music/match-candidates', { method: 'POST', body: JSON.stringify({ track, limit }) }),
   matchMusicBatch: (tracks) => request('/music/match-batch', { method: 'POST', body: JSON.stringify({ tracks }) }),
@@ -122,9 +130,12 @@ export const api = {
     const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
     return request(`/library${qs ? `?${qs}` : ''}`);
   },
+  getLibraryItem: (id) => request(`/library/${encodeURIComponent(id)}`),
   deleteLibraryFile: (id) => request(`/library/${id}/file`, { method: 'DELETE' }),
-  libraryStreamUrl: (id) => `${BASE}/library/${encodeURIComponent(id)}/stream`,
-  libraryFileUrl: (id) => `${BASE}/library/${encodeURIComponent(id)}/file`,
+  libraryStreamUrl: (id, part = null) =>
+    `${BASE}/library/${encodeURIComponent(id)}/stream${part !== null && part !== undefined ? `?part=${encodeURIComponent(part)}` : ''}`,
+  libraryFileUrl: (id, part = null) =>
+    `${BASE}/library/${encodeURIComponent(id)}/file${part !== null && part !== undefined ? `?part=${encodeURIComponent(part)}` : ''}`,
   libraryPosterUrl: (id) => `${BASE}/library/${encodeURIComponent(id)}/poster`,
 
   // Notifications (Discord / Slack / ntfy / Gotify / generic webhook)

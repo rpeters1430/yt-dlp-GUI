@@ -40,6 +40,19 @@ router.get('/search', async (req, res) => {
   }
 });
 
+// Resolve an artist name to a canonical YouTube / Topic channel URL for Music Watches
+router.get('/artist-channel', async (req, res) => {
+  const name = String(req.query.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Artist name is required' });
+  try {
+    const channel = await music.resolveArtistChannel(name);
+    res.json(channel);
+  } catch (err) {
+    console.error('[music:artist-channel] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get artist discography with albums and singles separated
 router.get('/artist/:id', async (req, res) => {
   const artistId = req.params.id;
@@ -204,7 +217,7 @@ router.get('/watches', (req, res) => {
 // Create a music watch
 router.post('/watches', async (req, res) => {
   const {
-    url,
+    url: rawUrl,
     name,
     audioFormat = 'mp3',
     audioQuality = '320k',
@@ -215,7 +228,7 @@ router.post('/watches', async (req, res) => {
     downloadLimit = 5,
   } = req.body || {};
 
-  if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+  if (!rawUrl || typeof rawUrl !== 'string' || !/^https?:\/\//i.test(rawUrl)) {
     return res.status(400).json({ error: 'A valid http(s) URL is required' });
   }
 
@@ -226,6 +239,18 @@ router.post('/watches', async (req, res) => {
   if (filterErrors.length) return res.status(400).json({ error: filterErrors[0], errors: filterErrors });
 
   try {
+    let url = rawUrl.trim();
+    if (/^https?:\/\/(www\.|m\.)?youtube\.com\/results\?/i.test(url)) {
+      const parsed = new URL(url);
+      const q = (parsed.searchParams.get('search_query') || name || '')
+        .replace(/\b(official\s+audio|releases)\b/gi, '')
+        .trim();
+      if (q) {
+        const resolved = await music.resolveArtistChannel(q).catch(() => null);
+        if (resolved && resolved.url) url = resolved.url;
+      }
+    }
+
     const info = await music.inspectUrl(url).catch(() => ({}));
     const watchName = (name && name.trim()) || info.uploader || info.title || 'Music Watch';
     const thumbnail = info.thumbnail || null;

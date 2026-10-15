@@ -17,6 +17,7 @@ function setupWatchService(t, { clock } = {}) {
   const ytdlp = {
     DOWNLOAD_DIR: '/downloads',
     assertPublicUrl() {},
+    async assertPublicUrlResolved() {},
     async getInfo(url, { playlistStart = 1, playlistEnd }) {
       state.calls++;
       if (state.delayMs) await new Promise((r) => setTimeout(r, state.delayMs));

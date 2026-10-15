@@ -119,3 +119,38 @@ test('reset history keeps completed items and forgets the rest', (t) => {
   assert.deepEqual([...repo.knownIds(watchId)], ['done']);
   assert.equal(tmp.db.prepare('SELECT last_checked_at FROM watches WHERE id = ?').get(watchId).last_checked_at, null);
 });
+
+test('listWatches decorates all watches, item aggregates, and latest run in a single query', (t) => {
+  const tmp = openTempDb();
+  t.after(() => tmp.cleanup());
+  const repo = createRepository(tmp.db);
+
+  const wVideo = insertWatch(tmp.db, { url: 'https://www.youtube.com/@vid', name: 'Video Watch' });
+  const wMusic = Number(tmp.db.prepare("INSERT INTO watches (url, name, is_music) VALUES (?, ?, 1)")
+    .run('https://www.youtube.com/@music', 'Music Watch').lastInsertRowid);
+
+  repo.upsertItems(wVideo, [
+    { entry: { id: 'v1', title: 'One' }, discoveryType: 'new' },
+    { entry: { id: 'v2', title: 'Two' }, discoveryType: 'baseline' },
+  ]);
+  const run1 = repo.createRun(wVideo, 'initial');
+  repo.finishRun(run1, { status: 'completed', baseline_count: 1 });
+  const run2 = repo.createRun(wVideo, 'scheduled');
+  repo.finishRun(run2, { status: 'completed', new_count: 1, queued_count: 1 });
+
+  const all = repo.listWatches();
+  assert.equal(all.length, 2);
+  const videoRow = all.find((w) => w.id === wVideo);
+  const musicRow = all.find((w) => w.id === wMusic);
+
+  assert.equal(videoRow.cataloged_count, 2);
+  assert.equal(videoRow.new_count, 1);
+  assert.equal(videoRow.baseline_count, 1);
+  assert.equal(videoRow.latest_run_id, run2);
+  assert.equal(videoRow.latest_new_count, 1);
+  assert.equal(musicRow.cataloged_count, 0);
+  assert.equal(musicRow.latest_run_id, null);
+
+  assert.deepEqual(repo.listWatches({ music: true }).map((w) => w.id), [wMusic]);
+  assert.deepEqual(repo.listWatches({ music: false }).map((w) => w.id), [wVideo]);
+});

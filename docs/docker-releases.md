@@ -47,7 +47,7 @@ The workflows disable Docker build-record artifacts to avoid accumulating them.
 Staging image versions remain in GHCR; they are not release tags.
 
 CI runs the server's Node test suite and builds the client before Docker work.
-Runtime validation checks yt-dlp/FFmpeg/Deno, SQLite, `/api/health`, the client,
+Runtime validation checks yt-dlp/FFmpeg/QuickJS-ng, SQLite, `/api/health`, the client,
 login/session persistence, and authenticated downloads/watch routes. The health
 endpoint is unauthenticated, creates no session, and exposes only readiness.
 Both amd64 and arm64 release images must pass before promotion.
@@ -55,9 +55,12 @@ Both amd64 and arm64 release images must pass before promotion.
 ## Updating bundled download tools
 
 The image's yt-dlp baseline lives in `requirements-docker.txt`, which Renovate
-can update. FFmpeg and Deno versions and architecture-specific SHA256 values
-live in the Dockerfile. Update each version and its checksums in the same PR
-using the corresponding upstream GitHub release asset digests; changing only
-one value will fail checksum validation. FFmpeg uses a dated autobuild release,
-not its mutable `latest` URL. Existing Settings/manual and scheduled runtime
-updates still work; those can make installed tools newer than the image baseline.
+can update. FFmpeg's version and architecture-specific SHA256 values live in the
+Dockerfile. Update the version and its checksums in the same PR using the
+corresponding upstream GitHub release asset digests; changing only one value will
+fail checksum validation. FFmpeg uses a dated autobuild release, not its mutable
+`latest` URL. QuickJS-ng is built from source: `QUICKJS_VERSION` and
+`QUICKJS_COMMIT` in the Dockerfile name a release tag and the commit it must
+point to, so update both together; the build fails if the tag has moved.
+Existing Settings/manual and scheduled runtime updates still work; those can make
+installed tools newer than the image baseline.

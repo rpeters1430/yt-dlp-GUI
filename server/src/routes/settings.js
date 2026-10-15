@@ -18,7 +18,11 @@ const ALLOWED_SETTINGS_KEYS = new Set([
   'music_quality',
   'music_save_cover',
   'output_template',
+  'video_folder',
   'default_live_chunk_mins',
+  'max_concurrent_downloads',
+  'download_limit_rate',
+  'download_sleep_interval',
 ]);
 
 function saveSetting(key, value) {
@@ -92,12 +96,12 @@ router.post('/ffmpeg/update', async (req, res) => {
   }
 });
 
-router.post('/deno/update', async (req, res) => {
+router.post('/quickjs/update', async (req, res) => {
   if (queue.getActiveCount && queue.getActiveCount() > 0) {
-    return res.status(409).json({ error: 'Cannot update Deno while downloads are active. Please wait for them to complete.' });
+    return res.status(409).json({ error: 'Cannot update QuickJS while downloads are active. Please wait for them to complete.' });
   }
   try {
-    const versions = await ytdlp.updateDeno();
+    const versions = await ytdlp.updateQuickjs();
     res.json({ ok: true, ...versions });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -110,6 +114,10 @@ router.get('/output-template', (req, res) => {
     template: outputTemplate.getGlobalTemplate(),
     defaultTemplate: outputTemplate.DEFAULT_TEMPLATE,
     presets: outputTemplate.PRESETS,
+    // The folder saved in Settings (blank = use the default) and where videos actually go.
+    videoFolder: outputTemplate.getVideoFolderSetting(),
+    videoDir: outputTemplate.getVideoDir(),
+    defaultVideoDir: ytdlp.VIDEO_DIR,
   });
 });
 
@@ -120,6 +128,10 @@ router.get('/', (req, res) => {
   for (const r of rows) settings[r.key] = r.value;
   settings.ytdlpChannel = settings.ytdlpChannel === 'nightly' ? 'nightly' : 'stable';
   settings.default_live_chunk_mins = parseInt(settings.default_live_chunk_mins || '0', 10);
+  // The effective value, which falls back to the MAX_CONCURRENT_DOWNLOADS env var.
+  settings.max_concurrent_downloads = queue.getMaxConcurrent();
+  settings.download_limit_rate = settings.download_limit_rate || '';
+  settings.download_sleep_interval = parseInt(settings.download_sleep_interval || '0', 10) || 0;
   res.json(settings);
 });
 
@@ -140,6 +152,38 @@ router.put('/', (req, res) => {
     if (templateError) return res.status(400).json({ error: templateError });
   }
 
+  const videoFolder = entries.find(([key]) => key === 'video_folder');
+  if (videoFolder) {
+    // Blank (or null) is stored as '' and means "use the default video folder".
+    videoFolder[1] = videoFolder[1] == null ? '' : String(videoFolder[1]).trim();
+    const folderError = outputTemplate.validateVideoFolder(videoFolder[1]);
+    if (folderError) return res.status(400).json({ error: folderError });
+  }
+
+  const limitRate = entries.find(([key]) => key === 'download_limit_rate');
+  if (limitRate) {
+    limitRate[1] = String(limitRate[1] || '').trim();
+    if (limitRate[1] && !/^\d+(?:\.\d+)?[KMGkmg]?$/.test(limitRate[1])) {
+      return res.status(400).json({ error: 'download_limit_rate must be a valid rate like 5M, 10M, or 500K' });
+    }
+  }
+
+  const sleepInterval = entries.find(([key]) => key === 'download_sleep_interval');
+  if (sleepInterval) {
+    const s = Number(sleepInterval[1]);
+    if (!Number.isInteger(s) || s < 0 || s > 60) {
+      return res.status(400).json({ error: 'download_sleep_interval must be a whole number from 0 to 60 seconds' });
+    }
+  }
+
+  const concurrency = entries.find(([key]) => key === 'max_concurrent_downloads');
+  if (concurrency) {
+    const n = Number(concurrency[1]);
+    if (!Number.isInteger(n) || n < 1 || n > queue.MAX_CONCURRENT_LIMIT) {
+      return res.status(400).json({ error: `max_concurrent_downloads must be a whole number from 1 to ${queue.MAX_CONCURRENT_LIMIT}` });
+    }
+  }
+
   const upsert = db.prepare(`
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -148,6 +192,8 @@ router.put('/', (req, res) => {
     for (const [key, value] of rows) upsert.run(key, String(value));
   });
   tx(entries);
+  // A higher limit can start queued downloads right away.
+  if (concurrency) queue.processNext();
   res.json({ ok: true });
 });
 

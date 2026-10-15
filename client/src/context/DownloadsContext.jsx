@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { api } from '../api.js';
 
@@ -52,6 +52,14 @@ export function DownloadsProvider({ children, isAuthenticated }) {
   const [counts, setCounts] = useState(null);
   const [connected, setConnected] = useState(false);
   const socketRef = useRef(null);
+  const watchListenersRef = useRef(new Set());
+
+  const subscribeWatchUpdates = useCallback((listener) => {
+    watchListenersRef.current.add(listener);
+    return () => {
+      watchListenersRef.current.delete(listener);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -76,7 +84,7 @@ export function DownloadsProvider({ children, isAuthenticated }) {
 
     // WebSocket connection for real-time updates across all pages. jobs:init is sent again on
     // every (re)connect, so a dropped connection resyncs by itself.
-    const socket = io({ path: '/socket.io' });
+    const socket = io({ path: '/socket.io', withCredentials: true });
     socketRef.current = socket;
 
     socket.on('connect', () => setConnected(true));
@@ -89,6 +97,14 @@ export function DownloadsProvider({ children, isAuthenticated }) {
     });
     socket.on('job:removed', ({ id } = {}) => {
       if (id) setJobs((prev) => prev.filter((j) => j.id !== id));
+    });
+    socket.on('watch:update', (updated) => {
+      if (!updated) return;
+      for (const fn of watchListenersRef.current) {
+        try {
+          fn(updated);
+        } catch (_) {}
+      }
     });
 
     return () => {
@@ -119,7 +135,7 @@ export function DownloadsProvider({ children, isAuthenticated }) {
     [jobs]
   );
   const queuedJobs = useMemo(
-    () => jobs.filter((j) => j.status === 'queued'),
+    () => jobs.filter((j) => j.status === 'queued').slice().sort((a, b) => (b.priority || 0) - (a.priority || 0)),
     [jobs]
   );
 
@@ -137,10 +153,14 @@ export function DownloadsProvider({ children, isAuthenticated }) {
     counts: effectiveCounts,
     completedCount: effectiveCounts.completed || 0,
     failedCount: effectiveCounts.failed || 0,
+    queuePaused: !!effectiveCounts.paused,
+    storage: effectiveCounts.storage || null,
+    setCounts,
     currentJob,
     hasActive: activeJobs.length > 0,
     isDownloading: downloadingJobs.length > 0,
     refreshJobs: () => api.listDownloads().then((list) => setJobs((prev) => mergeList(prev, list))).catch(() => {}),
+    subscribeWatchUpdates,
   };
 
   return (

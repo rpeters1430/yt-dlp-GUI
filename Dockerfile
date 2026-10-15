@@ -6,13 +6,37 @@ RUN npm ci --no-audit --no-fund
 COPY client/ ./
 RUN npm run build
 
+# --- Build QuickJS-ng ---
+# yt-dlp needs an external JS runtime to solve YouTube's JS challenges. QuickJS-ng's `qjs` is
+# built from a pinned, verified release commit and cross-compiled on the build host (so arm64
+# doesn't compile under QEMU) into a static binary for the target architecture.
+FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS quickjs-build
+ARG TARGETARCH
+ARG BUILDARCH
+# Update the version and its tag's commit together.
+ARG QUICKJS_VERSION=0.17.0
+ARG QUICKJS_COMMIT=6d46d07d04041b40f4f49eaa7fdebe44c314c699
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64) QJS_TRIPLE=x86_64-linux-gnu; QJS_PROCESSOR=x86_64 ;; \
+      arm64) QJS_TRIPLE=aarch64-linux-gnu; QJS_PROCESSOR=aarch64 ;; \
+      *) echo "Unsupported architecture for QuickJS-ng" >&2; exit 1 ;; \
+    esac; \
+    if [ "$TARGETARCH" = "$BUILDARCH" ]; then TOOLCHAIN="gcc libc6-dev"; else TOOLCHAIN="crossbuild-essential-$TARGETARCH"; fi; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates git cmake make $TOOLCHAIN; \
+    git clone --depth 1 --branch "v${QUICKJS_VERSION}" https://github.com/quickjs-ng/quickjs /tmp/quickjs; \
+    test "$(git -C /tmp/quickjs rev-parse HEAD)" = "$QUICKJS_COMMIT"; \
+    cmake -S /tmp/quickjs -B /tmp/quickjs/build -DCMAKE_BUILD_TYPE=Release -DQJS_BUILD_CLI_STATIC=ON \
+      -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR="$QJS_PROCESSOR" -DCMAKE_C_COMPILER="${QJS_TRIPLE}-gcc"; \
+    cmake --build /tmp/quickjs/build --target qjs_exe -j"$(nproc)"; \
+    mkdir -p /out; \
+    "${QJS_TRIPLE}-strip" -o /out/qjs /tmp/quickjs/build/qjs
+
 # --- Final image ---
 FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
 
 # Immutable image baselines. Update release, asset version and checksums together.
-ARG DENO_VERSION=2.9.7
-ARG DENO_SHA256_AMD64=c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490
-ARG DENO_SHA256_ARM64=c832298b1ad4422481334855f6003e0f54145762c5a134f20a489511d2f65bbf
 ARG FFMPEG_RELEASE=autobuild-2026-10-06-19-26
 ARG FFMPEG_VERSION=N-127226-gdc234edb2c
 ARG FFMPEG_SHA256_AMD64=43e8dfcfbad7ec3a1e01681face41e5afaffe50edfdcf7d7daf0e749b1d10c20
@@ -25,10 +49,10 @@ ARG APT_REFRESH=
 
 # python3-pip is kept in the final image (not purged after install) so the Settings page's
 # "Update yt-dlp" action can run `pip3 install -U [--pre] yt-dlp` at runtime.
-# curl, unzip, and xz-utils are kept so the Settings page's "Update FFmpeg" and "Update yt-dlp"
-# actions can download and unpack builds at runtime.
+# curl, unzip, xz-utils, and gosu are kept so runtime binary updates and optional PUID/PGID
+# privilege dropping work out of the box.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
-    python3 python3-pip ca-certificates build-essential curl unzip xz-utils \
+    python3 python3-pip ca-certificates build-essential curl unzip xz-utils gosu \
     && pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements-docker.txt \
     && rm /tmp/requirements-docker.txt \
     && rm -rf /var/lib/apt/lists/*
@@ -49,21 +73,9 @@ RUN set -eux; \
     rm -rf /tmp/ffmpeg.tar.xz /tmp/ffmpeg-extracted; \
     ffmpeg -version
 
-# yt-dlp requires an external JS runtime to solve YouTube's JS challenges/PO tokens
-# (deno is its default/recommended runtime as of yt-dlp 2025.11.12+); install it directly
-# from GitHub releases so both amd64 and arm64 NAS builds get the right binary.
-RUN set -eux; \
-    case "$(dpkg --print-architecture)" in \
-      amd64) DENO_ARCH=x86_64-unknown-linux-gnu; DENO_SHA256="$DENO_SHA256_AMD64" ;; \
-      arm64) DENO_ARCH=aarch64-unknown-linux-gnu; DENO_SHA256="$DENO_SHA256_ARM64" ;; \
-      *) echo "Unsupported architecture for deno" >&2; exit 1 ;; \
-    esac; \
-    curl --retry 3 -fsSL -o /tmp/deno.zip "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-${DENO_ARCH}.zip"; \
-    echo "${DENO_SHA256}  /tmp/deno.zip" | sha256sum -c -; \
-    unzip -o /tmp/deno.zip -d /usr/local/bin; \
-    chmod +x /usr/local/bin/deno; \
-    rm /tmp/deno.zip; \
-    deno --version
+# QuickJS-ng (built above) is the JS runtime yt-dlp uses for YouTube; Settings can update it.
+COPY --from=quickjs-build /out/qjs /usr/local/bin/qjs
+RUN qjs --version
 
 WORKDIR /app
 
@@ -91,6 +103,9 @@ RUN cd server && npm ci --omit=dev --omit=optional --no-audit --no-fund \
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 COPY server/ ./server/
 COPY --from=client-build /app/client/dist ./client/dist
 
@@ -98,13 +113,15 @@ ENV NODE_ENV=production \
     PORT=3000 \
     DOWNLOAD_DIR=/downloads \
     CONFIG_DIR=/config \
+    PYTHONUSERBASE=/config/python \
     YTDLP_BIN=yt-dlp \
-    PATH="/config/bin:${PATH}"
+    PATH="/config/bin:/config/python/bin:${PATH}"
 
-RUN mkdir -p /downloads /config
+RUN mkdir -p /downloads /config /config/bin /config/python
 VOLUME ["/downloads", "/config"]
 
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/health', {signal: AbortSignal.timeout(3000)}).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server/src/index.js"]

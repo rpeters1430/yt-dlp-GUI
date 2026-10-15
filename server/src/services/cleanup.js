@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const cron = require('node-cron');
 const db = require('../db');
 const jellyfin = require('./jellyfin');
 const plex = require('./plex');
@@ -30,6 +29,7 @@ function getCleanupConfig() {
     jellyfinApiKey: getSetting('jellyfin_api_key', ''),
     jellyfinUserId: getSetting('jellyfin_user_id', ''),
     keepRecentPerWatch: parseInt(getSetting('cleanup_keep_recent', '0'), 10) || 0,
+    minFreeDiskGb: Math.max(0, parseFloat(getSetting('cleanup_min_free_gb', '0')) || 0),
     plexEnabled: isTruthy(getSetting('cleanup_plex_enabled', '0')),
   };
 }
@@ -38,9 +38,47 @@ function getCleanupConfig() {
 // wasn't "subscribed" to and shouldn't disappear on its own. LEFT JOIN (not INNER) so a
 // download whose watch was since deleted stays a candidate instead of silently becoming
 // permanently un-cleanable — it just reads as "not exempt" with no watch name to show.
+// Only the columns the plan uses: d.* would also read every job's yt-dlp log.
+
+// Queries filesystem free/total space on the video/download volume using Node's built-in
+// fs.statfsSync (zero external dependencies). Used by the Library header, Settings storage
+// indicator, and the low-disk safety guard that pauses scheduled Watch downloads.
+function getStorageStats(targetDir = null) {
+  const { VIDEO_DIR, DOWNLOAD_DIR } = require('./ytdlpPaths');
+  const dir = targetDir || VIDEO_DIR || DOWNLOAD_DIR || process.cwd();
+  const minFreeDiskGb = Math.max(0, parseFloat(getSetting('cleanup_min_free_gb', '0')) || 0);
+  try {
+    if (typeof fs.statfsSync !== 'function') return null;
+    const target = fs.existsSync(dir) ? dir : path.dirname(dir);
+    const st = fs.statfsSync(target);
+    const blockSize = Number(st.bsize || st.frsize || 4096);
+    const totalBytes = Number(st.blocks || 0) * blockSize;
+    const freeBytes = Number(st.bavail ?? st.bfree ?? 0) * blockSize;
+    if (totalBytes <= 0) return null;
+    const usedBytes = Math.max(0, totalBytes - freeBytes);
+    const usedPercent = Math.min(100, Math.round((usedBytes / totalBytes) * 1000) / 10);
+    const freeGb = freeBytes / (1024 ** 3);
+    const lowDiskWarning = freeGb < 10;
+    const belowMinFreeDisk = minFreeDiskGb > 0 && freeGb < minFreeDiskGb;
+    return {
+      path: dir,
+      freeBytes,
+      totalBytes,
+      usedBytes,
+      usedPercent,
+      freeGb: Math.round(freeGb * 10) / 10,
+      lowDiskWarning,
+      minFreeDiskGb,
+      belowMinFreeDisk,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 function getCleanupCandidates() {
   return db.prepare(`
-    SELECT d.*, w.cleanup_exempt AS watch_cleanup_exempt, w.name AS watch_name, w.channel_name AS watch_channel_name
+    SELECT d.id, d.title, d.url, d.filepath, d.created_at, d.watch_id, d.protected, w.cleanup_exempt AS watch_cleanup_exempt, w.name AS watch_name, w.channel_name AS watch_channel_name
     FROM downloads d
     LEFT JOIN watches w ON w.id = d.watch_id
     WHERE d.status = 'completed' AND d.filepath IS NOT NULL AND d.watch_id IS NOT NULL
@@ -176,9 +214,10 @@ function listSidecars(filepath) {
   return names.map((name) => path.join(dir, name));
 }
 
-// Removes the media file plus its sidecars, so neither the nightly job nor a Library delete
-// leaves orphaned .nfo/poster/subtitle files behind for Jellyfin to pick up.
-function deleteDownloadFile(id, filepath, title, reason) {
+// Removes a download's media file, its sidecars (.nfo, poster, subtitles), and any split
+// part files + their sidecars from disk without modifying the database row.
+function removeMediaFiles(id, filepath, splitPartsRaw = null) {
+  if (!filepath) return true;
   const sidecars = listSidecars(filepath);
   try {
     if (fs.existsSync(filepath)) {
@@ -204,29 +243,96 @@ function deleteDownloadFile(id, filepath, title, reason) {
 
   // If this download was split into multiple parts, remove all other part files too
   try {
-    const row = db.prepare('SELECT split_parts FROM downloads WHERE id = ?').get(id);
-    if (row && row.split_parts) {
-      const parts = JSON.parse(row.split_parts);
-      for (const p of parts) {
-        if (p && p !== filepath && fs.existsSync(p)) {
-          try { fs.unlinkSync(p); } catch (_) {}
-          for (const s of listSidecars(p)) {
-            try { fs.unlinkSync(s); } catch (_) {}
+    const raw = splitPartsRaw !== null && splitPartsRaw !== undefined
+      ? splitPartsRaw
+      : (db.prepare('SELECT split_parts FROM downloads WHERE id = ?').get(id) || {}).split_parts;
+    if (raw) {
+      const parts = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(parts)) {
+        for (const p of parts) {
+          if (p && p !== filepath && fs.existsSync(p)) {
+            try { fs.unlinkSync(p); } catch (_) {}
+            for (const s of listSidecars(p)) {
+              try { fs.unlinkSync(s); } catch (_) {}
+            }
           }
         }
       }
     }
   } catch (_) {}
 
+  return true;
+}
+
+// Removes the media file plus its sidecars, so neither the nightly job nor a Library delete
+// leaves orphaned .nfo/poster/subtitle files behind for Jellyfin to pick up.
+function deleteDownloadFile(id, filepath, title, reason) {
+  if (!removeMediaFiles(id, filepath)) return false;
+
   console.log(`[cleanup] Deleted "${title || filepath}" (${reason})`);
-  db.prepare("UPDATE downloads SET status = 'deleted', filepath = NULL WHERE id = ?").run(id);
+  db.prepare("UPDATE downloads SET status = 'deleted', filepath = NULL, filesize = NULL, has_poster = 0 WHERE id = ?").run(id);
   emitJobUpdate(id);
   return true;
+}
+
+// Nightly SQLite maintenance: prunes old watch_runs (keeping the newest 100 per watch),
+// removes expired connect-sqlite3 sessions, and runs PRAGMA optimize + WAL checkpoint when idle.
+function runDbMaintenance({ maxRunsPerWatch = 100, maxRunAgeDays = 30 } = {}) {
+  let prunedRuns = 0;
+  let expiredSessions = 0;
+  let walCheckpointed = false;
+
+  try {
+    const daysParam = `-${Math.max(1, parseInt(maxRunAgeDays, 10) || 30)} days`;
+    const keepCount = Math.max(10, parseInt(maxRunsPerWatch, 10) || 100);
+    prunedRuns = db.prepare(`
+      DELETE FROM watch_runs
+      WHERE finished_at IS NOT NULL
+        AND finished_at < datetime('now', ?)
+        AND id NOT IN (
+          SELECT id FROM (
+            SELECT id, ROW_NUMBER() OVER (PARTITION BY watch_id ORDER BY id DESC) AS rn
+            FROM watch_runs
+          ) WHERE rn <= ?
+        )
+    `).run(daysParam, keepCount).changes;
+  } catch (err) {
+    console.error(`[cleanup] watch_runs maintenance failed: ${err.message}`);
+  }
+
+  try {
+    const hasSessions = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sessions'").get();
+    if (hasSessions) {
+      expiredSessions = db.prepare('DELETE FROM sessions WHERE expired < ?').run(Date.now()).changes;
+    }
+  } catch (err) {
+    console.error(`[cleanup] session table cleanup failed: ${err.message}`);
+  }
+
+  try {
+    if (typeof db.pragma === 'function') {
+      db.pragma('optimize');
+      let active = 0;
+      try {
+        const q = require('./queue');
+        active = q.getActiveCount ? q.getActiveCount() : 0;
+      } catch (_) {}
+      if (active === 0) {
+        db.pragma('wal_checkpoint(TRUNCATE)');
+        walCheckpointed = true;
+      }
+    }
+  } catch (err) {
+    console.error(`[cleanup] SQLite pragma maintenance failed: ${err.message}`);
+  }
+
+  return { prunedRuns, expiredSessions, walCheckpointed };
 }
 
 async function runCleanup() {
   const config = getCleanupConfig();
   if (!config.ageEnabled && !config.jellyfinEnabled && !config.plexEnabled) {
+    runDbMaintenance();
     console.log('[cleanup] Auto-delete is disabled, skipping run');
     return { deleted: 0, checked: 0, kept: 0 };
   }
@@ -241,11 +347,13 @@ async function runCleanup() {
     }
   }
 
+  runDbMaintenance();
   console.log(`[cleanup] Nightly run finished: ${deleted} file(s) deleted`);
   return { deleted, checked: plan.checked, kept: plan.toKeep.length };
 }
 
 function start() {
+  const cron = require('node-cron');
   // Runs once a night; both the age-based and Jellyfin-watched rules are evaluated on every
   // tick, independently of each other, so either or both can delete a given video.
   cron.schedule('0 3 * * *', () => {
@@ -253,4 +361,15 @@ function start() {
   });
 }
 
-module.exports = { init, start, runCleanup, computeCleanupPlan, getCleanupConfig, deleteDownloadFile };
+module.exports = {
+  init,
+  start,
+  runCleanup,
+  runDbMaintenance,
+  computeCleanupPlan,
+  getCleanupConfig,
+  getStorageStats,
+  deleteDownloadFile,
+  removeMediaFiles,
+  listSidecars,
+};

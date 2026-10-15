@@ -53,7 +53,7 @@ function createWatchesRouter({
       return res.status(400).json({ error: 'A valid http(s) url is required' });
     }
     try {
-      ytdlp.assertPublicUrl(url);
+      await ytdlp.assertPublicUrlResolved(url);
       const info = await ytdlp.getInfo(url, { flatPlaylist: true, playlistEnd: 6 });
 
       let thumbnail = null;
@@ -125,7 +125,7 @@ function createWatchesRouter({
       max_duration: maxDuration ? parseInt(maxDuration, 10) || null : null,
     };
     try {
-      ytdlp.assertPublicUrl(url);
+      await ytdlp.assertPublicUrlResolved(url);
       const info = await ytdlp.getInfo(url, { flatPlaylist: true, playlistEnd: 20 });
       const rows = normalizeEntries(info).slice(0, 20).map((entry) => ({
         id: entry.id,
@@ -146,7 +146,7 @@ function createWatchesRouter({
   });
 
   // Create a new watch
-  router.post('/', (req, res) => {
+  router.post('/', async (req, res) => {
     const {
       url,
       name,
@@ -182,7 +182,7 @@ function createWatchesRouter({
       return res.status(400).json({ error: 'A valid http(s) url is required' });
     }
     try {
-      ytdlp.assertPublicUrl(url);
+      await ytdlp.assertPublicUrlResolved(url);
     } catch (e) {
       return res.status(400).json({ error: e.message });
     }
@@ -474,7 +474,11 @@ function createWatchesRouter({
 
   // Get downloads triggered by this watch
   router.get('/:id/downloads', (req, res) => {
-    const downloads = database.prepare('SELECT * FROM downloads WHERE watch_id = ? ORDER BY created_at DESC LIMIT 100').all(req.params.id);
+    // Not the per-job yt-dlp log and command line, which the Activity view doesn't show.
+    const downloads = database.prepare(`
+      SELECT id, url, title, thumbnail, filepath, error, status, created_at, protected
+      FROM downloads WHERE watch_id = ? ORDER BY created_at DESC LIMIT 100
+    `).all(req.params.id);
     res.json(downloads);
   });
 

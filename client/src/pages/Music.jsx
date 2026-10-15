@@ -36,6 +36,10 @@ import {
 } from 'lucide-react';
 import { api } from '../api.js';
 import { useDownloads } from '../context/DownloadsContext.jsx';
+import { useToast } from '../context/ToastContext.jsx';
+import Art from '../components/Art.jsx';
+import Drawer from '../components/Drawer.jsx';
+import { Segmented, ToggleRow } from '../components/DownloadOptionsFields.jsx';
 
 // Key for looking up a song in the Jellyfin library check results.
 function parseJobOptions(json) {
@@ -149,7 +153,7 @@ export default function MusicPage() {
   const [selectedTracks, setSelectedTracks] = useState(new Set());
   const [downloadingAlbum, setDownloadingAlbum] = useState(false);
   const [downloadingAlbumId, setDownloadingAlbumId] = useState(null);
-  const [quickDownloadToast, setQuickDownloadToast] = useState(null);
+  const [musicOptionsOpen, setMusicOptionsOpen] = useState(false);
   const [albumDownloadMessage, setAlbumDownloadMessage] = useState(null);
 
   // Download options for current view
@@ -207,19 +211,31 @@ export default function MusicPage() {
   const [jellyfinScanning, setJellyfinScanning] = useState(false);
 
   // Toast notification state
-  const [toastMessage, setToastMessage] = useState(null);
+  const appToast = useToast();
   function showToast(text, type = 'success') {
-    setToastMessage({ text, type });
-    setTimeout(() => setToastMessage(null), 4500);
+    appToast(text, { error: type === 'error' });
   }
 
-  function getTrackJobStatus(trackTitle) {
+  function getTrackJobStatus(trackTitle, trackArtist = null, albumName = null) {
     if (!trackTitle || !jobs) return null;
     const titLower = trackTitle.toLowerCase().trim();
+    const artLower = trackArtist ? trackArtist.toLowerCase().trim() : null;
+    const albLower = albumName ? albumName.toLowerCase().trim() : null;
     return jobs.find((j) => {
-      const metaTitle = j.options.musicMetadata?.title;
-      if (metaTitle && metaTitle.toLowerCase().trim() === titLower) return true;
-      if (j.title && j.title.toLowerCase().includes(titLower)) return true;
+      const meta = j.options?.musicMetadata;
+      const metaTitle = meta?.title;
+      if (metaTitle && metaTitle.toLowerCase().trim() === titLower) {
+        if (albLower && meta?.album && meta.album.toLowerCase().trim() !== albLower) return false;
+        if (artLower) {
+          const mArt = (meta?.artist || meta?.albumArtist || "").toLowerCase().trim();
+          if (mArt && !mArt.includes(artLower) && !artLower.includes(mArt)) return false;
+        }
+        return true;
+      }
+      if (!metaTitle && j.title && j.title.toLowerCase().includes(titLower)) {
+        if (artLower && !j.title.toLowerCase().includes(artLower)) return false;
+        return true;
+      }
       return false;
     });
   }
@@ -574,7 +590,7 @@ export default function MusicPage() {
         setArtistSort('newest');
       }
     } catch (err) {
-      alert(`Could not load artist discography: ${err.message}`);
+      showToast(`Could not load the artist: ${err.message}`, 'error');
     } finally {
       setArtistLoading(false);
     }
@@ -634,131 +650,63 @@ export default function MusicPage() {
       };
       const res = await api.downloadMusic(payload);
       const skippedCount = res.skipped?.length || 0;
-      setQuickDownloadToast({
-        id: albumItem.id,
-        text: res.enqueued === 0 && skippedCount > 0
+      showToast(res.enqueued === 0 && skippedCount > 0
           ? `"${details.album.name}" is already in your Jellyfin library. Nothing to download.`
-          : `Queued "${details.album.name}" (${res.enqueued} tracks) for download!${skippedCount ? ` Skipped ${skippedCount} already in Jellyfin.` : ''}`,
-      });
-      setTimeout(() => setQuickDownloadToast(null), 5000);
+        : `Queued "${details.album.name}" (${res.enqueued} songs)${skippedCount ? ` · skipped ${skippedCount} already in Jellyfin` : ''}`);
     } catch (err) {
-      alert(`Download failed: ${err.message}`);
+      showToast(`Download failed: ${err.message}`, 'error');
     } finally {
       setDownloadingAlbumId(null);
     }
   }
 
-  // Shared release card renderer
+  // Square album tile: cover with a Jellyfin badge, quick download, then title and year.
   function renderReleaseCard(item) {
     const isDownloadingThis = downloadingAlbumId === item.id;
     const isLoadingThis = loadingAlbumId === item.id;
     const libraryStatus = libraryAlbums[item.id];
+    const owned = libraryStatus?.totalTracks ? Math.min(libraryStatus.ownedTracks, libraryStatus.totalTracks) : null;
     return (
-      <div
-        key={item.id}
-        className="card music-release-card"
-        style={{
-          padding: 12,
-          cursor: isLoadingThis ? 'progress' : 'pointer',
-          opacity: isLoadingThis ? 0.6 : 1,
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-        aria-busy={isLoadingThis}
-        onClick={() => handleSelectAlbum(item)}
-      >
-        <div style={{ position: 'relative', width: '100%', aspectRatio: '1/1', borderRadius: 8, overflow: 'hidden', backgroundColor: 'var(--surface-hover)', marginBottom: 10 }}>
-          {item.artwork ? (
-            <img
-              src={item.artwork}
-              alt={item.name}
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              loading="lazy"
-            />
-          ) : (
-            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)' }}>
-              <Disc3 size={48} />
-            </div>
-          )}
-          {item.releaseYear && (
-            <span className="badge" style={{ position: 'absolute', bottom: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: '0.75rem', backdropFilter: 'blur(4px)' }}>
-              {item.releaseYear}
-            </span>
-          )}
-          {libraryStatus?.status === 'complete' && (
-            <span className="badge badge-in-library" style={{ position: 'absolute', top: 8, right: 8, fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4 }} title="Already in your Jellyfin library">
-              <CheckCircle2 size={12} /> In Library
-            </span>
-          )}
-          {libraryStatus?.status === 'partial' && (
-            <span className="badge badge-partial-library" style={{ position: 'absolute', top: 8, right: 8, fontSize: '0.72rem' }} title="Some of these songs are already in your Jellyfin library">
-              {libraryStatus.totalTracks ? `${Math.min(libraryStatus.ownedTracks, libraryStatus.totalTracks)}/${libraryStatus.totalTracks} in Library` : 'Partly in Library'}
-            </span>
-          )}
-          {item.isSingle ? (
-            <span className="badge badge-single" style={{ position: 'absolute', top: 8, left: 8, fontSize: '0.72rem', backdropFilter: 'blur(4px)' }}>
-              Single / EP
-            </span>
-          ) : (
-            <span className="badge badge-album" style={{ position: 'absolute', top: 8, left: 8, fontSize: '0.72rem', backdropFilter: 'blur(4px)' }}>
-              Album
-            </span>
-          )}
-        </div>
-
-        <div style={{ flex: 1 }}>
-          <h3 style={{ margin: '0 0 4px 0', fontSize: '0.96rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.name}>
-            {item.name}
-          </h3>
-          <div
-            style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleViewArtist(item.artistId, item.artist);
-            }}
-            title={`View all releases by ${item.artist}`}
-          >
-            <span style={{ textDecoration: 'underline', textUnderlineOffset: 2 }}>{item.artist}</span>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)', fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
-          <span>{item.trackCount} {item.trackCount === 1 ? 'Track' : 'Tracks'}</span>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              style={{ padding: '3px 8px', fontSize: '0.78rem' }}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleSelectAlbum(item);
-              }}
-              title="View tracklist & customize download"
-              disabled={isLoadingThis}
-            >
-              {isLoadingThis ? 'Loading…' : 'Tracks'}
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              style={{ padding: '3px 10px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-              disabled={isDownloadingThis}
-              onClick={(e) => handleQuickDownloadAlbum(e, item)}
-              title={libraryStatus?.status === 'partial'
-                ? `Download the songs not already in Jellyfin, in ${downloadFormat.toUpperCase()}`
-                : `Download all ${item.trackCount} tracks directly in ${downloadFormat.toUpperCase()}`}
-            >
-              {isDownloadingThis ? (
-                <RefreshCw size={12} className="spin" />
-              ) : (
-                <Download size={12} />
-              )}
-              Get
-            </button>
-          </div>
+      <div key={item.id} className={`album-tile${isLoadingThis ? ' loading' : ''}`} aria-busy={isLoadingThis}>
+        <button type="button" className="album-tile-art" onClick={() => handleSelectAlbum(item)} aria-label={`Open ${item.name}`}>
+          <Art src={item.artwork} ratio="1" label={isLoadingThis ? 'loading…' : null}>
+            {libraryStatus?.status === 'complete' && <span className="badge badge-success badge-tl">IN LIBRARY</span>}
+            {libraryStatus?.status === 'partial' && <span className="badge badge-warning badge-tl">{owned !== null ? `${owned}/${libraryStatus.totalTracks}` : 'PARTIAL'}</span>}
+          </Art>
+        </button>
+        <button
+          type="button"
+          className="art-x album-quick"
+          disabled={isDownloadingThis}
+          onClick={(e) => handleQuickDownloadAlbum(e, item)}
+          title={libraryStatus?.status === 'partial' ? `Download the songs not in Jellyfin (${downloadFormat.toUpperCase()})` : `Download all ${item.trackCount} songs (${downloadFormat.toUpperCase()})`}
+          aria-label={`Download ${item.name}`}
+        >
+          {isDownloadingThis ? <RefreshCw size={13} className="spin" /> : <Download size={13} />}
+        </button>
+        <div className="tile-title" title={item.name}>{item.name}</div>
+        <div className="tile-meta mono-meta">
+          {[item.releaseYear, item.isSingle ? (item.trackCount > 1 ? `EP · ${item.trackCount} songs` : 'Single') : `${item.trackCount} songs`].filter(Boolean).join(' · ')}
         </div>
       </div>
     );
+  }
+
+  // Opens the Music Watch form prefilled to follow an artist's new releases,
+  // resolving their canonical YouTube / Topic channel URL asynchronously.
+  async function openArtistWatch(name) {
+    const cleanName = String(name || "").trim();
+    const fallbackHandle = cleanName.replace(/[^a-zA-Z0-9._-]/g, "") || "music";
+    setNewWatchName(`${cleanName} Releases`);
+    setNewWatchUrl(`https://www.youtube.com/@${fallbackHandle}`);
+    setActiveTab('watches');
+    setShowAddWatchModal(true);
+    try {
+      const resolved = await api.resolveMusicArtistChannel(cleanName);
+      if (resolved && resolved.url) {
+        setNewWatchUrl(resolved.url);
+      }
+    } catch (_) {}
   }
 
   // View album details
@@ -848,8 +796,6 @@ export default function MusicPage() {
 
       showToast(msg);
       if (returnToSearch) {
-        setQuickDownloadToast({ text: msg });
-        setTimeout(() => setQuickDownloadToast(null), 5000);
         setSelectedAlbum(null);
       } else {
         setAlbumDownloadMessage({
@@ -1057,1195 +1003,396 @@ export default function MusicPage() {
   const albumOwnedCount = selectedAlbum?.tracks
     ? selectedAlbum.tracks.filter((t) => libraryTracks[libraryTrackKey(t)]).length
     : 0;
-  const albumMissingCount = (selectedAlbum?.tracks?.length || 0) - albumOwnedCount;
 
   return (
-    <div className="music-hub-container" style={{ maxWidth: 1200, margin: '0 auto', paddingBottom: 60 }}>
-      {/* Top Header Banner */}
-      <div className="card" style={{ marginBottom: 20, background: 'linear-gradient(135deg, var(--accent-music-soft) 0%, var(--accent-cyan-soft) 100%)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm), var(--card-highlight)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div style={{
-              width: 48,
-              height: 48,
-              borderRadius: 12,
-              background: 'linear-gradient(135deg, var(--accent-music) 0%, var(--accent-cyan) 100%)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#fff',
-              boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
-            }}>
-              <Disc3 size={28} />
-            </div>
-            <div>
-              <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700 }}>Music Hub & Watcher</h1>
-              <p style={{ margin: '3px 0 0 0', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
-                Discover albums, download YouTube tracks in pristine high-fidelity audio (native OPUS, 320k MP3, M4A) with embedded metadata & artwork, and monitor artists.
-              </p>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+    <div className="music-hub-container">
+      <div className="page-title-row music-title-row">
+        <h1>Music</h1>
+        <div className="pill-tabs" role="tablist">
+          {[
+            ['search', 'Search'],
+            ['direct', 'Direct URL'],
+            ['watches', 'Watches'],
+            ['lidarr', lidarrWanted.totalRecords > 0 ? `Lidarr · ${lidarrWanted.totalRecords}` : 'Lidarr'],
+            ['settings', 'Settings'],
+          ].map(([id, label]) => (
             <button
+              key={id}
               type="button"
-              className={`btn btn-sm ${activeTab === 'search' ? 'btn-music-active' : 'btn-secondary'}`}
-              onClick={() => { setActiveTab('search'); setSelectedAlbum(null); }}
+              role="tab"
+              aria-selected={activeTab === id}
+              className={activeTab === id ? 'active' : ''}
+              onClick={() => { setActiveTab(id); if (id === 'search') setSelectedAlbum(null); }}
             >
-              <Search size={15} />
-              Albums & Songs
+              {label}
             </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${activeTab === 'direct' ? 'btn-music-active' : 'btn-secondary'}`}
-              onClick={() => setActiveTab('direct')}
-            >
-              <FileAudio size={15} />
-              Direct URL
-            </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${activeTab === 'watches' ? 'btn-music-active' : 'btn-secondary'}`}
-              onClick={() => setActiveTab('watches')}
-            >
-              <Radar size={15} />
-              Music Watches
-            </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${activeTab === 'lidarr' ? 'btn-music-active' : 'btn-secondary'}`}
-              onClick={() => setActiveTab('lidarr')}
-            >
-              <Radio size={15} />
-              Lidarr
-            </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${activeTab === 'settings' ? 'btn-music-active' : 'btn-secondary'}`}
-              onClick={() => setActiveTab('settings')}
-            >
-              <Settings size={15} />
-              Settings
-            </button>
-
-            <Link
-              to={`/library?folder=${encodeURIComponent(settings.musicFolder || 'Music')}`}
-              className="btn btn-sm btn-ghost"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-              title="Open downloaded music in Library"
-            >
-              <Library size={15} />
-              Library
-            </Link>
-          </div>
+          ))}
         </div>
       </div>
 
-      {/* Active Music Downloads Bar */}
       {activeMusicJobs.length > 0 && (
-        <div style={{
-          marginBottom: 20,
-          padding: '12px 18px',
-          borderRadius: 'var(--radius-md, 10px)',
-          background: 'linear-gradient(90deg, rgba(91, 109, 248, 0.12), rgba(16, 185, 129, 0.12))',
-          border: '1px solid rgba(91, 109, 248, 0.3)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: 12,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <RefreshCw size={18} className="spin" color="var(--accent)" />
-            <div>
-              <div style={{ fontWeight: 600, fontSize: '0.92rem' }}>
-                {activeMusicJobs.length} Music Download{activeMusicJobs.length === 1 ? '' : 's'} In Progress
-              </div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                {activeMusicJobs[0]?.title || 'Processing audio track...'}
-                {typeof activeMusicJobs[0]?.percent === 'number' && activeMusicJobs[0].status === 'downloading' ? ` • ${Math.round(activeMusicJobs[0].percent)}%` : ''}
-                {activeMusicJobs[0]?.speed ? ` • ${activeMusicJobs[0].speed}` : ''}
-                {activeMusicJobs[0]?.eta ? ` • ETA ${activeMusicJobs[0].eta}` : ''}
-              </div>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Link to="/" className="btn btn-sm btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              View Queue
-            </Link>
-            <Link to={`/library?folder=${encodeURIComponent(settings.musicFolder || 'Music')}`} className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <Library size={14} /> Open Music Folder
-            </Link>
-          </div>
+        <div className="music-active">
+          <span className="music-active-dot" />
+          <span>
+            <strong>{activeMusicJobs.length}</strong> music download{activeMusicJobs.length === 1 ? '' : 's'} running
+            <span className="mono-meta">
+              {' · '}{activeMusicJobs[0]?.title || 'Processing'}
+              {typeof activeMusicJobs[0]?.percent === 'number' && activeMusicJobs[0].status === 'downloading' ? ` · ${Math.round(activeMusicJobs[0].percent)}%` : ''}
+            </span>
+          </span>
+          <Link to="/" className="text-btn">View on Home</Link>
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* TAB 1: ALBUM & SONG SEARCH                                                */}
-      {/* ========================================================================= */}
       {activeTab === 'search' && (
-        <div>
-          {!selectedAlbum ? (
-            selectedArtist ? (
-              /* ========================================================================= */
-              /* DEDICATED ARTIST DISCOGRAPHY VIEW                                        */
-              /* ========================================================================= */
-              <div>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  style={{ marginBottom: 16 }}
-                  onClick={() => setSelectedArtist(null)}
-                >
-                  <ArrowLeft size={16} /> Back to Search
-                </button>
-
-                {quickDownloadToast && (
-                  <div style={{
-                    marginBottom: 16,
-                    padding: '12px 18px',
-                    borderRadius: 'var(--radius-sm)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    background: 'var(--success-soft)',
-                    color: 'var(--success)',
-                    fontWeight: 600,
-                    fontSize: '0.92rem',
-                    boxShadow: 'var(--shadow-sm)',
-                  }}>
-                    <CheckCircle2 size={20} />
-                    <span>{quickDownloadToast.text}</span>
-                  </div>
-                )}
-
-                {/* Artist Hero Banner */}
-                <div className="card" style={{ marginBottom: 20 }}>
-                  <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap' }}>
-                    {selectedArtist.artist.artwork ? (
-                      <img
-                        src={selectedArtist.artist.artwork}
-                        alt={selectedArtist.artist.name}
-                        style={{ width: 110, height: 110, borderRadius: 16, objectFit: 'cover', boxShadow: 'var(--shadow-md)' }}
-                      />
-                    ) : (
-                      <div style={{ width: 110, height: 110, borderRadius: 16, background: 'var(--surface-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent)' }}>
-                        <User size={52} />
-                      </div>
-                    )}
-
-                    <div style={{ flex: 1, minWidth: 240 }}>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-                        <span className="badge" style={{ background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 600 }}>
-                          Artist Discography
-                        </span>
-                        {selectedArtist.artist.genre && (
-                          <span className="badge">{selectedArtist.artist.genre}</span>
-                        )}
-                      </div>
-                      <h1 style={{ margin: '0 0 6px 0', fontSize: '1.7rem', fontWeight: 800 }}>
-                        {selectedArtist.artist.name}
-                      </h1>
-                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                        {selectedArtist.counts.albums} Studio & Live Albums • {selectedArtist.counts.singles} Singles & EPs • {selectedArtist.counts.total} Total Releases
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: 10 }}>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => {
-                          setNewWatchName(`${selectedArtist.artist.name} Releases`);
-                          setNewWatchUrl(`https://www.youtube.com/results?search_query=${encodeURIComponent(selectedArtist.artist.name + ' official audio')}`);
-                          setShowAddWatchModal(true);
-                        }}
-                      >
-                        <Radar size={15} /> Watch Artist
-                      </button>
-                    </div>
-                  </div>
+        <>
+          {!selectedAlbum && !selectedArtist && (
+            <>
+              <form className="music-search" onSubmit={handleSearch}>
+                <input
+                  type="text"
+                  placeholder={searchType === 'artist' ? 'Search for an artist' : searchType === 'album' ? 'Search albums or artists' : 'Search for a song and artist'}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  aria-label="Search music"
+                />
+                <Segmented
+                  value={searchType}
+                  onChange={(v) => {
+                    setSearchType(v);
+                    setSearchResults([]);
+                    setMatchedArtist(null);
+                    if (searchQuery.trim()) handleSearch(null, searchQuery, v);
+                  }}
+                  options={[{ value: 'artist', label: 'Artists' }, { value: 'album', label: 'Albums' }, { value: 'track', label: 'Songs' }]}
+                />
+              </form>
+              {searching && <p className="empty-line">Searching…</p>}
+              {!searching && !searchResults.length && !matchedArtist && !searchError && (
+                <div className="chip-row">
+                  <span className="mono-meta" style={{ alignSelf: 'center' }}>Try</span>
+                  {['Daft Punk', 'Radiohead', 'Pink Floyd', 'Kendrick Lamar', 'The Beatles'].map((chip) => (
+                    <button
+                      key={chip}
+                      type="button"
+                      className="chip"
+                      onClick={() => {
+                        setSearchQuery(chip);
+                        setSearchType('album');
+                        handleSearch(null, chip, 'album');
+                      }}
+                    >
+                      {chip}
+                    </button>
+                  ))}
                 </div>
+              )}
+              {searchError && <div className="notice notice-danger">{searchError}</div>}
+              {artistLoading && <p className="empty-line">Loading discography…</p>}
 
-                {/* Filter & Controls Card */}
-                <div className="card" style={{ marginBottom: 20, padding: '14px 18px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-                    {/* The Primary Triggers */}
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <button
-                        type="button"
-                        className={`btn btn-sm ${artistTab === 'albums' ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => setArtistTab('albums')}
-                      >
-                        <Disc3 size={15} />
-                        Albums ({selectedArtist.counts.albums})
-                      </button>
-                      <button
-                        type="button"
-                        className={`btn btn-sm ${artistTab === 'singles' ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => setArtistTab('singles')}
-                      >
-                        <Music size={15} />
-                        Singles & EPs ({selectedArtist.counts.singles})
-                      </button>
-                      <button
-                        type="button"
-                        className={`btn btn-sm ${artistTab === 'all' ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => setArtistTab('all')}
-                      >
-                        <Layers size={15} />
-                        All Releases ({selectedArtist.counts.total})
-                      </button>
-                    </div>
-
-                    {/* Search & Sort */}
-                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <input
-                        type="text"
-                        className="input"
-                        style={{ width: 170, fontSize: '0.84rem', padding: '6px 10px' }}
-                        placeholder="Filter by title..."
-                        value={artistSearchTerm}
-                        onChange={(e) => setArtistSearchTerm(e.target.value)}
-                      />
-                      <select
-                        className="select"
-                        style={{ fontSize: '0.84rem', padding: '6px 10px' }}
-                        value={artistSort}
-                        onChange={(e) => setArtistSort(e.target.value)}
-                      >
-                        <option value="newest">Release Date (Newest)</option>
-                        <option value="oldest">Release Date (Oldest)</option>
-                        <option value="name">Title (A - Z)</option>
-                        <option value="tracks">Most Tracks</option>
-                      </select>
-                    </div>
-                  </div>
+              {searchType === 'artist' && searchResults.length > 0 && (
+                <div className="artist-grid">
+                  {searchResults.map((artist) => (
+                    <button key={artist.id} type="button" className="artist-card" onClick={() => handleViewArtist(artist.id)}>
+                      <Art src={artist.artwork} className="artist-art" ratio="1" />
+                      <span className="artist-name">{artist.name}</span>
+                      <span className="mono-meta">{artist.genre || 'Artist'}</span>
+                    </button>
+                  ))}
                 </div>
+              )}
 
-                {/* Grid of Releases */}
-                {getSortedArtistReleases().length === 0 ? (
-                  <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>
-                    No {artistTab === 'albums' ? 'albums' : artistTab === 'singles' ? 'singles & EPs' : 'releases'} found.
-                  </div>
-                ) : (
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-                    gap: 18,
-                  }}>
-                    {getSortedArtistReleases().map(renderReleaseCard)}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div>
-                {quickDownloadToast && (
-                  <div style={{
-                    marginBottom: 16,
-                    padding: '12px 18px',
-                    borderRadius: 'var(--radius-sm)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    background: 'var(--success-soft)',
-                    color: 'var(--success)',
-                    fontWeight: 600,
-                    fontSize: '0.92rem',
-                    boxShadow: 'var(--shadow-sm)',
-                  }}>
-                    <CheckCircle2 size={20} />
-                    <span>{quickDownloadToast.text}</span>
-                  </div>
-                )}
-
-                {/* Search Bar */}
-                <div className="card" style={{ marginBottom: 20 }}>
-                  <form onSubmit={handleSearch}>
-                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                      <div style={{ display: 'flex', gap: 6, background: 'var(--bg)', padding: 4, borderRadius: 'var(--radius-sm)' }}>
-                        <button
-                          type="button"
-                          className={`btn btn-sm ${searchType === 'artist' ? 'btn-primary' : 'btn-ghost'}`}
-                          onClick={() => setSearchType('artist')}
-                        >
-                          <User size={14} /> Artists
-                        </button>
-                        <button
-                          type="button"
-                          className={`btn btn-sm ${searchType === 'album' ? 'btn-primary' : 'btn-ghost'}`}
-                          onClick={() => setSearchType('album')}
-                        >
-                          <Disc3 size={14} /> Albums
-                        </button>
-                        <button
-                          type="button"
-                          className={`btn btn-sm ${searchType === 'track' ? 'btn-primary' : 'btn-ghost'}`}
-                          onClick={() => setSearchType('track')}
-                        >
-                          <Music size={14} /> Single Songs
-                        </button>
-                      </div>
-
-                      <div style={{ flex: 1, minWidth: 260, position: 'relative' }}>
-                        <Search size={17} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }} />
-                        <input
-                          type="text"
-                          className="input"
-                          style={{ paddingLeft: 38, paddingRight: searchQuery ? 34 : 12, width: '100%' }}
-                          placeholder={
-                            searchType === 'artist'
-                              ? 'Search artist name (e.g. "System of a Down", "Daft Punk", "Tool")'
-                              : searchType === 'album'
-                              ? 'Search album or artist name (e.g. "System of a Down", "Toxicity", "Discovery")'
-                              : 'Search song name & artist (e.g. "Chop Suey!", "Get Lucky", "Bohemian Rhapsody")'
-                          }
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                        />
-                        {searchQuery && (
-                          <button
-                            type="button"
-                            onClick={() => setSearchQuery('')}
-                            style={{
-                              position: 'absolute',
-                              right: 10,
-                              top: '50%',
-                              transform: 'translateY(-50%)',
-                              background: 'transparent',
-                              border: 'none',
-                              color: 'var(--text-tertiary)',
-                              cursor: 'pointer',
-                              padding: 4,
-                              display: 'flex',
-                              alignItems: 'center',
-                            }}
-                            title="Clear search query"
-                          >
-                            <X size={15} />
-                          </button>
-                        )}
-                      </div>
-
-                      <button type="submit" className="btn btn-primary" disabled={searching || !searchQuery.trim()}>
-                        {searching ? <RefreshCw size={16} className="spin" /> : <Search size={16} />}
-                        Search
-                      </button>
-                    </div>
-                  </form>
-
-                  {/* Popular chips */}
-                  <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
-                    <span>Suggestions:</span>
-                    {['System of a Down', 'Daft Punk', 'Pink Floyd', 'Radiohead', 'The Beatles', 'Kendrick Lamar', 'Linkin Park', 'Metallica'].map((chip) => (
-                      <button
-                        key={chip}
-                        type="button"
-                        className="badge"
-                        style={{ cursor: 'pointer', background: 'var(--surface-hover)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
-                        onClick={() => {
-                          setSearchQuery(chip);
-                          setSearchType('album');
-                          handleSearch(null, chip, 'album');
-                        }}
-                      >
-                        {chip}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Error state */}
-                {searchError && (
-                  <div className="card" style={{ marginBottom: 20, borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--danger)' }}>
-                      <AlertCircle size={18} />
-                      <span>{searchError}</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Artist Loading */}
-                {artistLoading && (
-                  <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)', marginBottom: 20 }}>
-                    <RefreshCw size={24} className="spin" style={{ margin: '0 auto 10px auto' }} />
-                    <div>Loading artist discography...</div>
-                  </div>
-                )}
-
-                {/* Results for ARTISTS */}
-                {searchType === 'artist' && searchResults.length > 0 && (
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                      <h2 style={{ fontSize: '1.1rem', margin: 0 }}>Found {searchResults.length} Artists</h2>
-                      <span style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>Click an artist to view their complete albums & singles discography</span>
-                    </div>
-
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
-                      gap: 16,
-                    }}>
-                      {searchResults.map((artist) => (
-                        <div
-                          key={artist.id}
-                          className="card"
-                          style={{
-                            padding: 16,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 14,
-                            transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-                          }}
-                          onClick={() => handleViewArtist(artist.id)}
-                        >
-                          {artist.artwork ? (
-                            <img
-                              src={artist.artwork}
-                              alt={artist.name}
-                              style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
-                              loading="lazy"
-                            />
-                          ) : (
-                            <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--surface-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent)', flexShrink: 0 }}>
-                              <User size={26} />
-                            </div>
-                          )}
-
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <h3 style={{ margin: '0 0 4px 0', fontSize: '1rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {artist.name}
-                            </h3>
-                            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                              {artist.genre || 'Artist'}
-                            </div>
-                            <span style={{ color: 'var(--accent)', fontSize: '0.8rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                              View Discography →
-                            </span>
+              {searchType === 'album' && (matchedArtist || searchResults.length > 0) && (() => {
+                let list = searchResults;
+                if (matchedArtist && albumViewFilter === 'artist-albums') list = matchedArtist.albums || [];
+                else if (matchedArtist && albumViewFilter === 'artist-singles') list = matchedArtist.singles || [];
+                else if (matchedArtist && albumViewFilter === 'artist-all') list = matchedArtist.all || [];
+                else if (albumViewFilter === 'albums-only') list = searchResults.filter((r) => !r.isSingle);
+                else if (albumViewFilter === 'singles-only') list = searchResults.filter((r) => r.isSingle);
+                const filters = matchedArtist
+                  ? [
+                    ['artist-albums', `Albums ${matchedArtist.counts?.albums || 0}`],
+                    ['artist-singles', `Singles & EPs ${matchedArtist.counts?.singles || 0}`],
+                    ['artist-all', `All ${matchedArtist.counts?.total || 0}`],
+                    ...(searchResults.length ? [['all-search', `Other matches ${searchResults.length}`]] : []),
+                  ]
+                  : [
+                    ['all', `All ${searchResults.length}`],
+                    ['albums-only', 'Albums'],
+                    ['singles-only', 'Singles'],
+                  ];
+                return (
+                  <>
+                    {matchedArtist && (
+                      <div className="artist-strip">
+                        <Art src={matchedArtist.artwork} className="artist-strip-art" ratio="1" />
+                        <div className="artist-strip-text">
+                          <div className="artist-strip-name">{matchedArtist.name}</div>
+                          <div className="mono-meta">
+                            {[matchedArtist.genre, `${matchedArtist.counts?.albums || 0} albums`, `${matchedArtist.counts?.singles || 0} singles & EPs`].filter(Boolean).join(' · ')}
                           </div>
                         </div>
+                        <div className="btn-row">
+                          <button type="button" className="btn-ghost btn-sm" onClick={() => handleViewArtist(matchedArtist.id)}>Artist page</button>
+                          <button type="button" className="btn-ghost btn-sm" onClick={() => openArtistWatch(matchedArtist.name)}>Watch artist</button>
+                        </div>
+                      </div>
+                    )}
+                    <div className="chip-row">
+                      {filters.map(([value, label]) => (
+                        <button key={value} type="button" className={`chip${albumViewFilter === value ? ' active' : ''}`} onClick={() => setAlbumViewFilter(value)}>
+                          {label}
+                        </button>
                       ))}
                     </div>
+                    {list.length === 0
+                      ? <p className="empty-line">No releases in this category.</p>
+                      : <div className="album-grid">{list.map(renderReleaseCard)}</div>}
+                  </>
+                );
+              })()}
+
+              {searchType === 'track' && searchResults.length > 0 && (
+                <div className="rows">
+                  {searchResults.map((t, idx) => (
+                    <div key={`${t.title}-${idx}`} className="row song-row">
+                      <Art src={t.artwork} className="song-thumb" ratio="1">
+                        {t.previewUrl && (
+                          <button type="button" className="song-preview" onClick={() => togglePreview(t.previewUrl)} aria-label={playingPreviewUrl === t.previewUrl ? 'Stop preview' : 'Play 30-second preview'}>
+                            {playingPreviewUrl === t.previewUrl ? <Pause size={14} /> : <Play size={14} fill="currentColor" />}
+                          </button>
+                        )}
+                      </Art>
+                      <div className="row-main">
+                        <div className="row-title">
+                          {t.title}
+                          {libraryTracks[libraryTrackKey(t)] && <span className="tag-success">IN JELLYFIN</span>}
+                        </div>
+                        <div className="song-sub">
+                          <button type="button" className="link-plain" onClick={() => handleViewArtist(null, t.artist)}>{t.artist}</button>
+                          {' · '}{t.album || 'Single'}
+                        </div>
+                      </div>
+                      <span className="mono-meta">{formatDuration(t.duration)}</span>
+                      <button type="button" className="btn-ghost btn-sm" onClick={() => handleDownloadSingleTrack(t)}>Download</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {!selectedAlbum && selectedArtist && (
+            <>
+              <button type="button" className="back-link" onClick={() => setSelectedArtist(null)}>‹ Back to results</button>
+              <div className="artist-hero">
+                <Art src={selectedArtist.artist.artwork} className="artist-hero-art" ratio="1" />
+                <div className="artist-hero-text">
+                  <div className="eyebrow">ARTIST{selectedArtist.artist.genre ? ` · ${selectedArtist.artist.genre.toUpperCase()}` : ''}</div>
+                  <h2 className="artist-hero-name">{selectedArtist.artist.name}</h2>
+                  <div className="mono-meta">
+                    {selectedArtist.counts.albums} albums · {selectedArtist.counts.singles} singles &amp; EPs · {selectedArtist.counts.total} releases
                   </div>
-                )}
+                </div>
+                <button type="button" className="btn-ghost" onClick={() => openArtistWatch(selectedArtist.artist.name)}>Watch artist</button>
+              </div>
+              <div className="toolbar">
+                <Segmented
+                  value={artistTab}
+                  onChange={setArtistTab}
+                  options={[
+                    { value: 'albums', label: `Albums ${selectedArtist.counts.albums}` },
+                    { value: 'singles', label: `Singles ${selectedArtist.counts.singles}` },
+                    { value: 'all', label: `All ${selectedArtist.counts.total}` },
+                  ]}
+                />
+                <input className="toolbar-search" placeholder="Filter by title" value={artistSearchTerm} onChange={(e) => setArtistSearchTerm(e.target.value)} aria-label="Filter releases" />
+                <select className="toolbar-select" value={artistSort} onChange={(e) => setArtistSort(e.target.value)} aria-label="Sort releases">
+                  <option value="newest">Newest</option>
+                  <option value="oldest">Oldest</option>
+                  <option value="name">A–Z</option>
+                  <option value="tracks">Most songs</option>
+                </select>
+              </div>
+              {getSortedArtistReleases().length === 0
+                ? <p className="empty-line">Nothing here.</p>
+                : <div className="album-grid">{getSortedArtistReleases().map(renderReleaseCard)}</div>}
+            </>
+          )}
 
-                {/* Results for ALBUMS */}
-                {searchType === 'album' && (matchedArtist || searchResults.length > 0) && (
-                  <div>
-                    {/* ARTIST SPOTLIGHT / DISCOGRAPHY BANNER (when artist is matched) */}
-                    {matchedArtist && (
-                      <div className="card" style={{
-                        marginBottom: 20,
-                        background: 'linear-gradient(135deg, rgba(91, 109, 248, 0.12) 0%, rgba(155, 107, 255, 0.08) 100%)',
-                        border: '1px solid var(--accent)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 14
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                            {matchedArtist.artwork ? (
-                              <img
-                                src={matchedArtist.artwork}
-                                alt={matchedArtist.name}
-                                style={{ width: 64, height: 64, borderRadius: 12, objectFit: 'cover', boxShadow: 'var(--shadow-sm)' }}
-                              />
-                            ) : (
-                              <div style={{
-                                width: 64,
-                                height: 64,
-                                borderRadius: 12,
-                                background: 'var(--accent)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                color: '#fff',
-                              }}>
-                                <User size={32} />
-                              </div>
-                            )}
-                            <div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                                <span className="badge" style={{ background: 'var(--accent)', color: '#fff', fontWeight: 600 }}>
-                                  Artist Discography
-                                </span>
-                                {matchedArtist.genre && (
-                                  <span className="badge" style={{ background: 'var(--surface-hover)' }}>
-                                    {matchedArtist.genre}
-                                  </span>
-                                )}
-                              </div>
-                              <h2 style={{ margin: 0, fontSize: '1.35rem', fontWeight: 700 }}>{matchedArtist.name}</h2>
-                              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 3 }}>
-                                {matchedArtist.counts?.albums || 0} Studio Albums • {matchedArtist.counts?.singles || 0} Singles & EPs • {matchedArtist.counts?.total || 0} Total Official Releases
-                              </div>
-                            </div>
-                          </div>
-
-                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-secondary"
-                              onClick={() => handleViewArtist(matchedArtist.id)}
-                            >
-                              <Layers size={14} /> Full Artist View
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-secondary"
-                              onClick={() => {
-                                setNewWatchName(`${matchedArtist.name} Releases`);
-                                setNewWatchUrl(`https://www.youtube.com/results?search_query=${encodeURIComponent(matchedArtist.name + ' official audio')}`);
-                                setShowAddWatchModal(true);
-                              }}
-                              title="Monitor this artist for new releases"
-                            >
-                              <Radar size={14} /> Watch Artist
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* THE BUTTONS / TRIGGERS TO SWITCH BETWEEN ALBUMS, SINGLES, AND ALL */}
-                        <div style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          flexWrap: 'wrap',
-                          paddingTop: 12,
-                          borderTop: '1px solid rgba(255, 255, 255, 0.08)'
-                        }}>
-                          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginRight: 4 }}>
-                            Show for {matchedArtist.name}:
-                          </span>
-                          <button
-                            type="button"
-                            className={`btn btn-sm ${albumViewFilter === 'artist-albums' ? 'btn-primary' : 'btn-secondary'}`}
-                            onClick={() => setAlbumViewFilter('artist-albums')}
-                          >
-                            <Disc3 size={14} /> Albums ({matchedArtist.counts?.albums || 0})
-                          </button>
-                          <button
-                            type="button"
-                            className={`btn btn-sm ${albumViewFilter === 'artist-singles' ? 'btn-primary' : 'btn-secondary'}`}
-                            onClick={() => setAlbumViewFilter('artist-singles')}
-                          >
-                            <Music size={14} /> Singles & EPs ({matchedArtist.counts?.singles || 0})
-                          </button>
-                          <button
-                            type="button"
-                            className={`btn btn-sm ${albumViewFilter === 'artist-all' ? 'btn-primary' : 'btn-secondary'}`}
-                            onClick={() => setAlbumViewFilter('artist-all')}
-                          >
-                            <Layers size={14} /> All Official ({matchedArtist.counts?.total || 0})
-                          </button>
-                          {searchResults.length > 0 && (
-                            <button
-                              type="button"
-                              className={`btn btn-sm ${albumViewFilter === 'all-search' ? 'btn-primary' : 'btn-ghost'}`}
-                              style={{ marginLeft: 'auto' }}
-                              onClick={() => setAlbumViewFilter('all-search')}
-                            >
-                              <Search size={14} /> Other Matches ({searchResults.length})
-                            </button>
-                          )}
-                        </div>
+          {selectedAlbum && (() => {
+            const tracks = selectedAlbum.tracks || [];
+            const album = selectedAlbum.album;
+            const ownedAll = tracks.length > 0 && albumOwnedCount >= tracks.length;
+            const moreBy = (selectedArtist?.all || matchedArtist?.all || searchResults || [])
+              .filter((r) => r && r.id !== album.id && r.name && (!r.artist || r.artist === album.artist))
+              .slice(0, 6);
+            return (
+              <>
+                <button type="button" className="back-link" onClick={() => setSelectedAlbum(null)}>
+                  ‹ {selectedArtist ? `Back to ${selectedArtist.artist.name}` : 'Back to results'}
+                </button>
+                <section className="album-hero">
+                  <Art src={album.artwork} className="album-cover" ratio="1" />
+                  <div className="album-hero-text">
+                    <div className="eyebrow">
+                      {[album.isSingle ? 'SINGLE' : 'ALBUM', album.releaseYear, `${tracks.length} SONG${tracks.length === 1 ? '' : 'S'}`].filter(Boolean).join(' · ')}
+                    </div>
+                    <h2 className="album-title">{album.name}</h2>
+                    <div className="album-artist">
+                      <button type="button" className="link-plain" onClick={() => handleViewArtist(album.artistId, album.artist)}>{album.artist}</button>
+                      {album.genre ? ` · ${album.genre}` : ''}
+                    </div>
+                    {jellyfinStatus?.configured && (
+                      <div className="album-jellyfin">
+                        {jellyfinCheckingAlbum ? (
+                          <span className="pill pill-muted">Checking Jellyfin…</span>
+                        ) : albumOwnedCount > 0 ? (
+                          <span className="pill pill-success">{ownedAll ? 'Whole album in Jellyfin' : `${albumOwnedCount} of ${tracks.length} in Jellyfin`}</span>
+                        ) : (
+                          <span className="pill pill-muted">Not in Jellyfin</span>
+                        )}
+                        <button type="button" className="text-btn" disabled={jellyfinScanning} onClick={handleTriggerJellyfinScan}>
+                          {jellyfinScanning ? 'Scanning…' : 'Rescan'}
+                        </button>
                       </div>
                     )}
-
-                    {/* Standard filter triggers when NO artist is matched or when viewing all search */}
-                    {(!matchedArtist || albumViewFilter === 'all-search') && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
-                        <div>
-                          <h2 style={{ fontSize: '1.1rem', margin: 0 }}>Found {searchResults.length} Search Matches</h2>
-                          <span style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>Click any release to view tracks & download</span>
-                        </div>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          <button
-                            type="button"
-                            className={`btn btn-sm ${albumViewFilter === 'all' || albumViewFilter === 'all-search' ? 'btn-primary' : 'btn-ghost'}`}
-                            onClick={() => setAlbumViewFilter('all')}
-                          >
-                            All ({searchResults.length})
-                          </button>
-                          <button
-                            type="button"
-                            className={`btn btn-sm ${albumViewFilter === 'albums-only' ? 'btn-primary' : 'btn-ghost'}`}
-                            onClick={() => setAlbumViewFilter('albums-only')}
-                          >
-                            <Disc3 size={13} /> Albums ({searchResults.filter((r) => !r.isSingle).length})
-                          </button>
-                          <button
-                            type="button"
-                            className={`btn btn-sm ${albumViewFilter === 'singles-only' ? 'btn-ghost' : 'btn-ghost'}`}
-                            onClick={() => setAlbumViewFilter('singles-only')}
-                          >
-                            <Music size={13} /> Singles ({searchResults.filter((r) => r.isSingle).length})
-                          </button>
-                        </div>
-                      </div>
+                    <div className="album-actions">
+                      <button
+                        type="button"
+                        className="btn-primary pill-btn"
+                        disabled={downloadingAlbum || selectedTracks.size === 0}
+                        onClick={() => handleDownloadAlbum(true, false)}
+                      >
+                        {downloadingAlbum ? 'Adding…' : `Download ${selectedTracks.size} song${selectedTracks.size === 1 ? '' : 's'}`}
+                      </button>
+                      <Segmented
+                        size="sm"
+                        className="seg-pill"
+                        value={downloadFormat}
+                        onChange={setDownloadFormat}
+                        options={['flac', 'mp3', 'm4a', 'opus'].map((f) => ({ value: f, label: f.toUpperCase() }))}
+                      />
+                      <button
+                        type="button"
+                        className="text-btn"
+                        onClick={() => setSelectedTracks(new Set(tracks.filter((t) => !libraryTracks[libraryTrackKey(t)]).map((t) => t.trackNumber)))}
+                      >
+                        Select missing
+                      </button>
+                      <button type="button" className="text-btn" onClick={selectedTracks.size === tracks.length ? deselectAllTracks : selectAllTracks}>
+                        {selectedTracks.size === tracks.length && tracks.length > 0 ? 'Select none' : 'Select all'}
+                      </button>
+                      <button type="button" className="text-btn" onClick={() => setMusicOptionsOpen(true)}>Options</button>
+                    </div>
+                    {albumDownloadMessage && (
+                      <div className={`notice ${albumDownloadMessage.type === 'success' ? 'notice-info' : 'notice-danger'}`}>{albumDownloadMessage.text}</div>
                     )}
+                  </div>
+                </section>
 
-                    {/* Current view release count */}
-                    {matchedArtist && albumViewFilter !== 'all-search' && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                        <h3 style={{ fontSize: '1.05rem', margin: 0 }}>
-                          {albumViewFilter === 'artist-albums' && `Official Albums by ${matchedArtist.name} (${matchedArtist.counts?.albums || 0})`}
-                          {albumViewFilter === 'artist-singles' && `Official Singles & EPs by ${matchedArtist.name} (${matchedArtist.counts?.singles || 0})`}
-                          {albumViewFilter === 'artist-all' && `All Official Releases by ${matchedArtist.name} (${matchedArtist.counts?.total || 0})`}
-                        </h3>
-                        <span style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>Click any album to view tracks & download</span>
-                      </div>
-                    )}
-
-                    {/* Grid of Releases */}
-                    {(() => {
-                      let list = searchResults;
-                      if (albumViewFilter === 'artist-albums') list = matchedArtist?.albums || [];
-                      else if (albumViewFilter === 'artist-singles') list = matchedArtist?.singles || [];
-                      else if (albumViewFilter === 'artist-all') list = matchedArtist?.all || [];
-                      else if (albumViewFilter === 'albums-only') list = searchResults.filter((r) => !r.isSingle);
-                      else if (albumViewFilter === 'singles-only') list = searchResults.filter((r) => r.isSingle);
-
-                      if (list.length === 0) {
-                        return (
-                          <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>
-                            No releases found in this category.
-                          </div>
-                        );
-                      }
-
+                <div className="album-body">
+                  <div className="tracklist" role="list">
+                    {tracks.map((t) => {
+                      const isSelected = selectedTracks.has(t.trackNumber);
+                      const customMatch = trackMatches[t.trackNumber];
+                      const job = getTrackJobStatus(t.title, t.artist || selectedAlbum?.album?.artist, t.album || selectedAlbum?.album?.name);
+                      const inJellyfin = !!libraryTracks[libraryTrackKey(t)];
+                      const state = job?.status === 'downloading'
+                        ? (typeof job.percent === 'number' && job.percent > 0 ? `${Math.round(job.percent)}%` : 'downloading')
+                        : job?.status === 'queued' ? 'queued'
+                          : job?.status === 'completed' ? 'done' : null;
                       return (
-                        <div style={{
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-                          gap: 18,
-                        }}>
-                          {list.map(renderReleaseCard)}
+                        <div
+                          key={`${t.discNumber || 1}-${t.trackNumber}`}
+                          role="listitem"
+                          className={`track${isSelected ? ' selected' : ''}${inJellyfin && !isSelected ? ' owned' : ''}`}
+                          onClick={() => toggleTrackSelection(t.trackNumber)}
+                        >
+                          <span className={`track-check${isSelected ? ' on' : ''}`} role="checkbox" aria-checked={isSelected} aria-label={`Select ${t.title}`} />
+                          <span className="track-num mono">{t.trackNumber}</span>
+                          <span className="track-title">
+                            {t.title}
+                            {t.discNumber > 1 && <span className="tag-muted">DISC {t.discNumber}</span>}
+                            {inJellyfin && <span className="tag-success">IN JELLYFIN</span>}
+                            {state && <span className={state === 'done' ? 'tag-success' : 'tag-muted'}>{String(state).toUpperCase()}</span>}
+                          </span>
+                          <span className="track-tools" onClick={(e) => e.stopPropagation()}>
+                            {t.previewUrl && (
+                              <button type="button" className="icon-plain" onClick={() => togglePreview(t.previewUrl)} aria-label={playingPreviewUrl === t.previewUrl ? 'Stop preview' : 'Play preview'}>
+                                {playingPreviewUrl === t.previewUrl ? <Pause size={14} /> : <Play size={14} />}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className={`text-btn track-match${customMatch ? ' custom' : ''}`}
+                              onClick={() => handleOpenMatchModal(t)}
+                              title={customMatch ? `Custom source: ${customMatch.title}` : 'Check or change the YouTube source'}
+                            >
+                              {customMatch ? 'Custom source' : 'Source'}
+                            </button>
+                          </span>
+                          <span className="track-dur mono">{formatDuration(t.duration)}</span>
                         </div>
                       );
-                    })()}
+                    })}
                   </div>
-                )}
+                  {moreBy.length > 0 && (
+                    <aside className="more-by">
+                      <h3>More by {album.artist}</h3>
+                      <div className="more-by-grid">
+                        {moreBy.map((r) => (
+                          <button key={r.id} type="button" className="more-by-item" onClick={() => handleSelectAlbum(r)}>
+                            <Art src={r.artwork} ratio="1" />
+                            <span className="more-by-name">{r.name}</span>
+                            <span className="mono-meta">{r.releaseYear || ''}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </aside>
+                  )}
+                </div>
 
-                {/* Results for TRACKS */}
-                {searchType === 'track' && searchResults.length > 0 && (
-                  <div className="card">
-                    <h2 style={{ fontSize: '1.1rem', marginTop: 0, marginBottom: 14 }}>Found {searchResults.length} Songs</h2>
-                    <div className="table-wrapper">
-                      <table className="table" style={{ width: '100%' }}>
-                        <thead>
-                          <tr>
-                            <th style={{ width: 44 }}>Play</th>
-                            <th style={{ width: 48 }}>Cover</th>
-                            <th>Song Title</th>
-                            <th>Artist</th>
-                            <th>Album</th>
-                            <th style={{ width: 70 }}>Time</th>
-                            <th style={{ width: 100, textAlign: 'right' }}>Download</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {searchResults.map((t, idx) => (
-                            <tr key={idx}>
-                              <td>
-                                {t.previewUrl ? (
-                                  <button
-                                    type="button"
-                                    className="btn btn-ghost btn-sm"
-                                    style={{ padding: 6, borderRadius: '50%' }}
-                                    onClick={() => togglePreview(t.previewUrl)}
-                                    title="Listen to 30s preview"
-                                  >
-                                    {playingPreviewUrl === t.previewUrl ? <Pause size={14} color="var(--accent)" /> : <Play size={14} />}
-                                  </button>
-                                ) : (
-                                  <span style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>—</span>
-                                )}
-                              </td>
-                              <td>
-                                {t.artwork ? (
-                                  <img src={t.artwork} alt="" style={{ width: 36, height: 36, borderRadius: 4, objectFit: 'cover' }} />
-                                ) : (
-                                  <Music size={20} color="var(--text-tertiary)" />
-                                )}
-                              </td>
-                              <td style={{ fontWeight: 500 }}>
-                                {t.title}
-                                {libraryTracks[libraryTrackKey(t)] && (
-                                  <span className="badge" style={{ marginLeft: 6, fontSize: '0.68rem', padding: '1px 5px', background: 'rgba(16, 185, 129, 0.12)', color: 'var(--success)' }} title="Already in your Jellyfin library">
-                                    In Jellyfin
-                                  </span>
-                                )}
-                              </td>
-                              <td style={{ color: 'var(--text-secondary)' }}>
-                                <span
-                                  style={{ cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2 }}
-                                  onClick={() => handleViewArtist(null, t.artist)}
-                                  title={`View all releases by ${t.artist}`}
-                                >
-                                  {t.artist}
-                                </span>
-                              </td>
-                              <td style={{ color: 'var(--text-secondary)' }}>{t.album || 'Single'}</td>
-                              <td style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>{formatDuration(t.duration)}</td>
-                              <td style={{ textAlign: 'right' }}>
-                                <button
-                                  type="button"
-                                  className="btn btn-sm btn-primary"
-                                  onClick={() => handleDownloadSingleTrack(t)}
-                                  title={`Download in ${downloadFormat.toUpperCase()}`}
-                                >
-                                  <Download size={13} />
-                                  Get
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )
-          ) : (
-            /* ========================================================================= */
-            /* ALBUM DETAIL VIEW                                                         */
-            /* ========================================================================= */
-            <div>
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => setSelectedAlbum(null)}
+                <Drawer
+                  open={musicOptionsOpen}
+                  onClose={() => setMusicOptionsOpen(false)}
+                  label="Music download options"
+                  footer={<><span /><button type="button" className="btn-primary btn-lg" onClick={() => setMusicOptionsOpen(false)}>Done</button></>}
                 >
-                  <ArrowLeft size={16} /> Back to Search Results
-                </button>
-                {selectedArtist && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => setSelectedAlbum(null)}
-                  >
-                    <User size={15} /> Back to {selectedArtist.artist.name} Discography
-                  </button>
-                )}
-              </div>
-
-              {/* Album Hero Card */}
-              <div className="card" style={{ marginBottom: 20 }}>
-                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <div style={{
-                    width: 170,
-                    height: 170,
-                    borderRadius: 14,
-                    overflow: 'hidden',
-                    backgroundColor: 'var(--surface-hover)',
-                    boxShadow: 'var(--shadow-md)',
-                    flexShrink: 0,
-                  }}>
-                    {selectedAlbum.album.artwork ? (
-                      <img
-                        src={selectedAlbum.album.artwork}
-                        alt={selectedAlbum.album.name}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      />
-                    ) : (
-                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)' }}>
-                        <Disc3 size={64} />
+                  <h2 className="drawer-title">Download options</h2>
+                  <p className="drawer-sub mono">{downloadFolder}/{album.artist}/{album.name}/## - Song.{downloadFormat}</p>
+                  <div className="drawer-section dl-options">
+                    <div className="dl-options-group">
+                      <span className="field-caption">Format</span>
+                      <div className="choice-row">
+                        {FORMAT_OPTIONS.map((f) => (
+                          <button key={f.value} type="button" className={`choice mono${downloadFormat === f.value ? ' active' : ''}`} onClick={() => setDownloadFormat(f.value)} title={f.label}>
+                            {f.value.toUpperCase()}
+                          </button>
+                        ))}
                       </div>
-                    )}
-                  </div>
-
-                  <div style={{ flex: 1, minWidth: 260 }}>
-                    <div className="badge" style={{ marginBottom: 8, background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 600 }}>
-                      {selectedAlbum.album.genre || 'Album'}
-                    </div>
-                    <h1 style={{ margin: '0 0 6px 0', fontSize: '1.6rem', fontWeight: 800 }}>
-                      {selectedAlbum.album.name}
-                    </h1>
-                    <div style={{ fontSize: '1.1rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 10 }}>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        style={{ padding: '0 4px', fontSize: '1.05rem', color: 'var(--accent)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                        onClick={() => handleViewArtist(selectedAlbum.album.artistId, selectedAlbum.album.artist)}
-                        title={`Browse all releases by ${selectedAlbum.album.artist}`}
-                      >
-                        <User size={16} /> {selectedAlbum.album.artist} (View All Releases)
-                      </button>
-                    </div>
-                    <div style={{ display: 'flex', gap: 16, fontSize: '0.88rem', color: 'var(--text-tertiary)', flexWrap: 'wrap' }}>
-                      <span>Released: {selectedAlbum.album.releaseYear || 'Unknown'}</span>
-                      <span>•</span>
-                      <span>{selectedAlbum.tracks?.length || 0} Songs</span>
-                      {selectedAlbum.album.copyright && (
-                        <>
-                          <span>•</span>
-                          <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>{selectedAlbum.album.copyright}</span>
-                        </>
+                      {(downloadFormat === 'flac' || downloadFormat === 'wav') && (
+                        <p className="field-hint text-warning">YouTube has no lossless audio. {downloadFormat.toUpperCase()} re-encodes the ~160k Opus stream into a much bigger file without adding detail. OPUS or MP3 320k is the better choice.</p>
                       )}
+                      {downloadFormat === 'opus' && <p className="field-hint">OPUS keeps YouTube&apos;s native audio stream as-is, with no re-encoding.</p>}
                     </div>
-
-                    {jellyfinStatus?.configured && (
-                      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {jellyfinCheckingAlbum ? (
-                          <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                            <RefreshCw size={13} className="spin" /> Checking Jellyfin library…
-                          </span>
-                        ) : albumOwnedCount > 0 ? (
-                          <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success)', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', fontSize: '0.82rem' }}>
-                            <CheckCircle2 size={14} />
-                            {albumOwnedCount >= (selectedAlbum.tracks?.length || 0)
-                              ? 'Whole album is in Jellyfin'
-                              : `${albumOwnedCount} of ${selectedAlbum.tracks.length} songs in Jellyfin`}
-                          </span>
-                        ) : (
-                          <span className="badge" style={{ background: 'rgba(255, 255, 255, 0.05)', color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', fontSize: '0.82rem' }}>
-                            Not in Jellyfin Library
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          style={{ padding: '2px 8px', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}
-                          disabled={jellyfinScanning}
-                          onClick={handleTriggerJellyfinScan}
-                          title="Trigger a Jellyfin library scan now"
-                        >
-                          <RefreshCw size={12} className={jellyfinScanning ? 'spin' : ''} /> {jellyfinScanning ? 'Scanning…' : 'Rescan Jellyfin'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Download Configuration Panel */}
-              <div className="card" style={{ marginBottom: 20, background: 'var(--surface-hover)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: '0.95rem' }}>
-                    <Sliders size={17} color="var(--accent)" />
-                    Download Configuration
-                  </div>
-                  <div style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
-                    Files will be organized into: <code>{downloadFolder}/{selectedAlbum.album.artist}/{selectedAlbum.album.name}/## - Track.{downloadFormat}</code>
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 6 }}>
-                      Audio Codec / Format
+                    <label className="field-caption form-col">Quality
+                      <select value={downloadQuality} onChange={(e) => setDownloadQuality(e.target.value)}>
+                        {availableQualities.map((q) => <option key={q.value} value={q.value}>{q.label}</option>)}
+                      </select>
                     </label>
-                    <select
-                      className="select"
-                      style={{ width: '100%' }}
-                      value={downloadFormat}
-                      onChange={(e) => setDownloadFormat(e.target.value)}
-                    >
-                      {FORMAT_OPTIONS.map((fmt) => (
-                        <option key={fmt.value} value={fmt.value}>{fmt.label}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 6 }}>
-                      Quality / Bitrate
+                    <label className="field-caption form-col">Music folder
+                      <input value={downloadFolder} onChange={(e) => setDownloadFolder(e.target.value)} placeholder="Music" />
                     </label>
-                    <select
-                      className="select"
-                      style={{ width: '100%' }}
-                      value={downloadQuality}
-                      onChange={(e) => setDownloadQuality(e.target.value)}
-                    >
-                      {availableQualities.map((q) => (
-                        <option key={q.value} value={q.value}>{q.label}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 6 }}>
-                      Destination Music Directory
-                    </label>
-                    <input
-                      type="text"
-                      className="input"
-                      style={{ width: '100%' }}
-                      value={downloadFolder}
-                      onChange={(e) => setDownloadFolder(e.target.value)}
-                      placeholder="Music"
-                    />
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 6 }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={downloadSaveCover}
-                        onChange={(e) => setDownloadSaveCover(e.target.checked)}
-                      />
-                      Save cover.jpg in album folder (Jellyfin/Plex)
-                    </label>
-                  </div>
-                </div>
-
-                {(downloadFormat === 'flac' || downloadFormat === 'wav') ? (
-                  <div style={{
-                    marginTop: 12,
-                    padding: '8px 12px',
-                    borderRadius: 6,
-                    fontSize: '0.78rem',
-                    background: 'rgba(239, 68, 68, 0.1)',
-                    border: '1px solid rgba(239, 68, 68, 0.25)',
-                    color: '#f87171',
-                    lineHeight: 1.4,
-                  }}>
-                    ⚠️ <strong>Notice:</strong> YouTube does not host lossless/FLAC audio. Choosing {downloadFormat.toUpperCase()} transcodes YouTube's lossy 160k Opus stream into a large uncompressed file (~10× larger) without recovering lost audio detail. For genuine best quality, choose <strong>OPUS</strong> or <strong>MP3 (320k)</strong>.
-                  </div>
-                ) : downloadFormat === 'opus' ? (
-                  <div style={{
-                    marginTop: 12,
-                    padding: '8px 12px',
-                    borderRadius: 6,
-                    fontSize: '0.78rem',
-                    background: 'rgba(16, 185, 129, 0.1)',
-                    border: '1px solid rgba(16, 185, 129, 0.25)',
-                    color: 'var(--success, #10b981)',
-                    lineHeight: 1.4,
-                  }}>
-                    ✨ <strong>Highest Quality:</strong> OPUS extracts YouTube's native ~160 kbps VBR audio stream directly with zero transcoding/re-encoding loss.
-                  </div>
-                ) : null}
-
-                {/* Action buttons */}
-                <div style={{ display: 'flex', gap: 10, marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)', flexWrap: 'wrap', alignItems: 'center' }}>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={downloadingAlbum || (selectedAlbum.tracks || []).length === 0 || albumMissingCount === 0}
-                    onClick={() => handleDownloadAlbum(false, false)}
-                  >
-                    {downloadingAlbum ? <RefreshCw size={16} className="spin" /> : <Download size={16} />}
-                    {albumOwnedCount > 0
-                      ? `Download Missing Songs (${albumMissingCount})`
-                      : `Download Entire Album (${selectedAlbum.tracks?.length || 0} tracks)`}
-                  </button>
-
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={downloadingAlbum || (selectedAlbum.tracks || []).length === 0}
-                    onClick={() => handleDownloadAlbum(false, true)}
-                    title="Queue this album and return directly to search results to pick more albums"
-                  >
-                    <Download size={15} />
-                    Download & Back to Search
-                  </button>
-
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={downloadingAlbum || selectedTracks.size === 0}
-                    onClick={() => handleDownloadAlbum(true, false)}
-                  >
-                    <CheckCircle2 size={16} />
-                    Download Selected ({selectedTracks.size})
-                  </button>
-
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => setSelectedAlbum(null)}
-                    title="Return to search results to pick another album"
-                  >
-                    <ArrowLeft size={15} /> Back to Search Results
-                  </button>
-
-                  <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={selectAllTracks}>
-                      Select All
-                    </button>
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={deselectAllTracks}>
-                      Clear Selection
-                    </button>
-                  </div>
-                </div>
-
-                {/* Status toast message */}
-                {albumDownloadMessage && (
-                  <div style={{
-                    marginTop: 14,
-                    padding: '12px 16px',
-                    borderRadius: 'var(--radius-sm)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    flexWrap: 'wrap',
-                    gap: 12,
-                    background: albumDownloadMessage.type === 'success' ? 'var(--success-soft)' : 'var(--danger-soft)',
-                    color: albumDownloadMessage.type === 'success' ? 'var(--success)' : 'var(--danger)',
-                    fontSize: '0.9rem',
-                    fontWeight: 500,
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      {albumDownloadMessage.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-                      <span>{albumDownloadMessage.text}</span>
+                    <div className="toggle-list">
+                      <ToggleRow label="Save cover.jpg" description="Album art next to the songs, for Jellyfin and Plex" checked={downloadSaveCover} onChange={setDownloadSaveCover} />
                     </div>
-                    {albumDownloadMessage.type === 'success' && (
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-primary"
-                        onClick={() => setSelectedAlbum(null)}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                      >
-                        <ArrowLeft size={14} /> Back to Search (Pick More Albums)
-                      </button>
-                    )}
                   </div>
-                )}
-              </div>
-
-              {/* Tracklist Table */}
-              <div className="card">
-                <h3 style={{ margin: '0 0 14px 0', fontSize: '1.05rem', fontWeight: 700 }}>
-                  Tracklist ({selectedAlbum.tracks?.length || 0} Songs)
-                </h3>
-
-                <div className="table-wrapper">
-                  <table className="table" style={{ width: '100%' }}>
-                    <thead>
-                      <tr>
-                        <th style={{ width: 38 }}>
-                          <input
-                            type="checkbox"
-                            checked={selectedTracks.size === (selectedAlbum.tracks?.length || 0) && selectedTracks.size > 0}
-                            onChange={(e) => (e.target.checked ? selectAllTracks() : deselectAllTracks())}
-                          />
-                        </th>
-                        <th style={{ width: 40 }}>#</th>
-                        <th style={{ width: 44 }}>Preview</th>
-                        <th>Title</th>
-                        <th>Artist</th>
-                        <th style={{ width: 65 }}>Time</th>
-                        <th style={{ width: 95 }}>Match</th>
-                        <th style={{ width: 105 }}>Status</th>
-                        <th style={{ width: 60, textAlign: 'right' }}>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedAlbum.tracks?.map((t) => {
-                        const isSelected = selectedTracks.has(t.trackNumber);
-                        const isPlaying = playingPreviewUrl === t.previewUrl;
-                        const customMatch = trackMatches[t.trackNumber];
-                        const job = getTrackJobStatus(t.title);
-                        const isDownloading = job?.status === 'downloading';
-                        const isQueued = job?.status === 'queued';
-                        const isCompleted = job?.status === 'completed';
-                        const inJellyfin = !!libraryTracks[libraryTrackKey(t)];
-
-                        return (
-                          <tr key={t.trackNumber} style={{ backgroundColor: isSelected ? 'rgba(91, 109, 248, 0.04)' : undefined }}>
-                            <td>
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleTrackSelection(t.trackNumber)}
-                              />
-                            </td>
-                            <td style={{ color: 'var(--text-tertiary)', fontWeight: 600 }}>{t.trackNumber}</td>
-                            <td>
-                              {t.previewUrl ? (
-                                <button
-                                  type="button"
-                                  className="btn btn-ghost btn-sm"
-                                  style={{ padding: 6, borderRadius: '50%' }}
-                                  onClick={() => togglePreview(t.previewUrl)}
-                                  title="30s preview"
-                                >
-                                  {isPlaying ? <Pause size={14} color="var(--accent)" /> : <Play size={14} />}
-                                </button>
-                              ) : (
-                                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>—</span>
-                              )}
-                            </td>
-                            <td style={{ fontWeight: 600 }}>
-                              {t.title}
-                              {t.discNumber > 1 && (
-                                <span className="badge" style={{ marginLeft: 8, fontSize: '0.7rem' }}>Disc {t.discNumber}</span>
-                              )}
-                              {inJellyfin && (
-                                <span className="badge" style={{ marginLeft: 6, fontSize: '0.68rem', padding: '1px 5px', background: 'rgba(16, 185, 129, 0.12)', color: 'var(--success)' }} title="Already indexed in Jellyfin library">
-                                  In Jellyfin
-                                </span>
-                              )}
-                            </td>
-                            <td style={{ color: 'var(--text-secondary)' }}>{t.artist}</td>
-                            <td style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>{formatDuration(t.duration)}</td>
-                            <td>
-                              {customMatch ? (
-                                <button
-                                  type="button"
-                                  className="btn btn-ghost btn-sm"
-                                  style={{ padding: '2px 8px', fontSize: '0.74rem', color: 'var(--success)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                                  onClick={() => handleOpenMatchModal(t)}
-                                  title={`Custom match: ${customMatch.title}`}
-                                >
-                                  <CheckCircle2 size={12} /> Custom
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className="btn btn-ghost btn-sm"
-                                  style={{ padding: '2px 8px', fontSize: '0.74rem', color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                                  onClick={() => handleOpenMatchModal(t)}
-                                  title="Inspect YouTube match or pick alternate audio stream"
-                                >
-                                  <Search size={12} /> Auto
-                                </button>
-                              )}
-                            </td>
-                            <td>
-                              {isDownloading ? (
-                                <span className="badge" style={{ background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                  <RefreshCw size={10} className="spin" /> {job.progress || 'Downloading'}
-                                </span>
-                              ) : isQueued ? (
-                                <span className="badge" style={{ fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                  <Clock size={10} /> Queued
-                                </span>
-                              ) : isCompleted ? (
-                                <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success)', fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                  <Check size={10} /> Done
-                                </span>
-                              ) : (
-                                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>Ready</span>
-                              )}
-                            </td>
-                            <td style={{ textAlign: 'right' }}>
-                              <button
-                                type="button"
-                                className="btn btn-ghost btn-sm"
-                                onClick={() => handleDownloadSingleTrack(t)}
-                                disabled={isDownloading || isQueued}
-                                title={`Download this track (${downloadFormat.toUpperCase()})`}
-                              >
-                                {isDownloading ? <RefreshCw size={14} className="spin" /> : isCompleted ? <Check size={14} color="var(--success)" /> : <Download size={14} />}
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+                </Drawer>
+              </>
+            );
+          })()}
+        </>
       )}
 
       {/* ========================================================================= */}
@@ -2565,7 +1712,7 @@ export default function MusicPage() {
                           <RefreshCw size={12} className="spin" /> Checking...
                         </span>
                       ) : (
-                        <span>Last check: {w.last_checked_at ? new Date(w.last_checked_at).toLocaleTimeString() : 'Pending'}</span>
+                        <span>Last check: {w.last_checked_at ? new Date(`${w.last_checked_at}Z`).toLocaleTimeString() : 'Pending'}</span>
                       )}
                     </div>
 
@@ -2745,6 +1892,10 @@ export default function MusicPage() {
                 />
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 4 }}>
                   Relative to downloads folder or absolute path. Songs are saved as: <code>{settings.musicFolder}/{'{Artist}'}/{'{Album}'}/## - {'{Title}'}.{settings.musicFormat}</code>
+                  {settings.musicDir && (
+                    <> Currently saving to <code>{settings.musicDir}</code> (save to refresh). &quot;Music&quot; or blank uses the
+                    container&apos;s <code>MUSIC_DIR</code> mount when one is set.</>
+                  )}
                 </div>
               </div>
 
@@ -2941,7 +2092,7 @@ export default function MusicPage() {
               </div>
             </div>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.5, margin: 0 }}>
-              Use this app as both an <strong>Indexer</strong> and <strong>Downloader</strong> for Lidarr. When Lidarr searches for an album or track, our Torznab indexer queries high-fidelity music releases and sends the download tasks directly to our queue via the built-in qBittorrent or SABnzbd client emulator. When downloads finish, Lidarr automatically imports and renames the files into your library!
+              Use this app as both an <strong>Indexer</strong> and <strong>Downloader</strong> for Lidarr. When Lidarr searches for an album or track, our Torznab indexer finds album metadata and sends downloads to our queue through the qBittorrent adapter. When downloads finish, Lidarr automatically imports and renames the files into your library!
             </p>
           </div>
 
@@ -3008,7 +2159,7 @@ export default function MusicPage() {
                   </div>
 
                   <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 4 }}>
-                    Categories: <code>3000, 3010, 3020, 3040</code> (Audio)
+                    Categories: <code>3000, 3010, 3040</code> (Audio)
                   </div>
                 </div>
               </div>
@@ -3042,7 +2193,7 @@ export default function MusicPage() {
                         readOnly
                         className="input"
                         style={{ fontSize: '0.82rem', padding: '6px 8px', width: '100%' }}
-                        value={window.location.port || '3000'}
+                        value={window.location.port || (window.location.protocol === 'https:' ? '443' : '80')}
                       />
                     </div>
                   </div>
@@ -3073,7 +2224,7 @@ export default function MusicPage() {
                     Username: anything (e.g. <code>lidarr</code>). Password: the API Key above. Category: <code>music</code>
                   </div>
                   <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: 2 }}>
-                    Reported download path: <code>{lidarrConfig.musicFolder || '/downloads/Music'}</code>
+                    Use SSL: {window.location.protocol === 'https:' ? 'Yes' : 'No'}. Initial State: Start. Priorities: Last. Reported download path: <code>{lidarrConfig.musicFolder || '/downloads/Music'}</code>
                   </div>
 
                   <div style={{
@@ -3337,42 +2488,64 @@ export default function MusicPage() {
               </h3>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {[...(lidarrStatus.activeTasks || []), ...(lidarrStatus.completedTasks || [])].map((task) => (
-                  <div
-                    key={task.hash}
-                    style={{
-                      padding: '10px 14px',
-                      borderRadius: 8,
-                      background: 'var(--surface-hover)',
-                      border: '1px solid var(--border)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 6,
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                      <span style={{ fontWeight: 600, fontSize: '0.88rem' }}>{task.name}</span>
-                      <span className="badge" style={{
-                        fontSize: '0.72rem',
-                        background: task.state === 'uploading' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(91, 109, 248, 0.15)',
-                        color: task.state === 'uploading' ? 'var(--success)' : 'var(--accent)',
-                      }}>
-                        {task.state === 'uploading' ? 'Ready for Lidarr Import' : `${Math.round(task.progress * 100)}% Downloading`}
-                      </span>
-                    </div>
+                {[...(lidarrStatus.activeTasks || []), ...(lidarrStatus.completedTasks || [])].map((task) => {
+                  const isReady = task.state === 'pausedUP' || task.state === 'uploading';
+                  const isError = task.state === 'error';
+                  const pct = Math.round((task.progress || 0) * 100);
+                  const badgeBg = isReady
+                    ? 'rgba(16, 185, 129, 0.15)'
+                    : isError
+                      ? 'rgba(239, 68, 68, 0.15)'
+                      : 'rgba(91, 109, 248, 0.15)';
+                  const badgeColor = isReady
+                    ? 'var(--success)'
+                    : isError
+                      ? 'var(--danger)'
+                      : 'var(--accent)';
+                  const badgeLabel = isReady
+                    ? 'Ready for Lidarr Import'
+                    : isError
+                      ? 'Failed'
+                      : task.state === 'queuedDL' && pct === 0
+                        ? 'Queued'
+                        : `${pct}% Downloading`;
+                  return (
+                    <div
+                      key={task.hash}
+                      style={{
+                        padding: '10px 14px',
+                        borderRadius: 8,
+                        background: 'var(--surface-hover)',
+                        border: '1px solid var(--border)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 6,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                        <span style={{ fontWeight: 600, fontSize: '0.88rem' }}>{task.name}</span>
+                        <span className="badge" style={{
+                          fontSize: '0.72rem',
+                          background: badgeBg,
+                          color: badgeColor,
+                        }}>
+                          {badgeLabel}
+                        </span>
+                      </div>
 
-                    <div style={{ width: '100%', height: 4, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
-                      <div
-                        style={{
-                          width: `${Math.round(task.progress * 100)}%`,
-                          height: '100%',
-                          background: task.state === 'uploading' ? 'var(--success)' : 'var(--accent)',
-                          transition: 'width 0.3s ease',
-                        }}
-                      />
+                      <div style={{ width: '100%', height: 4, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
+                        <div
+                          style={{
+                            width: `${pct}%`,
+                            height: '100%',
+                            background: badgeColor,
+                            transition: 'width 0.3s ease',
+                          }}
+                        />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -3563,36 +2736,6 @@ export default function MusicPage() {
         </div>
       )}
 
-      {/* Modern Toast Notification */}
-      {toastMessage && (
-        <div style={{
-          position: 'fixed',
-          bottom: 24,
-          right: 24,
-          zIndex: 9999,
-          padding: '12px 18px',
-          borderRadius: 8,
-          background: toastMessage.type === 'error' ? 'var(--danger, #ef4444)' : 'var(--accent, #5b6df8)',
-          color: '#fff',
-          boxShadow: '0 6px 20px rgba(0,0,0,0.35)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          fontSize: '0.9rem',
-          fontWeight: 500,
-          maxWidth: 420,
-        }}>
-          {toastMessage.type === 'error' ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
-          <span style={{ flex: 1 }}>{toastMessage.text}</span>
-          <button
-            type="button"
-            onClick={() => setToastMessage(null)}
-            style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 2, display: 'flex', alignItems: 'center' }}
-          >
-            <X size={15} />
-          </button>
-        </div>
-      )}
     </div>
   );
 }

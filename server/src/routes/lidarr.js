@@ -1,11 +1,25 @@
 const crypto = require('crypto');
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const lidarr = require('../services/lidarr');
 const music = require('../services/music');
 const { requireAuth } = require('../auth');
 
 const router = express.Router();
 router.use(express.urlencoded({ extended: true }));
+
+// Caps failed API-key / password attempts on the Torznab, .torrent download, qBittorrent,
+// and SABnzbd endpoints: 20 failed attempts per 15 minutes per IP. Legitimate requests
+// aren't counted (skipSuccessfulRequests) so normal Lidarr polling is never throttled.
+const apiKeyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  requestWasSuccessful: (_req, res) => res.statusCode < 400 && !res.locals?.authFailed,
+  message: { error: 'Too many failed authentication attempts. Try again later.' },
+});
 
 // Helper to determine the host URL from request
 function getHostUrl(req) {
@@ -25,10 +39,12 @@ function getApiKey(req) {
 }
 
 async function handleTorznabRequest(req, res) {
-  const t = (req.query.t || '').toLowerCase();
-  const apikey = getApiKey(req);
+  const params = Object.fromEntries(Object.entries(req.query).map(([key, value]) => [key.toLowerCase(), value]));
+  const t = String(params.t || '').toLowerCase();
+  const apikey = params.apikey || getApiKey(req);
 
   if (!lidarr.validateTorznabApiKey(apikey)) {
+    res.locals.authFailed = true;
     res.set('Content-Type', 'application/xml');
     return res.status(401).send(`<?xml version="1.0" encoding="UTF-8"?>
 <error code="100" description="Invalid or missing API Key"/>`);
@@ -40,15 +56,25 @@ async function handleTorznabRequest(req, res) {
   }
 
   if (t === 'music' || t === 'search') {
+    const badCategory = params.cat !== undefined && !/^\d+(,\d+)*$/.test(String(params.cat));
+    const badNumber = (key, minimum) => params[key] !== undefined
+      && (!/^\d+$/.test(String(params[key])) || !Number.isSafeInteger(Number(params[key])) || Number(params[key]) < minimum);
+    if (badCategory || badNumber('limit', 1) || badNumber('offset', 0)) {
+      return res.type('application/xml').status(200).send('<error code="201" description="Incorrect parameter"/>');
+    }
+  }
+
+  if (t === 'music' || t === 'search') {
     try {
       const xml = await lidarr.searchTorznab({
-        query: req.query.q,
-        artist: req.query.artist,
-        album: req.query.album,
-        track: req.query.track,
-        year: req.query.year,
-        limit: req.query.limit,
-        offset: req.query.offset,
+        query: params.q,
+        artist: params.artist,
+        album: params.album,
+        track: params.track,
+        year: params.year,
+        limit: params.limit,
+        offset: params.offset,
+        categories: params.cat,
         hostUrl: getHostUrl(req),
         apiKey: apikey,
       });
@@ -62,19 +88,19 @@ async function handleTorznabRequest(req, res) {
     }
   }
 
-  // Default: return capabilities if no specific function was provided
-  res.set('Content-Type', 'application/xml');
-  return res.send(lidarr.getCapsXml());
+  res.type('application/xml');
+  return t ? res.send('<error code="202" description="No such function"/>') : res.send(lidarr.getCapsXml());
 }
 
-router.get('/torznab', handleTorznabRequest);
+router.get('/torznab', apiKeyLimiter, handleTorznabRequest);
 
 // -------------------------------------------------------------
 // Torrent File Download Endpoint
 // Called by Lidarr when downloading the .torrent file
 // -------------------------------------------------------------
-router.get('/download', (req, res) => {
+router.get('/download', apiKeyLimiter, (req, res) => {
   if (!lidarr.validateTorznabApiKey(getApiKey(req))) {
+    res.locals.authFailed = true;
     return res.status(401).send('Invalid or missing API Key');
   }
   const { type = 'album', id, artist, album, track } = req.query;
@@ -109,6 +135,8 @@ router.get('/download', (req, res) => {
 const qbitRouter = express.Router();
 qbitRouter.use(express.urlencoded({ extended: true }));
 
+const MAX_MULTIPART_BYTES = 5 * 1024 * 1024;
+
 async function parseMultipartForm(req) {
   const ctype = req.headers['content-type'] || '';
   if (!ctype.toLowerCase().includes('multipart/form-data')) {
@@ -122,8 +150,12 @@ async function parseMultipartForm(req) {
   const boundary = boundaryMatch[1] || boundaryMatch[2];
   const boundaryBuf = Buffer.from(`--${boundary}`);
 
+  // Our .torrent files are a few hundred bytes; cap the buffered body well above that.
   const chunks = [];
+  let received = 0;
   for await (const chunk of req) {
+    received += chunk.length;
+    if (received > MAX_MULTIPART_BYTES) throw Object.assign(new Error('Upload too large'), { status: 413 });
     chunks.push(chunk);
   }
   const bodyBuf = Buffer.concat(chunks);
@@ -190,9 +222,10 @@ function getQbitSid(req) {
 // auth check below so /api/v2/auth/login still reaches the login route.
 qbitRouter.use('/api/v2', qbitRouter);
 
-qbitRouter.post('/auth/login', (req, res) => {
+qbitRouter.post('/auth/login', apiKeyLimiter, (req, res) => {
   const password = req.body?.password || req.query?.password || '';
   if (!lidarr.validateTorznabApiKey(password)) {
+    res.locals.authFailed = true;
     // Real qBittorrent answers a bad login with 200 "Fails.", which Lidarr reports as an auth error.
     return res.type('text/plain').status(200).send('Fails.');
   }
@@ -240,7 +273,7 @@ qbitRouter.get('/app/preferences', (req, res) => {
   res.json({
     save_path: savePath,
     temp_path: savePath,
-    queueing_enabled: true,
+    queueing_enabled: false,
     max_ratio_enabled: false,
     max_seeding_time_enabled: false,
     dht: true,
@@ -283,7 +316,8 @@ qbitRouter.post('/torrents/removeCategories', (req, res) => {
 });
 
 qbitRouter.post('/torrents/setCategory', (req, res) => {
-  res.type('text/plain').status(200).send('Ok.');
+  const ok = lidarr.setQbitTorrentCategory(req.body?.hashes, req.body?.category || '');
+  res.type('text/plain').status(ok ? 200 : 409).send(ok ? 'Ok.' : 'Invalid category or hashes');
 });
 
 qbitRouter.post('/torrents/setShareLimits', (req, res) => {
@@ -291,7 +325,7 @@ qbitRouter.post('/torrents/setShareLimits', (req, res) => {
 });
 
 qbitRouter.post('/torrents/topPrio', (req, res) => {
-  res.type('text/plain').status(200).send('Ok.');
+  res.type('text/plain').status(409).send('Priority changes are not supported by this adapter');
 });
 
 qbitRouter.post('/torrents/setForceStart', (req, res) => {
@@ -302,7 +336,7 @@ qbitRouter.get('/sync/maindata', (req, res) => {
   res.json({
     rid: 1,
     full_update: true,
-    torrents: {},
+    torrents: Object.fromEntries(lidarr.getQbitTorrents().map((torrent) => [torrent.hash, torrent])),
     categories: lidarr.getQbitCategories(),
     server_state: {
       connection_status: 'connected',
@@ -329,6 +363,8 @@ qbitRouter.post('/torrents/add', async (req, res) => {
       files = parsed.files;
     } catch (err) {
       console.error('[lidarr:qbit] Error parsing multipart upload:', err.message);
+      // Answering "Ok." would tell Lidarr a grab was queued when nothing was.
+      return res.type('text/plain').status(err.status === 413 ? 413 : 400).send(err.status === 413 ? 'Upload too large' : 'Fails.');
     }
   }
 
@@ -336,12 +372,18 @@ qbitRouter.post('/torrents/add', async (req, res) => {
   const category = fields.category || req.query?.category || 'music';
   const savepath = fields.savepath || req.query?.savepath || null;
 
+  // Pausing is not implemented by the yt-dlp queue; don't silently start a paused grab.
+  if (String(fields.paused || fields.stopped).toLowerCase() === 'true') {
+    return res.type('text/plain').status(200).send('Fails.');
+  }
+  let accepted = 0;
+
   // 1. Process files (if Lidarr uploaded .torrent files)
   for (const file of files) {
     try {
       const torrentInfo = lidarr.parseTorrentBuffer(file.buffer);
       if (torrentInfo && torrentInfo.id) {
-        await lidarr.handleDownloadAdd({
+        const task = await lidarr.handleDownloadAdd({
           type: torrentInfo.type || 'album',
           id: torrentInfo.id,
           artist: torrentInfo.artist,
@@ -352,6 +394,7 @@ qbitRouter.post('/torrents/add', async (req, res) => {
           category,
           savePath: savepath,
         });
+        if (task.ok) accepted++;
       }
     } catch (err) {
       console.error('[lidarr:qbit] Failed to process uploaded torrent file:', file.filename, err.message);
@@ -371,7 +414,7 @@ qbitRouter.post('/torrents/add', async (req, res) => {
         const track = parsedUrl.searchParams.get('track');
 
         if (id) {
-          await lidarr.handleDownloadAdd({
+          const task = await lidarr.handleDownloadAdd({
             type,
             id,
             artist,
@@ -380,6 +423,7 @@ qbitRouter.post('/torrents/add', async (req, res) => {
             category,
             savePath: savepath,
           });
+          if (task.ok) accepted++;
         }
       } catch (err) {
         console.error('[lidarr:qbit] Failed to process torrent add url:', urlStr, err.message);
@@ -387,17 +431,17 @@ qbitRouter.post('/torrents/add', async (req, res) => {
     }
   }
 
-  res.type('text/plain').status(200).send('Ok.');
+  res.type('text/plain').status(200).send(accepted > 0 ? 'Ok.' : 'Fails.');
 });
 
 qbitRouter.post('/torrents/delete', (req, res) => {
   const hashes = req.body?.hashes || req.query?.hashes;
-  lidarr.deleteQbitTorrents(hashes);
+  lidarr.deleteQbitTorrents(hashes, String(req.body?.deleteFiles || req.query?.deleteFiles).toLowerCase() === 'true');
   res.type('text/plain').status(200).send('Ok.');
 });
 
 qbitRouter.post('/torrents/pause', (req, res) => {
-  res.type('text/plain').status(200).send('Ok.');
+  res.type('text/plain').status(409).send('Pause is not supported by this adapter');
 });
 
 qbitRouter.post('/torrents/resume', (req, res) => {
@@ -430,6 +474,7 @@ async function handleSabRequest(req, res) {
   const mode = (req.query.mode || req.body?.mode || '').toLowerCase();
 
   if (!lidarr.validateTorznabApiKey(getApiKey(req))) {
+    res.locals.authFailed = true;
     // SABnzbd's own wording, which Lidarr recognises as an authentication failure.
     return res.status(200).json({ status: false, error: 'API Key Incorrect' });
   }
@@ -484,31 +529,31 @@ async function handleSabRequest(req, res) {
             track,
             category: cat,
           });
-          return res.json({ status: true, nzo_ids: [task.hash] });
+          return res.json(task.ok ? { status: true, nzo_ids: [task.hash] } : { status: false, error: task.error || 'Download rejected' });
         }
       }
     } catch (err) {
       console.error('[lidarr:sab] Addurl error:', err.message);
     }
-    return res.json({ status: true, nzo_ids: [] });
+    return res.json({ status: false, error: 'Download rejected' });
   }
 
-  // Default fallback for unrecognized SAB mode
-  res.json({ status: true });
+  // Torznab releases cannot be sent through Lidarr's native Usenet/SABnzbd pipeline.
+  res.json({ status: false, error: 'Unsupported SABnzbd operation; configure the qBittorrent adapter' });
 }
 
-router.get('/sab/api', handleSabRequest);
-router.post('/sab/api', handleSabRequest);
-router.get('/sab', handleSabRequest);
-router.post('/sab', handleSabRequest);
+router.get('/sab/api', apiKeyLimiter, handleSabRequest);
+router.post('/sab/api', apiKeyLimiter, handleSabRequest);
+router.get('/sab', apiKeyLimiter, handleSabRequest);
+router.post('/sab', apiKeyLimiter, handleSabRequest);
 
 // Handle direct /api/lidarr?t=... or mode=... calls
 router.use((req, res, next) => {
   if (req.query.t) {
-    return handleTorznabRequest(req, res);
+    return apiKeyLimiter(req, res, () => handleTorznabRequest(req, res));
   }
   if (req.query.mode || req.body?.mode) {
-    return handleSabRequest(req, res);
+    return apiKeyLimiter(req, res, () => handleSabRequest(req, res));
   }
   next();
 });
@@ -540,8 +585,8 @@ router.get('/status', requireAuth, (req, res) => {
   const config = lidarr.getLidarrConfig();
   res.json({
     config,
-    activeTasks: tasks.filter((t) => t.state !== 'uploading'),
-    completedTasks: tasks.filter((t) => t.state === 'uploading'),
+    activeTasks: tasks.filter((t) => t.state !== 'pausedUP'),
+    completedTasks: tasks.filter((t) => t.state === 'pausedUP'),
     totalTasks: tasks.length,
   });
 });
@@ -609,4 +654,3 @@ router.post('/download-wanted', requireAuth, async (req, res) => {
 
 router.qbitRouter = qbitRouter;
 module.exports = router;
-

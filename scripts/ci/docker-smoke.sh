@@ -14,7 +14,7 @@ docker run --rm --platform "$platform" --entrypoint sh "$image" -ec '
   yt-dlp --version
   ffmpeg -version
   ffprobe -version
-  deno --version
+  qjs --version
   node -e "require(\"/app/server/node_modules/better-sqlite3\")(\":memory:\").prepare(\"SELECT 1\").get()"
 '
 docker run -d --platform "$platform" --name "$name" \

@@ -37,7 +37,7 @@ describe('lidarr service', () => {
   it('generates Torznab caps XML with music capabilities', () => {
     const caps = lidarr.getCapsXml();
     assert.ok(caps.includes('<caps>'));
-    assert.ok(caps.includes('<music-search available="yes"'));
+    assert.ok(caps.includes('<audio-search available="yes"'));
     assert.ok(caps.includes('id="3000" name="Audio"'));
   });
 
@@ -81,7 +81,7 @@ describe('lidarr service', () => {
     assert.equal(lidarr.describeReleaseFormat('m4a', '256k').label, 'AAC 256');
     assert.equal(lidarr.describeReleaseFormat('flac', 'best').label, 'FLAC');
     assert.equal(lidarr.describeReleaseFormat('flac', '320k').category, 3040);
-    // 10 tracks * 4 min at 320 kbps = 96 MB
+    // 10 tracks * 2 min at 320 kbps = 48 MB
     assert.equal(lidarr.estimateReleaseSize(10, 'mp3', '320k'), 48000000);
   });
 

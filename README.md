@@ -120,12 +120,14 @@
 ## Features
 
 ### Downloading
-- **Batch processing**: Paste one or dozens of URLs at once; jobs queue with configurable concurrency.
-- **Real-time feedback**: Live progress over WebSockets (percentage, speed, ETA, and live logs).
-- **Granular control**: Quality selector, audio-only (MP3/OPUS/FLAC/M4A), subtitle downloading, embedded metadata/chapters/artwork, and SponsorBlock removal.
-- **Full history & inspection**: Browse completed and failed downloads with thumbnails, local file paths, and exact yt-dlp CLI arguments and stdout logs.
-- **Custom naming**: Global or per-Watch file and folder templates (see [File naming](#file-naming)).
-- **Media server ready**: Automatically writes Kodi/Jellyfin/Emby `.nfo` files and poster artwork for instant scraper recognition.
+- Paste one or many URLs at once; jobs are queued with configurable concurrency
+- Pause or resume the queue, move a queued download to the front, and prioritize manual downloads ahead of Watch backfills
+- Live progress bars over WebSocket (percent, speed, ETA)
+- Format picker, audio-only (MP3), timestamp/chapter trimming, subtitles, embedded thumbnail/metadata/chapters, and SponsorBlock auto-remove
+- Optional per-download bandwidth caps and jittered delays to reduce network saturation and rate limits
+- Download history with thumbnails, file paths, and the exact yt-dlp command and log for every job
+- Customizable filename/folder layout — pick a preset or write your own yt-dlp template, globally or per Watch (see [File naming](#file-naming))
+- Writes a Kodi/Jellyfin/Emby-compatible `.nfo` + poster image next to every download so titles, descriptions, and artwork scrape reliably (toggle in Settings)
 
 ### Library
 - **In-browser media center**: Browse all downloaded media in a responsive grid with instant search, category filters, and sorting.
@@ -142,22 +144,32 @@
 - **Audit ledger**: Comprehensive **Activity** tab displaying the exact scan history and disposition of every cataloged video.
 
 ### Auto-delete
-- **Smart retention**: Automatically clean up watched media after $N$ days, when marked watched in Jellyfin/Plex, or both.
-- **Safety controls**: Protect individual videos, exempt specific Watches, and enforce "always keep newest $N$" policies.
-- **Nightly execution**: Runs automatically at 03:00 server time, with a manual "Run Now" and dry-run preview.
+- Optionally clean up Watch-downloaded videos: delete after N days, once watched in Jellyfin, or both
+- Runs nightly, with a dry-run preview and a "run now" button
+- Safety guards: per-video protect, per-Watch exemption, and "always keep newest N"
+- Optional free-space guard: run cleanup and pause new Watch queueing below a configured disk threshold
 
-### Live Streams
-- **Universal extractor support**: Seamlessly records YouTube, Twitch, TikTok Live, and any platform supported by yt-dlp.
-- **Live edge or full broadcast**: Join at the current moment or record from the start (`--live-from-start`).
-- **Upcoming broadcast waiting**: Queue streams before they go live (`--wait-for-video`); recording starts automatically.
-- **TikTok & Twitch offline watchers**: Queue **Wait & Auto-Record** on offline channels to start capturing the moment they go live.
-- **Interrupt protection**: Captured using MPEG-TS HLS segments (`--hls-use-mpegts`), keeping the output file playable even if unexpectedly stopped.
-- **Manual split & graceful stop**: One-click stopping preserves captured video and can split chunks on demand.
+### Queue and failure recovery
+- Pause queued work while active downloads finish; resume whenever you're ready
+- Promote a queued download to the front of the queue
+- Filter failed jobs by likely cause (network, bot check, authentication, or unavailable) and retry only matching or transient failures
 
-### Twitch Hub
-- Dedicated interface for monitoring Twitch channels and active recordings.
-- Channel VOD browser and downloader.
-- Built-in video and clip trimmer with time-range selection.
+### Mobile sharing
+- Install the app on a supported Android browser and share links to it from other apps, or use the bookmarklet in Settings → Downloads
+
+### Live streams
+- **YouTube and any other yt-dlp live extractor** — a URL that's currently live is detected automatically in the Analyze modal
+- Join at the live edge, or record the whole broadcast from the start (`--live-from-start`)
+- Scheduled streams that haven't started yet can be waited on and recorded the moment they go live (`--wait-for-video`)
+- **TikTok Live** — paste a `tiktok.com/@user/live` link; if they're offline, queue **Wait & Auto-Record** and recording starts the next time they go live (also works for offline Twitch channels)
+- Recordings use MPEG-TS-safe HLS segments (`--hls-use-mpegts`), so the file stays playable even if interrupted
+- Live jobs show a pulsing **LIVE** badge and elapsed time, with a one-click **Stop Recording** that keeps everything captured so far
+
+### Twitch hub
+- Record a live channel, including auto-record when it goes live
+- Browse and download a channel's VODs
+- Trim a VOD or clip to a time range
+- Track active recordings in real time
 
 ### Music Hub & Music Watcher
 - Search and discover albums, artists, and tracks with high-resolution artwork and 30-second audio previews.
@@ -239,7 +251,13 @@ flowchart TD
     Queue -->|"Library & Watched Sync"| Plex
 ```
 
----
+### Maintenance & security
+- Bundles modern static FFmpeg builds from [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) and the [QuickJS-ng](https://github.com/quickjs-ng/quickjs) JavaScript runtime yt-dlp needs for YouTube, with FFmpeg checksum and QuickJS binary validation before installation
+- Choose the yt-dlp **stable** or **nightly** channel; the choice survives container recreation
+- Single admin login with rate-limited login attempts and session invalidation on password change; Lidarr API-key endpoints are rate-limited too
+- Cookie support for any site, for age-restricted, members-only, private, or subscriber-only content
+- Blocks URLs that target private/loopback addresses, including hostnames resolving to private IPs (SSRF guard)
+- Optional `PUID` / `PGID` support for NAS file ownership
 
 ## Quick start (Docker Compose)
 
@@ -248,7 +266,7 @@ Prebuilt multi-arch images (`linux/amd64` and `linux/arm64`) are automatically p
 ### 1. Create directory structure
 
 ```bash
-mkdir -p ytdlp-gui/downloads ytdlp-gui/config
+mkdir -p ytdlp-gui/downloads ytdlp-gui/videos ytdlp-gui/music ytdlp-gui/config
 cd ytdlp-gui
 ```
 
@@ -267,12 +285,26 @@ services:
     environment:
       - MAX_CONCURRENT_DOWNLOADS=2
       - TZ=America/Los_Angeles
+      # Optional: use your NAS user and group IDs (check with `id`)
+      # - PUID=1000
+      # - PGID=10
+      - VIDEO_DIR=/videos
+      - MUSIC_DIR=/music
     volumes:
       - ./downloads:/downloads
+      - ./videos:/videos
+      - ./music:/music
       - ./config:/config
 ```
 
-### 3. Create `.env`
+Adjust to taste:
+- **`./videos` / `./music`** — point these at your media library folders (e.g. `/volume1/Media/YouTube:/videos`, `/volume1/Media/music:/music`). Videos are saved under `VIDEO_DIR`, music under `MUSIC_DIR`. Leave both variables and mounts out to keep everything in `./downloads`.
+- **`ports`** — change the left-hand `3000` if that port is taken (e.g. `"8080:3000"`).
+- **`TZ`** — your timezone (e.g. `America/New_York`), so scheduled checks and timestamps line up.
+- **`MAX_CONCURRENT_DOWNLOADS`** — keep this low (1–2) on a NAS with limited CPU.
+- **`PUID` / `PGID`** — optional host UID and GID for the app process and files it creates. When set, the container adjusts `/config` ownership and the top level of download directories before dropping root privileges.
+
+### 3. Create `.env` next to it
 
 ```env
 ADMIN_USER=admin
@@ -292,7 +324,7 @@ docker compose up -d
 
 Access the web interface at `http://<your-server-ip>:3000`.
 
----
+yt-dlp, FFmpeg, and QuickJS-ng can also be updated from **Settings** without pulling a new image, and are checked automatically overnight (see [Scheduled tasks](#scheduled-tasks)). If you'd rather have a reproducible yt-dlp version, pin it in the `Dockerfile` (`pip3 install yt-dlp==<version>`) and build locally — see [PyPI](https://pypi.org/project/yt-dlp/) for release history.
 
 ## Configuration
 
@@ -302,33 +334,63 @@ All configuration variables can be passed via `.env` or the `environment:` block
 
 | Variable | Default | Description |
 |---|---|---|
-| `ADMIN_USER` | `admin` | Administrator username. |
-| `ADMIN_PASSWORD` | *(random)* | Administrator password (printed to logs if not set). |
-| `SESSION_SECRET` | *(persisted)* | Key used to sign session cookies (stored in `app.db`). |
-| `TZ` | `UTC` | Server timezone for schedules and timestamps. |
-| `PORT` | `3000` | HTTP port inside the container. |
-| `MAX_CONCURRENT_DOWNLOADS` | `2` | Number of simultaneous downloads. |
-| `TRUST_PROXY` | `0` | Set to `1` when behind an SSL reverse proxy (Nginx, Caddy, Traefik). |
-| `COOKIE_SECURE` | `0` | Set to `1` to restrict session cookies to HTTPS only. |
-| `ALLOW_LOCAL_URLS` | `0` | Set to `1` to bypass SSRF guards for private LAN addresses. |
+| `ADMIN_USER` | `admin` | Login username. |
+| `ADMIN_PASSWORD` | random (printed once) | Login password. |
+| `SESSION_SECRET` | generated & persisted | Secret used to sign session cookies. |
+| `PUID` | `0` (root) | Optional numeric user ID for the app and download processes inside Docker. |
+| `PGID` | `0` (root) | Optional numeric group ID for the app and download processes inside Docker. |
+| `TZ` | container default (UTC) | Timezone for schedules and timestamps. |
+| `PORT` | `3000` | Port the server listens on inside the container. |
+| `MAX_CONCURRENT_DOWNLOADS` | `2` | How many downloads run at once. |
+| `CONCURRENT_FRAGMENTS` | `4` | Fragments fetched in parallel within one HLS/DASH download (Twitch VODs and most non-YouTube sites). `1` turns it off; live recordings never use it. |
+| `TRUST_PROXY` | off | Set to `1` behind a TLS-terminating reverse proxy — required for `COOKIE_SECURE` to work there. |
+| `COOKIE_SECURE` | off | Set to `1` once the app is reachable over HTTPS; restricts the login cookie to HTTPS. |
+| `ALLOW_LOCAL_URLS` | off | Set to `1` to allow URLs pointing at loopback/private/link-local addresses (e.g. `127.0.0.1`, `192.168.x.x`). Only needed to target an internal mirror or service. |
 
-### Watchdogs & Idle Timeouts
+### Timeouts & watchdogs
 
-| Variable | Default | Description |
+| Variable | Default | Purpose |
 |---|---|---|
-| `DOWNLOAD_IDLE_TIMEOUT_MS` | `900000` (15m) | Terminate download if yt-dlp yields no output for this duration. |
-| `LIVE_DOWNLOAD_IDLE_TIMEOUT_MS` | `3600000` (1h) | Watchdog silence threshold for active live streams. |
-| `PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS` | `3600000` (1h) | Watchdog silence threshold for large playlist queries. |
-| `DOWNLOAD_MAX_QUIET_MS` | `14400000` (4h) | Hard maximum silence ceiling even if CPU activity is detected. |
-| `GETINFO_TIMEOUT_MS` | `120000` (2m) | Timeout for metadata probes and Watch check sweeps. |
+| `DOWNLOAD_IDLE_TIMEOUT_MS` | `900000` (15 min) | Stops a download if yt-dlp produces no output this long, so a hung job can't hold a queue slot forever. Not applied to "wait for stream to go live" jobs. |
+| `LIVE_DOWNLOAD_IDLE_TIMEOUT_MS` | `3600000` (60 min) | Same watchdog for active live recordings, which can legitimately stay quiet longer. |
+| `PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS` | `3600000` (60 min) | Same watchdog for playlist URLs (e.g. `...?list=...`), which may spend a long time preparing before the first progress line. |
+| `DOWNLOAD_MAX_QUIET_MS` | `14400000` (4 h) | When the watchdog fires but the job is still using CPU (e.g. FFmpeg merging a multi-hour capture), it's spared — up to this hard cap of total silence. |
+| `GETINFO_TIMEOUT_MS` | `120000` (2 min) | Timeout for metadata-only lookups (format picker, Watch checks, pre-download info). |
+
+### Binaries & update schedules
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `YTDLP_BIN` | `yt-dlp` | Path to the yt-dlp binary, if not on `PATH`. |
+| `FFMPEG_DIR` | auto-detected | Directory containing `ffmpeg`/`ffprobe`, if not using the Settings-managed build. |
+| `YTDLP_UPDATE_CRON` | `0 3 * * *` | When to check for a new yt-dlp build (only when the saved channel is Nightly). |
+| `FFMPEG_UPDATE_CRON` | `30 3 * * *` | When to check for a new FFmpeg build. |
+| `QUICKJS_UPDATE_CRON` | `45 3 * * *` | When to check for a new QuickJS-ng release. |
+| `DEPENDENCY_UPDATE_STARTUP_DELAY_MS` | `30000` | Delay before re-applying a saved Nightly yt-dlp channel after startup. |
 
 ### Update Schedules (Cron)
 
 | Variable | Default | Description |
 |---|---|---|
-| `YTDLP_UPDATE_CRON` | `0 3 * * *` | yt-dlp nightly channel check. |
-| `FFMPEG_UPDATE_CRON` | `30 3 * * *` | Static FFmpeg build update check. |
-| `DENO_UPDATE_CRON` | `45 3 * * *` | Deno JavaScript engine check. |
+| `DOWNLOAD_DIR` | `/downloads` in Docker, `./downloads` otherwise | Where downloaded files are written. |
+| `VIDEO_DIR` | `DOWNLOAD_DIR` | Default base folder for video downloads (YouTube, Twitch, …). Overridable in **Settings → File naming → Video folder**. |
+| `MUSIC_DIR` | `DOWNLOAD_DIR/Music` | Default folder for Music-tab, music Watch and Lidarr downloads. Overridable in **Music → Settings**; a saved folder of `Music` (the old default) also maps here. |
+| `CONFIG_DIR` | `/config` in Docker, `./config` otherwise | Where the database, sessions, and cookies are stored. |
+
+## File naming
+
+**Settings → File naming** sets the **Video folder** (default `VIDEO_DIR`, else `/downloads`) and the layout of new video downloads inside it, as a [yt-dlp output template](https://github.com/yt-dlp/yt-dlp#output-template). Presets:
+
+| Preset | Example result |
+|---|---|
+| Channel folder (default) | `Example Channel/Video title [id].mp4` |
+| Flat | `Video title [id].mp4` |
+| Channel / Year | `Example Channel/2026/Video title [id].mp4` |
+| Channel / date-prefixed title | `Example Channel/2026-09-14 Video title [id].mp4` |
+| TV show | `Example Channel/Season 2026/S2026E0914 - Video title [id].mp4` |
+| Site / Channel | `Youtube/Example Channel/Video title [id].mp4` |
+
+Or write your own — the page shows a live example of the result. Each Watch can override the global template in its **Quality & Format** tab, which is handy for sending a channel to its own media-server library (e.g. `Kids/%(uploader)s/%(title)s [%(id)s].%(ext)s`). Music downloads always use their Artist/Album layout.
 
 ---
 
@@ -378,11 +440,60 @@ flowchart LR
    - **Host**: `<server-ip>`
    - **Port**: `3000`
    - **URL Base**: `/api/lidarr/qbit`
-3. For in-depth remote path mapping tips and troubleshooting, refer to [docs/lidarr-integration.md](docs/lidarr-integration.md).
+   - **Category**: `music`
+   - Test and Save.
 
----
+3. **Lidarr Server Automation (Optional)**:
+   - In the app's **Music → Lidarr** tab, enter your Lidarr server URL and API key.
+   - Enable **Automatically notify Lidarr when downloads finish** to trigger `DownloadedAlbumsScan` as soon as music completes.
+   - Browse and download wanted/missing albums from Lidarr with a single click.
 
-## Media Server Integration (Jellyfin & Plex)
+## Scheduled tasks
+
+All times are server-local (set `TZ`).
+
+| Task | When |
+|---|---|
+| Watch checks | Evaluated every 5 minutes; each Watch runs once its own interval (default 30 min) has elapsed |
+| Jellyfin playlist sync | Every 15 minutes, plus right after each Watch download |
+| Plex playlist sync | Every 15 minutes, plus right after each Watch download |
+| Auto-delete | Nightly at 03:00 |
+| yt-dlp nightly check | 03:00 (`YTDLP_UPDATE_CRON`, Nightly channel only) |
+| FFmpeg check | 03:30 (`FFMPEG_UPDATE_CRON`) — downloaded only when the upstream build changes |
+| QuickJS-ng check | 03:45 (`QUICKJS_UPDATE_CRON`) |
+
+Dependency updates are skipped while downloads are active, so they never interrupt a running job.
+
+## Where your data lives
+
+| Host path | Container path | Contents |
+|---|---|---|
+| `./downloads` | `/downloads` | Downloaded media (a subfolder per uploader/channel by default — see [File naming](#file-naming)), plus `.nfo`/poster files |
+| `./videos` (optional) | `/videos` (`VIDEO_DIR`) | Video downloads, when `VIDEO_DIR` is set |
+| `./music` (optional) | `/music` (`MUSIC_DIR`) | Music-tab, music Watch and Lidarr downloads, when `MUSIC_DIR` is set |
+| `./config` | `/config` | SQLite database (`app.db`), sessions, saved cookies, and app-managed tool builds |
+
+**Back up `./config`** to keep your history, Watches, and settings. Everything in it can be restored by copying the folder back before starting the container.
+
+## Security notes
+
+- This app is meant for a single trusted admin. Don't expose it to the internet without HTTPS (see [reverse proxy](#running-behind-a-reverse-proxy-https)) and a strong password.
+- `.env` and `./config/cookies.txt` contain secrets — keep them out of git and off shared drives.
+- Only download content you have the right to download, and respect each site's terms of service.
+
+## Troubleshooting
+
+**`docker pull` fails with an auth/denied error** — the GHCR package may be private. Set it to public in the package's GitHub settings, or `docker login ghcr.io` with a token that has `read:packages`.
+
+**I lost the generated admin password** — set `ADMIN_PASSWORD` in `.env` and run `docker compose up -d` to recreate the container.
+
+**Login doesn't stick / I get logged straight back out** — you likely set `COOKIE_SECURE=1` while accessing the app over plain HTTP, or forgot `TRUST_PROXY=1` behind a proxy.
+
+**Progress bars don't update** — your reverse proxy isn't forwarding WebSockets. Enable WebSocket support for the proxy host.
+
+**YouTube says "Sign in to confirm you're not a bot" or a video is unavailable** — add cookies (see [Site cookies](#site-cookies-youtube-twitch-and-others)) and update yt-dlp from Settings; switching to the Nightly channel often helps when YouTube changes something.
+
+**A URL to a local service is rejected** — that's the private-address guard, which also checks hostname DNS answers. Set `ALLOW_LOCAL_URLS=1` if it's intentional.
 
 ### Jellyfin
 - **Playlist Synchronization**: Automatically creates and maintains a Jellyfin playlist corresponding to each Watch feed.
@@ -398,7 +509,7 @@ flowchart LR
 
 ## Local Development (without Docker)
 
-**Prerequisites:** Node.js 24+, `yt-dlp`, `ffmpeg`, and `deno` available on `PATH`.
+Prerequisites: Node.js 24+, plus `yt-dlp`, `ffmpeg`, and [QuickJS-ng](https://github.com/quickjs-ng/quickjs)'s `qjs` installed and on your `PATH`.
 
 ```bash
 # Terminal 1: Backend API (http://localhost:3000)
@@ -429,6 +540,16 @@ cd server && npm run lint
 # Client lint
 cd client && npm run lint
 ```
+client/              React (Vite) frontend
+  src/pages/         Top-level pages (Dashboard, Library, History, Watches, Music, Twitch, Settings, ...)
+  src/components/    Shared UI components
+server/
+  src/index.js       Express + socket.io entry point
+  src/routes/        REST API routes
+  src/services/      yt-dlp runner, queue, scheduler, Jellyfin, music, cleanup, notifications, updaters
+Dockerfile           Multi-stage build: client bundle + runtime with yt-dlp, FFmpeg, QuickJS-ng
+docker-compose.yml   Compose file (pulls the published image, or builds locally)
+```
 
 ---
 
@@ -452,8 +573,13 @@ Your reverse proxy is likely dropping WebSocket upgrade headers. Ensure your pro
 Verify that `COOKIE_SECURE=1` is only enabled when accessing over HTTPS, and that `TRUST_PROXY=1` is set when running behind a TLS termination proxy.
 </details>
 
-<details>
-<summary><b>Local URLs rejected by download form</b></summary>
+- **Backend** — Node.js + Express, `better-sqlite3` for storage, `socket.io` for live progress, and `node-cron` for scheduling. yt-dlp is invoked via `child_process.spawn` rather than a library binding, so any yt-dlp version and any site it supports works without code changes.
+- **Frontend** — React (Vite), built and served as static files by the Express server: one container, one port.
+- **Library playback** — files are streamed from disk (with HTTP range requests, so seeking works) behind the same login as the rest of the app. Files are only served by download ID, from the path yt-dlp reported when the download finished — never from a path the browser supplies.
+- **YouTube JS runtime** — since yt-dlp 2025.11.12, full YouTube support requires an external JavaScript runtime to solve YouTube's JS challenges. The image builds [QuickJS-ng](https://github.com/quickjs-ng/quickjs) (`qjs`) from a pinned release for both amd64 and arm64, and the app runs yt-dlp with `--no-js-runtimes --js-runtimes quickjs` so it uses QuickJS-ng instead of yt-dlp's default, Deno. Outside Docker, put `qjs` on your `PATH` yourself.
+- **Watches** — every video a Watch discovers is a row in a ledger (`watch_items`) with its filter decision and download state, and every check is a row in `watch_runs`; download jobs link back to their item, so a failure is retried rather than forgotten. The first check on a new Watch only records existing videos; later checks auto-queue anything new. **Reset history** forgets everything except completed downloads and re-baselines on the next check.
+- **Auto-delete** — evaluates only Watch-downloaded videos; see [Jellyfin integration](#jellyfin-integration) for how "watched" is determined.
+- **Jellyfin playlist sync** — each Watch's playlist is created on first sync and its Jellyfin item ID is cached on the Watch, so renaming it doesn't create a duplicate.
 
 Set `ALLOW_LOCAL_URLS=1` in your environment to permit downloading from internal private network mirrors (e.g. `192.168.x.x` or `127.0.0.1`).
 </details>
@@ -462,7 +588,6 @@ Set `ALLOW_LOCAL_URLS=1` in your environment to permit downloading from internal
 
 ## Acknowledgements
 
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — The powerful media download engine.
-- [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) — Optimized static audio and video toolchains.
-- [Deno](https://deno.com) — Modern secure JavaScript runtime for YouTube challenge evaluation.
-- [Lucide](https://lucide.dev) — Clean, consistent icons.
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — the downloader doing all the heavy lifting
+- [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) — static FFmpeg builds
+- [QuickJS-ng](https://github.com/quickjs-ng/quickjs) — JavaScript runtime for YouTube challenge solving

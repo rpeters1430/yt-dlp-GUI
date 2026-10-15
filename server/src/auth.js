@@ -63,6 +63,11 @@ function login(username, password) {
   return user;
 }
 
+function verifyPassword(userId, password) {
+  const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId);
+  return !!user && bcrypt.compareSync(String(password), user.password_hash);
+}
+
 // Emits 'changed' whenever sessions may have been signed out (password change, logout), so
 // open socket.io connections can re-check theirs (see socket.js).
 const sessionEvents = new EventEmitter();
@@ -73,4 +78,4 @@ function changePassword(userId, newPassword) {
   return db.prepare('SELECT session_version FROM users WHERE id = ?').get(userId).session_version;
 }
 
-module.exports = { ensureBootstrapAdmin, requireAuth, validateSession, login, changePassword, sessionEvents };
+module.exports = { ensureBootstrapAdmin, requireAuth, validateSession, login, verifyPassword, changePassword, sessionEvents };

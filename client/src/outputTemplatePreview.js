@@ -45,7 +45,7 @@ function formatDate(yyyymmdd, fmt) {
 }
 
 function renderField(inner, conversion) {
-  // inner: "a,b>fmt&repl|default" ; conversion: e.g. ".80B", "s", "03d"
+  // inner: "a,b>fmt&repl|default" or "a>fmt,b>fmt|default" ; conversion: e.g. ".80B", "s", "03d"
   let expr = inner;
   let fallback = 'NA';
   const pipe = expr.indexOf('|');
@@ -59,24 +59,32 @@ function renderField(inner, conversion) {
     replacement = expr.slice(amp + 1);
     expr = expr.slice(0, amp);
   }
-  let dateFmt = null;
-  const gt = expr.indexOf('>');
-  if (gt !== -1) {
-    dateFmt = expr.slice(gt + 1);
-    expr = expr.slice(0, gt);
+
+  // Shared trailing >fmt if only the last alternative has >, or per-alternative key>fmt
+  const parts = expr.split(',');
+  let sharedDateFmt = null;
+  if (parts.length > 1 && !parts[0].includes('>') && parts[parts.length - 1].includes('>')) {
+    const lastGt = parts[parts.length - 1].indexOf('>');
+    sharedDateFmt = parts[parts.length - 1].slice(lastGt + 1);
+    parts[parts.length - 1] = parts[parts.length - 1].slice(0, lastGt);
   }
 
   let value;
-  for (const key of expr.split(',')) {
-    const v = SAMPLE[key.trim()];
+  let matchedDateFmt = sharedDateFmt;
+  for (const rawKey of parts) {
+    const gt = rawKey.indexOf('>');
+    const key = (gt !== -1 ? rawKey.slice(0, gt) : rawKey).trim();
+    const localDateFmt = gt !== -1 ? rawKey.slice(gt + 1) : sharedDateFmt;
+    const v = SAMPLE[key];
     if (v !== undefined && v !== null && v !== '') {
       value = v;
+      matchedDateFmt = localDateFmt;
       break;
     }
   }
   if (value === undefined) return fallback;
   if (replacement !== null) return replacement.replace(/\{[^}]*\}/g, String(value));
-  if (dateFmt) value = formatDate(value, dateFmt) ?? value;
+  if (matchedDateFmt) value = formatDate(value, matchedDateFmt) ?? value;
 
   const pad = /^0?(\d+)d$/.exec(conversion);
   if (pad && typeof value === 'number') return String(value).padStart(Number(pad[1]), '0');

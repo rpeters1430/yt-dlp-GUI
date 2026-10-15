@@ -1,38 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { io } from 'socket.io-client';
-import {
-  Radar,
-  RefreshCw,
-  X,
-  AlertCircle,
-  Plus,
-  Search,
-  CheckCircle2,
-  Clock,
-  Film,
-  Music,
-  ExternalLink,
-  Edit3,
-  RotateCcw,
-  Download,
-  Eye,
-  ShieldCheck,
-  Filter,
-  Play,
-  Pause,
-  Sparkles,
-  Shield,
-  ShieldOff,
-  ListMusic,
-  Activity,
-  AlertTriangle,
-  Hourglass,
-  Scissors,
-} from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { MoreHorizontal } from 'lucide-react';
 import { api } from '../api.js';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import WatchModal from '../components/WatchModal.jsx';
 import WatchActivityModal from '../components/WatchActivityModal.jsx';
+import AddWatchDrawer from '../components/AddWatchDrawer.jsx';
+import Art from '../components/Art.jsx';
+import { Switch } from '../components/DownloadOptionsFields.jsx';
+import { useDownloads } from '../context/DownloadsContext.jsx';
+import { useToast } from '../context/ToastContext.jsx';
+import { relativeTime } from '../format.js';
 
 const TAB_LABELS = { videos: 'Videos', shorts: 'Shorts', streams: 'Streams' };
 
@@ -50,19 +27,6 @@ function runBadge(w) {
   return { label: 'No new videos', kind: 'neutral' };
 }
 
-function timeAgo(dateStr) {
-  if (!dateStr) return 'Never checked';
-  const past = new Date(dateStr + 'Z').getTime();
-  const diffSec = Math.floor((Date.now() - past) / 1000);
-  if (diffSec < 60) return 'Just now';
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDays = Math.floor(diffHr / 24);
-  return `${diffDays}d ago`;
-}
-
 export default function Watches() {
   const [watches, setWatches] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -78,24 +42,27 @@ export default function Watches() {
 
   // Modals
   const [modalOpen, setModalOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [advancedUrl, setAdvancedUrl] = useState('');
+  const toast = useToast();
+  const { subscribeWatchUpdates } = useDownloads();
   const [editingWatch, setEditingWatch] = useState(null);
   const [activityWatch, setActivityWatch] = useState(null); // { watch, tab }
   const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
   const [pendingReset, setPendingReset] = useState(null); // { id, label }
 
-  function refresh() {
+  const refresh = useCallback(() => {
     api.listWatches()
       .then(setWatches)
       .catch(() => {})
       .finally(() => setLoading(false));
-  }
+  }, []);
 
   useEffect(() => {
     refresh();
 
-    // Socket.IO for real-time updates from scheduler
-    const socket = io({ withCredentials: true });
-    socket.on('watch:update', (updated) => {
+    // Subscribe to real-time watch:update events on the shared Socket.IO connection
+    return subscribeWatchUpdates((updated) => {
       setWatches((prev) => {
         const idx = prev.findIndex((w) => w.id === updated.id);
         if (idx >= 0) {
@@ -106,17 +73,15 @@ export default function Watches() {
         return [updated, ...prev];
       });
     });
-
-    return () => socket.disconnect();
-  }, []);
+  }, [refresh, subscribeWatchUpdates]);
 
   // Polling fallback while any watch is actively checking
   useEffect(() => {
     const hasChecking = watches.some((w) => w.last_status === 'checking' || busyId === w.id);
-    if (!hasChecking) return;
+    if (!hasChecking) return undefined;
     const interval = setInterval(refresh, 2500);
     return () => clearInterval(interval);
-  }, [watches, busyId]);
+  }, [watches, busyId, refresh]);
 
   async function handleToggle(watch) {
     try {
@@ -268,523 +233,169 @@ export default function Watches() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>YouTube Channel &amp; Playlist Watches</h1>
-          <p>Auto-monitor channels and playlists for new video uploads with customizable quality, filters, and sponsor skips.</p>
+      <div className="page-title-row">
+        <h1>Watches</h1>
+        <span className="page-subtitle">Channels and playlists that download new videos automatically</span>
+        <div className="page-title-actions">
+          {watches.length > 1 && (
+            <button type="button" className="btn-ghost" onClick={handleCheckAll} disabled={checkingAll}>
+              {checkingAll ? 'Checking all…' : 'Check all'}
+            </button>
+          )}
+          <button type="button" className="btn-primary" onClick={() => setAddOpen(true)}>Add watch</button>
         </div>
       </div>
 
-      {/* Metrics Banner */}
-      <div className="watch-stats-grid">
-        <div className="watch-stat-card">
-          <div className="watch-stat-icon primary">
-            <Radar size={22} />
-          </div>
-          <div className="watch-stat-info">
-            <span className="watch-stat-label">Watched Sources</span>
-            <span className="watch-stat-value">{stats.total}</span>
-            <span className="watch-stat-sub">
-              {stats.active} active · {stats.paused} paused
-            </span>
-          </div>
-        </div>
-
-        <div className="watch-stat-card">
-          <div className="watch-stat-icon info">
-            <Eye size={22} />
-          </div>
-          <div className="watch-stat-info">
-            <span className="watch-stat-label">Cataloged</span>
-            <span className="watch-stat-value">{stats.cataloged.toLocaleString()}</span>
-            <span className="watch-stat-sub">{stats.pending} pending · {stats.queued} queued</span>
-          </div>
-        </div>
-
-        <div className="watch-stat-card">
-          <div className="watch-stat-icon success">
-            <Download size={22} />
-          </div>
-          <div className="watch-stat-info">
-            <span className="watch-stat-label">Completed</span>
-            <span className="watch-stat-value">{stats.completed.toLocaleString()}</span>
-            <span className="watch-stat-sub">{stats.failed > 0 ? `${stats.failed} failed` : 'Videos delivered to library'}</span>
-          </div>
-        </div>
-
-        <div className="watch-stat-card">
-          <div className={`watch-stat-icon ${stats.errors > 0 ? 'warning' : 'primary'}`}>
-            <Clock size={22} />
-          </div>
-          <div className="watch-stat-info">
-            <span className="watch-stat-label">Scheduler Status</span>
-            <span className="watch-stat-value" style={{ fontSize: 18, paddingTop: 3 }}>
-              {stats.errors > 0 ? `${stats.errors} Attention` : 'Running Healthy'}
-            </span>
-            <span className="watch-stat-sub">Evaluates every 5 mins</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Action Toolbar */}
-      <div className="watch-toolbar">
-        <div className="watch-toolbar-left">
-          <div className="watch-search-input">
-            <Search size={15} />
-            <input
-              type="text"
-              placeholder="Search watches by channel, title, or URL…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </div>
-
-          <div className="segmented">
-            <button
-              type="button"
-              className={statusFilter === 'all' ? 'active' : ''}
-              onClick={() => setStatusFilter('all')}
-            >
-              All ({stats.total})
-            </button>
-            <button
-              type="button"
-              className={statusFilter === 'active' ? 'active' : ''}
-              onClick={() => setStatusFilter('active')}
-            >
-              Active ({stats.active})
-            </button>
-            <button
-              type="button"
-              className={statusFilter === 'paused' ? 'active' : ''}
-              onClick={() => setStatusFilter('paused')}
-            >
-              Paused ({stats.paused})
-            </button>
-            {stats.errors > 0 && (
-              <button
-                type="button"
-                className={statusFilter === 'error' ? 'active' : ''}
-                onClick={() => setStatusFilter('error')}
-              >
-                Errors ({stats.errors})
+      {watches.length > 3 && (
+        <div className="toolbar">
+          <input
+            className="toolbar-search"
+            placeholder="Search by channel, title, or URL"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search watches"
+          />
+          <div className="chip-row">
+            {[
+              { value: 'all', label: `All ${stats.total}` },
+              { value: 'active', label: `Active ${stats.active}` },
+              { value: 'paused', label: `Paused ${stats.paused}` },
+              ...(stats.errors > 0 ? [{ value: 'error', label: `Errors ${stats.errors}` }] : []),
+            ].map((f) => (
+              <button key={f.value} type="button" className={`chip${statusFilter === f.value ? ' active' : ''}`} onClick={() => setStatusFilter(f.value)}>
+                {f.label}
               </button>
-            )}
+            ))}
           </div>
         </div>
+      )}
 
-        <div className="watch-toolbar-right">
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={handleCheckAll}
-            disabled={checkingAll || watches.length === 0}
-            title="Force run check on all active watches"
-          >
-            <RefreshCw size={14} className={checkingAll ? 'spin-icon' : ''} />
-            <span>{checkingAll ? 'Checking all…' : 'Check All Active'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setEditingWatch(null);
-              setModalOpen(true);
-            }}
-          >
-            <Plus size={16} />
-            <span>Add YouTube Watch</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Watches List */}
       {loading ? (
-        <div className="watch-list" aria-busy="true" aria-label="Loading watched sources">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="watch-card watch-card-skeleton">
-              <div className="watch-card-header">
-                <div className="watch-card-main">
-                  <div className="skeleton-block skeleton-avatar" />
-                  <div className="skeleton-title-group">
-                    <div className="skeleton-block skeleton-line" style={{ width: '45%' }} />
-                    <div className="skeleton-block skeleton-line" style={{ width: '70%' }} />
-                  </div>
-                </div>
-              </div>
-              <div className="skeleton-block skeleton-line" style={{ width: '30%' }} />
-            </div>
-          ))}
-        </div>
+        <div className="empty-state"><div className="spinner" /></div>
       ) : filteredWatches.length === 0 ? (
-        <div className="panel empty-state">
-          <Radar size={36} />
-          <span className="empty-title">
-            {watches.length === 0 ? 'No YouTube watches configured' : 'No matching watches found'}
-          </span>
-          <span className="empty-subtitle">
+        <div className="watch-empty">
+          <p className="empty-line">
             {watches.length === 0
-              ? 'Add your favorite YouTube channels or playlists to automatically download new uploads as soon as they drop.'
-              : 'Try clearing your search query or switching your status filter.'}
-          </span>
+              ? 'No watches yet. Add a YouTube channel or playlist and new uploads download on their own.'
+              : 'Nothing matches. Try a different search or filter.'}
+          </p>
           {watches.length === 0 && (
-            <button
-              type="button"
-              style={{ marginTop: 12 }}
-              onClick={() => {
-                setEditingWatch(null);
-                setModalOpen(true);
-              }}
-            >
-              <Plus size={15} /> Add your first watch
-            </button>
+            <button type="button" className="btn-primary" onClick={() => setAddOpen(true)}>Add your first watch</button>
           )}
         </div>
       ) : (
-        <div className="watch-list">
+        <div className="watch-grid">
           {filteredWatches.map((w) => {
             const isChecking = busyId === w.id || w.last_status === 'checking';
             const isPaused = w.enabled === 0;
             const isError = w.last_status === 'error';
             const badge = runBadge(w);
             const openActivity = (tab = 'items') => setActivityWatch({ watch: w, tab });
+            const label = w.name || w.channel_name || 'YouTube watch';
+            const statLine = [
+              <span key="d"><strong>{(w.completed_count || 0).toLocaleString()}</strong> downloaded</span>,
+              <span key="i">{intervalLabel(w.check_interval_mins)}</span>,
+              <span key="c">{isPaused ? 'paused' : isChecking ? 'checking now' : w.last_checked_at ? `checked ${relativeTime(w.last_checked_at)}` : 'not checked yet'}</span>,
+            ];
 
             return (
-              <div key={w.id} className={`watch-card ${isPaused ? 'paused' : ''}`}>
-                <div className="watch-card-header">
-                  <div className="watch-card-main">
-                    <div className="watch-avatar">
-                      {w.thumbnail ? (
-                        <img src={w.thumbnail} alt="" />
-                      ) : (
-                        <Radar size={22} />
-                      )}
+              <article key={w.id} className={`watch-tile${isPaused ? ' paused' : ''}`}>
+                <Art src={w.thumbnail} className="watch-banner" ratio="auto">
+                  <span className="badge badge-dark badge-tr">{isPlaylistUrl(w.url) ? 'PLAYLIST' : 'CHANNEL'}</span>
+                </Art>
+                <div className="watch-tile-body">
+                  <div className="watch-head">
+                    <Art src={w.thumbnail} className="watch-avatar-round" ratio="1" />
+                    <div className="watch-head-text">
+                      <h3 className="watch-name" title={label}>{label}</h3>
                     </div>
-
-                    <div className="watch-title-group">
-                      <div className="watch-title-row">
-                        <h3 className="watch-title">{w.name || w.channel_name || 'YouTube Watch'}</h3>
-                        {w.channel_name && w.name !== w.channel_name && (
-                          <span className="tag">{w.channel_name}</span>
-                        )}
-                        <a
-                          href={w.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="watch-channel-link"
-                          title="Open on YouTube"
-                        >
-                          YouTube <ExternalLink size={11} />
-                        </a>
-                      </div>
-                      <div className="watch-url" title={w.url}>
-                        {w.url}
-                      </div>
-                    </div>
+                    <WatchMenu
+                      watch={w}
+                      plexConfigured={plexConfigured}
+                      onActivity={() => openActivity('items')}
+                      onEdit={() => { setEditingWatch(w); setModalOpen(true); }}
+                      onSyncJellyfin={() => handleSyncJellyfin(w)}
+                      onSyncPlex={() => handleSyncPlex(w)}
+                      onToggleCleanup={() => handleToggleCleanupExempt(w)}
+                      onReset={() => setPendingReset({ id: w.id, label })}
+                      onDelete={() => setPendingDelete({ id: w.id, label })}
+                      busy={jellyfinSyncBusyId === w.id || plexSyncBusyId === w.id}
+                    />
                   </div>
+                  <div className="watch-stats mono-meta">{statLine}</div>
+                  <div className="watch-rules">{rulesLine(w)}</div>
 
-                  <div className="watch-status-group">
-                    {isChecking ? (
-                      <span className="tag" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
-                        <RefreshCw size={11} className="spin-icon" /> Checking…
-                      </span>
-                    ) : isError ? (
-                      <span className="tag status-tag status-failed">
-                        <AlertCircle size={11} /> Error
-                      </span>
-                    ) : isPaused ? (
-                      <span className="tag" style={{ background: 'rgba(245, 158, 11, 0.12)', color: '#f59e0b' }}>
-                        Paused
-                      </span>
-                    ) : (
-                      <span className="tag status-tag status-completed">
-                        <span className="pulse-dot" /> Active
-                      </span>
-                    )}
+                  {badge && !isChecking && badge.kind !== 'neutral' && (
+                    <button type="button" className="watch-run-line" onClick={() => openActivity('runs')}>
+                      Last check: {badge.label}
+                    </button>
+                  )}
+                  {isError && w.last_error && (
+                    <div className="notice notice-danger">
+                      Last check failed: {w.last_error}{' '}
+                      <button type="button" className="btn-link" onClick={() => handleCheckNow(w)} disabled={isChecking}>Retry</button>{' · '}
+                      <button type="button" className="btn-link" onClick={() => openActivity('runs')}>View runs</button>
+                    </div>
+                  )}
+                  {!isError && w.last_error && !isChecking && (
+                    <div className="notice notice-warning">{w.last_error}</div>
+                  )}
+                  {!isError && !isChecking && w.latest_run_status === 'partial' && (
+                    <div className="notice notice-warning">
+                      The last check scanned {w.latest_scanned_count} videos without reaching ones it already knew, so some uploads may have been missed.{' '}
+                      <button type="button" className="btn-link" onClick={() => handleCheckNow(w)}>Check again</button>
+                    </div>
+                  )}
+                  {w.failed_count > 0 && (
+                    <div className="notice notice-danger">
+                      {w.failed_count} download{w.failed_count === 1 ? '' : 's'} failed.{' '}
+                      <button type="button" className="btn-link" onClick={() => openActivity('items')}>Review and retry</button>
+                    </div>
+                  )}
+                  {jellyfinSyncMsg[w.id] && (
+                    <div className={`notice ${jellyfinSyncMsg[w.id].isError ? 'notice-danger' : 'notice-info'}`}>{jellyfinSyncMsg[w.id].text}</div>
+                  )}
 
-                    {/* Quick Pause / Resume Switch */}
-                    <button
-                      type="button"
-                      className={`theme-toggle-switch ${!isPaused ? 'active' : ''}`}
-                      onClick={() => handleToggle(w)}
-                      title={isPaused ? 'Resume watch' : 'Pause watch'}
-                      style={{ height: 26, width: 48, padding: 3 }}
-                    >
-                      <div
-                        className="toggle-thumb"
-                        style={{
-                          width: 20,
-                          height: 20,
-                          transform: !isPaused ? 'translateX(22px)' : 'translateX(0)',
-                        }}
-                      >
-                        {!isPaused ? (
-                          <Play size={10} style={{ color: 'var(--accent)' }} />
-                        ) : (
-                          <Pause size={10} style={{ color: 'var(--text-tertiary)' }} />
-                        )}
-                      </div>
+                  <div className="watch-foot">
+                    <label className="switch-label">
+                      <Switch checked={!isPaused} onChange={() => handleToggle(w)} label={isPaused ? 'Resume watch' : 'Pause watch'} size="lg" />
+                      <span>{isPaused ? 'Paused' : 'Active'}</span>
+                    </label>
+                    <button type="button" className="btn-ghost btn-sm" onClick={() => handleCheckNow(w)} disabled={isChecking}>
+                      {isChecking ? 'Checking…' : 'Check now'}
                     </button>
                   </div>
                 </div>
-
-                {/* Configuration Chips */}
-                <div className="watch-chips-row">
-                  <span className="watch-chip">
-                    <Clock size={11} /> Every {w.check_interval_mins || 30}m
-                  </span>
-
-                  <span className="watch-chip accent">
-                    {w.audio_only ? <Music size={11} /> : <Film size={11} />}
-                    {w.audio_only
-                      ? `Audio Only (${(w.container || 'mp3').toUpperCase()})`
-                      : `${w.quality ? `${w.quality}p` : 'Best Quality'} ${(w.container || 'mp4').toUpperCase()}`}
-                  </span>
-
-                  {w.content_types ? (
-                    <span className="watch-chip" title="Channel tabs this watch follows">
-                      {w.content_types.split(',').map((t) => TAB_LABELS[t] || t).join(' + ')}
-                    </span>
-                  ) : null}
-
-                  {w.subtitles ? (
-                    <span className="watch-chip">
-                      Captions ({w.sub_langs || 'en.*'})
-                    </span>
-                  ) : null}
-
-                  {w.sponsorblock ? (
-                    <span className="watch-chip">
-                      <Sparkles size={11} /> SponsorBlock
-                    </span>
-                  ) : null}
-
-                  {w.embed_thumbnail || w.embed_metadata || w.embed_chapters ? (
-                    <span className="watch-chip">
-                      Embedded Tags
-                    </span>
-                  ) : null}
-
-                  {w.match_title ? (
-                    <span className="watch-chip filter" title={`Must match: ${w.match_title}`}>
-                      <Filter size={11} /> Match: "{w.match_title}"
-                    </span>
-                  ) : null}
-
-                  {w.reject_title ? (
-                    <span className="watch-chip filter" title={`Excludes: ${w.reject_title}`}>
-                      Exclude: "{w.reject_title}"
-                    </span>
-                  ) : null}
-
-                  {w.min_duration ? (
-                    <span className="watch-chip filter">
-                      &gt; {w.min_duration}s
-                    </span>
-                  ) : null}
-
-                  {w.cleanup_exempt ? (
-                    <span className="watch-chip filter" title="This watch's downloads are never auto-deleted">
-                      <Shield size={11} /> Auto-delete exempt
-                    </span>
-                  ) : null}
-
-                  {w.split_live_chunks ? (
-                    <span className="watch-chip" title={`Splits live streams into ${w.live_chunk_mins || 30}m chunks`}>
-                      <Scissors size={11} /> Split: {w.live_chunk_mins || 30}m chunks
-                    </span>
-                  ) : null}
-                </div>
-
-                {/* Warning from a check that finished but left something out (e.g. a capped backfill) */}
-                {!isError && w.last_error && w.last_status !== 'checking' && (
-                  <div className="alert alert-warning watch-card-alert">
-                    <AlertTriangle size={14} />
-                    <span>{w.last_error}</span>
-                  </div>
-                )}
-
-                {/* Error Banner if last check failed */}
-                {isError && w.last_error && (
-                  <div className="alert alert-error watch-card-alert">
-                    <AlertCircle size={14} />
-                    <span>Last check error: {w.last_error}</span>
-                    <span className="watch-card-alert-actions">
-                      <button type="button" className="link-btn" onClick={() => handleCheckNow(w)} disabled={isChecking}>Retry check</button>
-                      <button type="button" className="link-btn" onClick={() => { setEditingWatch(w); setModalOpen(true); }}>Edit filters</button>
-                      <button type="button" className="link-btn" onClick={() => openActivity('runs')}>View runs</button>
-                    </span>
-                  </div>
-                )}
-
-                {!isError && !isChecking && w.latest_run_status === 'partial' && (
-                  <div className="alert alert-warning watch-card-alert">
-                    <AlertTriangle size={14} />
-                    <span>
-                      The last check scanned {w.latest_scanned_count} videos without reaching ones it already knew, so some
-                      uploads may have been missed. Everything it found is kept.
-                    </span>
-                    <span className="watch-card-alert-actions">
-                      <button type="button" className="link-btn" onClick={() => handleCheckNow(w)}>Check again</button>
-                      <button type="button" className="link-btn" onClick={() => openActivity('runs')}>View runs</button>
-                    </span>
-                  </div>
-                )}
-
-                {w.failed_count > 0 && (
-                  <div className="alert alert-error watch-card-alert">
-                    <AlertCircle size={14} />
-                    <span>{w.failed_count} download{w.failed_count === 1 ? '' : 's'} failed.</span>
-                    <span className="watch-card-alert-actions">
-                      <button type="button" className="link-btn" onClick={() => openActivity('items')}>Review and retry</button>
-                    </span>
-                  </div>
-                )}
-
-                {/* Meta Row & Action Buttons */}
-                <div className="watch-meta-row">
-                  <div className="watch-metrics-list">
-                    <button type="button" className="watch-metric-item clickable" onClick={() => openActivity('items')} title="Every video this watch has discovered">
-                      <Eye size={13} className="text-muted" />
-                      <span><strong>{w.cataloged_count || 0}</strong> cataloged</span>
-                    </button>
-                    <button type="button" className="watch-metric-item clickable" onClick={() => openActivity('items')} title="Matching videos waiting for the next check to queue them">
-                      <Hourglass size={13} className="text-muted" />
-                      <span><strong>{w.pending_count || 0}</strong> pending</span>
-                    </button>
-                    <button type="button" className="watch-metric-item clickable" onClick={() => openActivity('items')} title="Queued or downloading now">
-                      <Download size={13} className="text-muted" />
-                      <span><strong>{w.queued_count || 0}</strong> queued</span>
-                    </button>
-                    <button type="button" className="watch-metric-item clickable" onClick={() => openActivity('downloads')} title="Downloaded successfully">
-                      <CheckCircle2 size={13} />
-                      <span><strong>{w.completed_count || 0}</strong> completed</span>
-                    </button>
-                    {w.failed_count > 0 && (
-                      <button type="button" className="watch-metric-item clickable metric-failed" onClick={() => openActivity('items')} title="Failed downloads">
-                        <AlertCircle size={13} />
-                        <span><strong>{w.failed_count}</strong> failed</span>
-                      </button>
-                    )}
-
-                    <div className="watch-metric-item">
-                      <Clock size={13} className="text-muted" />
-                      <span>Last check: {timeAgo(w.last_checked_at)}</span>
-                      {badge && !isChecking && (
-                        <span className={`tag watch-run-badge badge-${badge.kind}`}>
-                          {badge.kind === 'warning' && <AlertTriangle size={10} />}
-                          {badge.label}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="watch-actions">
-                    <button
-                      type="button"
-                      className="btn-secondary btn-sm"
-                      onClick={() => handleCheckNow(w)}
-                      disabled={isChecking}
-                      title="Check for new uploads right now"
-                    >
-                      <RefreshCw size={13} className={isChecking ? 'spin-icon' : ''} />
-                      <span>{isChecking ? 'Checking…' : 'Check now'}</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      className="btn-secondary btn-sm"
-                      onClick={() => openActivity('items')}
-                      title="See discovered videos, checks, and downloads"
-                    >
-                      <Activity size={13} />
-                      <span>Activity</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      className="btn-secondary btn-sm"
-                      onClick={() => handleSyncJellyfin(w)}
-                      disabled={jellyfinSyncBusyId === w.id || !w.completed_count}
-                      title="Create/update a Jellyfin playlist with this watch's downloaded videos"
-                    >
-                      <ListMusic size={13} className={jellyfinSyncBusyId === w.id ? 'spin-icon' : ''} />
-                      <span>{jellyfinSyncBusyId === w.id ? 'Syncing…' : 'Sync to Jellyfin'}</span>
-                    </button>
-
-                    {plexConfigured && (
-                      <button
-                        type="button"
-                        className="btn-secondary btn-sm"
-                        onClick={() => handleSyncPlex(w)}
-                        disabled={plexSyncBusyId === w.id || !w.completed_count}
-                        title="Create/update a Plex playlist with this watch's downloads"
-                      >
-                        <ListMusic size={13} className={plexSyncBusyId === w.id ? 'spin-icon' : ''} />
-                        <span>{plexSyncBusyId === w.id ? 'Syncing…' : 'Sync to Plex'}</span>
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      onClick={() => {
-                        setEditingWatch(w);
-                        setModalOpen(true);
-                      }}
-                      title="Edit watch settings"
-                    >
-                      <Edit3 size={14} />
-                    </button>
-
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      onClick={() => handleToggleCleanupExempt(w)}
-                      title={w.cleanup_exempt ? 'Allow auto-delete for this watch again' : 'Exclude this watch from auto-delete'}
-                    >
-                      {w.cleanup_exempt ? <Shield size={14} /> : <ShieldOff size={14} />}
-                    </button>
-
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      onClick={() => setPendingReset({ id: w.id, label: w.name || w.channel_name || w.url })}
-                      title="Reset watch history (keeps completed downloads, rebaselines on the next check)"
-                    >
-                      <RotateCcw size={14} />
-                    </button>
-
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      onClick={() => setPendingDelete({ id: w.id, label: w.name || w.channel_name || w.url })}
-                      title="Delete watch"
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-                </div>
-
-                {jellyfinSyncMsg[w.id] && (
-                  <div className={`alert ${jellyfinSyncMsg[w.id].isError ? 'alert-error' : 'alert-success'}`} style={{ margin: 0, padding: '8px 12px', fontSize: 12.5 }}>
-                    {jellyfinSyncMsg[w.id].isError ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}
-                    <span>{jellyfinSyncMsg[w.id].text}</span>
-                  </div>
-                )}
-              </div>
+              </article>
             );
           })}
         </div>
       )}
 
-      {/* Add / Edit Watch Modal */}
+      <AddWatchDrawer
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onCreated={(created) => {
+          setWatches((prev) => [created, ...prev.filter((w) => w.id !== created.id)]);
+          toast(`Now watching ${created.name || created.channel_name || 'it'}`);
+        }}
+        onAdvanced={(url) => {
+          setAddOpen(false);
+          setEditingWatch(null);
+          setAdvancedUrl(url);
+          setModalOpen(true);
+        }}
+      />
+
+      {/* Full add / edit form */}
       <WatchModal
         open={modalOpen}
         watch={editingWatch}
+        initialUrl={advancedUrl}
         onClose={() => {
           setModalOpen(false);
           setEditingWatch(null);
+          setAdvancedUrl('');
         }}
         onSave={handleSaveWatch}
       />
@@ -798,22 +409,20 @@ export default function Watches() {
         onChanged={refresh}
       />
 
-      {/* Confirm Delete Dialog */}
       <ConfirmDialog
         open={!!pendingDelete}
-        title="Remove YouTube Watch"
-        message={`Are you sure you want to remove "${pendingDelete?.label}"? Any videos already downloaded will remain in your library.`}
-        confirmLabel="Remove Watch"
+        title="Remove watch"
+        message={`Remove "${pendingDelete?.label}"? Videos already downloaded stay in your library.`}
+        confirmLabel="Remove watch"
         onCancel={() => setPendingDelete(null)}
         onConfirm={confirmDelete}
       />
 
-      {/* Confirm Reset Seen Dialog */}
       <ConfirmDialog
         open={!!pendingReset}
-        title="Reset Watch History"
+        title="Reset watch history"
         message={`Reset history for "${pendingReset?.label}"? Pending, filtered, and failed videos and past checks are forgotten, and the next check records the channel's current videos as a new baseline. Completed downloads are kept and won't be downloaded again; no files are deleted.`}
-        confirmLabel="Reset History"
+        confirmLabel="Reset history"
         danger={false}
         onCancel={() => setPendingReset(null)}
         onConfirm={confirmReset}
@@ -822,3 +431,80 @@ export default function Watches() {
   );
 }
 
+function isPlaylistUrl(url) {
+  return /[?&]list=/.test(url || '') || /\/playlist\b/.test(url || '');
+}
+
+function intervalLabel(mins) {
+  const m = Number(mins) || 30;
+  if (m === 1440) return 'daily';
+  if (m % 60 === 0) return `every ${m / 60} h`;
+  return `every ${m} min`;
+}
+
+// "All videos · 1080p MP4 · delete 3 days after watched" style summary of a watch's rules.
+function rulesLine(w) {
+  const parts = [];
+  if (w.content_types) parts.push(w.content_types.split(',').map((t) => TAB_LABELS[t] || t).join(' + '));
+  else if (!w.match_title && !w.reject_title && !w.min_duration && !w.max_duration) parts.push('All videos');
+  if (w.match_title) parts.push(`title matches “${w.match_title}”`);
+  if (w.reject_title) parts.push(`skips “${w.reject_title}”`);
+  if (w.min_duration) parts.push(`longer than ${Math.round(w.min_duration / 60)} min`);
+  if (w.max_duration) parts.push(`shorter than ${Math.round(w.max_duration / 60)} min`);
+  parts.push(w.audio_only
+    ? `Audio only · ${(w.container || 'mp3').toUpperCase()}`
+    : `${w.quality ? `${w.quality}p` : 'Best'} ${(w.container || 'mp4').toUpperCase()}`);
+  if (w.sponsorblock) parts.push('SponsorBlock');
+  if (w.split_live_chunks) parts.push(`${w.live_chunk_mins || 30}m chunks`);
+  if (w.cleanup_exempt) parts.push('kept forever');
+  return parts.join(' · ');
+}
+
+function WatchMenu({ watch, plexConfigured, onActivity, onEdit, onSyncJellyfin, onSyncPlex, onToggleCleanup, onReset, onDelete, busy }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    function onDoc(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  function run(fn) {
+    setOpen(false);
+    fn();
+  }
+
+  return (
+    <div className="menu" ref={ref}>
+      <button type="button" className="icon-plain" onClick={() => setOpen((v) => !v)} aria-label="More actions" aria-expanded={open}>
+        <MoreHorizontal size={18} />
+      </button>
+      {open && (
+        <div className="menu-pop" role="menu">
+          <button type="button" role="menuitem" onClick={() => run(onActivity)}>Activity</button>
+          <button type="button" role="menuitem" onClick={() => run(onEdit)}>Edit settings</button>
+          <a role="menuitem" href={watch.url} target="_blank" rel="noopener noreferrer" onClick={() => setOpen(false)}>Open on YouTube</a>
+          <button type="button" role="menuitem" disabled={busy || !watch.completed_count} onClick={() => run(onSyncJellyfin)}>Sync to Jellyfin</button>
+          {plexConfigured && (
+            <button type="button" role="menuitem" disabled={busy || !watch.completed_count} onClick={() => run(onSyncPlex)}>Sync to Plex</button>
+          )}
+          <button type="button" role="menuitem" onClick={() => run(onToggleCleanup)}>
+            {watch.cleanup_exempt ? 'Allow auto-delete' : 'Keep forever (skip auto-delete)'}
+          </button>
+          <button type="button" role="menuitem" onClick={() => run(onReset)}>Reset history</button>
+          <button type="button" role="menuitem" className="danger" onClick={() => run(onDelete)}>Remove watch</button>
+        </div>
+      )}
+    </div>
+  );
+}
