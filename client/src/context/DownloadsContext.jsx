@@ -54,6 +54,15 @@ export function DownloadsProvider({ children, isAuthenticated }) {
   const socketRef = useRef(null);
   const watchListenersRef = useRef(new Set());
 
+  const analyzeListenersRef = useRef(new Set());
+
+  const subscribeAnalyzeProgress = useCallback((listener) => {
+    analyzeListenersRef.current.add(listener);
+    return () => {
+      analyzeListenersRef.current.delete(listener);
+    };
+  }, []);
+
   const subscribeWatchUpdates = useCallback((listener) => {
     watchListenersRef.current.add(listener);
     return () => {
@@ -94,6 +103,13 @@ export function DownloadsProvider({ children, isAuthenticated }) {
     socket.on('job:update', (job) => {
       if (!job || !job.id) return;
       setJobs((prev) => applyUpdate(prev, job));
+    });
+    socket.on('analyze:progress', (event) => {
+      for (const fn of analyzeListenersRef.current) {
+        try {
+          fn(event);
+        } catch (_) {}
+      }
     });
     socket.on('job:removed', ({ id } = {}) => {
       if (id) setJobs((prev) => prev.filter((j) => j.id !== id));
@@ -161,6 +177,7 @@ export function DownloadsProvider({ children, isAuthenticated }) {
     isDownloading: downloadingJobs.length > 0,
     refreshJobs: () => api.listDownloads().then((list) => setJobs((prev) => mergeList(prev, list))).catch(() => {}),
     subscribeWatchUpdates,
+    subscribeAnalyzeProgress,
   };
 
   return (

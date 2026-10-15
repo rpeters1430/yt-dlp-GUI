@@ -30,7 +30,7 @@ export const api = {
   logout: () => request('/auth/logout', { method: 'POST' }),
   changePassword: (currentPassword, newPassword) => request('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
 
-  getInfo: (url) => request('/downloads/info', { method: 'POST', body: JSON.stringify({ url }) }),
+  getInfo: (url, analyzeId) => request('/downloads/info', { method: 'POST', body: JSON.stringify({ url, analyzeId }) }),
   enqueue: (payload) => request('/downloads', { method: 'POST', body: JSON.stringify(payload) }),
   listDownloads: () => request('/downloads'),
   searchDownloads: ({ status = 'all', q = '', limit = 50, offset = 0, category = 'all' } = {}) =>
