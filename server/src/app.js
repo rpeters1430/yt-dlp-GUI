@@ -76,6 +76,7 @@ const sitesRoutes = require('./routes/sites');
 const libraryRoutes = require('./routes/library');
 const notificationsRoutes = require('./routes/notifications');
 const lidarrRoutes = require('./routes/lidarr');
+const linkGrabberRoutes = require('./routes/linkgrabber');
 
 const SqliteStore = SqliteStoreFactory(session);
 
@@ -148,6 +149,7 @@ function createApp({ watchRepository, watchService, checkAllWatches }) {
   app.use('/api/sites', sitesRoutes);
   app.use('/api/library', libraryRoutes);
   app.use('/api/notifications', notificationsRoutes);
+  app.use('/api/linkgrabber', linkGrabberRoutes);
   app.use('/api/lidarr', lidarrRoutes);
   app.use('/api/torznab', lidarrRoutes);
   app.use('/api/v2', lidarrRoutes.qbitRouter || lidarrRoutes);

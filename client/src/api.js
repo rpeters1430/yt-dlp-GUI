@@ -49,6 +49,11 @@ export const api = {
   checkDuplicates: (items) => request('/downloads/check-duplicates', { method: 'POST', body: JSON.stringify({ items }) }),
   toggleDownloadProtect: (id, protectedFlag) => request(`/downloads/${id}/protect`, { method: 'PATCH', body: JSON.stringify({ protected: protectedFlag }) }),
 
+  crawlLinks: (payload) => request('/linkgrabber/crawl', { method: 'POST', body: JSON.stringify(payload) }),
+  sendLinks: (payload) => request('/linkgrabber/send', { method: 'POST', body: JSON.stringify(payload) }),
+  getLinkGrabberSettings: () => request('/linkgrabber/settings'),
+  updateLinkGrabberSettings: (payload) => request('/linkgrabber/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+
   listWatches: () => request('/watches'),
   inspectWatch: (url) => request('/watches/inspect', { method: 'POST', body: JSON.stringify({ url }) }),
   addWatch: (payload) => request('/watches', { method: 'POST', body: JSON.stringify(payload) }),

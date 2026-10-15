@@ -16,6 +16,7 @@ const Settings = lazy(() => import('./pages/Settings.jsx'));
 const Twitch = lazy(() => import('./pages/Twitch.jsx'));
 const Music = lazy(() => import('./pages/Music.jsx'));
 const SupportedSites = lazy(() => import('./pages/SupportedSites.jsx'));
+const LinkGrabber = lazy(() => import('./pages/LinkGrabber.jsx'));
 
 function isEditable(el) {
   if (!el) return false;
@@ -55,6 +56,7 @@ function Shell({ user }) {
                 <Route path="/library" element={<Library />} />
                 <Route path="/history" element={<History />} />
                 <Route path="/watches" element={<Watches />} />
+                <Route path="/links" element={<LinkGrabber />} />
                 <Route path="/sites" element={<SupportedSites />} />
                 <Route path="/supported-sites" element={<SupportedSites />} />
                 <Route path="/settings" element={<Settings username={user.username} onLogout={user.onLogout} />} />

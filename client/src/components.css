@@ -1280,3 +1280,20 @@ button.more-by-item:hover:not(:disabled) { background: none; filter: brightness(
   .album-title { font-size: clamp(28px, 8vw, 40px); }
   .artist-hero-name { font-size: clamp(26px, 7vw, 36px); }
 }
+
+/* Link grabber */
+.lg-pages { max-width: 140px; }
+.lg-filters { margin: 4px 0 12px; }
+.lg-toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.lg-toolbar input[type="search"] { flex: 1 1 220px; min-width: 0; }
+.lg-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-lg, 10px); max-height: 60vh; overflow-y: auto; }
+.lg-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-top: 1px solid var(--border); }
+.lg-row:first-child { border-top: 0; }
+.lg-row-head { position: sticky; top: 0; background: var(--bg-elevated); z-index: 1; }
+.lg-row .checkbox-label { min-width: 0; flex: 1 1 auto; }
+.lg-url { overflow-wrap: anywhere; font-size: 12.5px; }
+.lg-meta { flex: 0 0 auto; white-space: nowrap; }
+.lg-send { position: sticky; bottom: 0; background: var(--bg-elevated); padding: 12px 0 0; }
+@media (max-width: 640px) {
+  .lg-row { flex-direction: column; align-items: flex-start; gap: 2px; }
+}
