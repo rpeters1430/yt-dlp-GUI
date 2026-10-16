@@ -304,3 +304,46 @@ test('history records and reports stats', () => {
   assert.equal(stats.totalLinks, 2);
   assert.equal(stats.totalThreads, 1);
 });
+
+test('detectMaxPage ignores page links that point at other threads', () => {
+  const html = `
+    <a class="pageNav-page" href="/threads/name.123/page-5">5</a>
+    <a href="/threads/name.123/page-6">Next</a>
+    <div class="bbWrapper"><a href="https://forum.example.com/threads/other.9/page-400">old thread</a></div>
+  `;
+  assert.equal(detectMaxPage(html, 1, 'https://forum.example.com/threads/name.123/'), 6);
+});
+
+test('crawl in last-N mode only keeps links from the requested pages', async () => {
+  const thread = 'https://forum.example.com/threads/t.1/';
+  const page = (n) => `<a class="pageNav-page" href="/threads/t.1/page-4">4</a>
+    <a href="https://files.example.net/f/${n}">f${n}</a>
+    <a href="https://forum.example.com/threads/other.9/page-400">elsewhere</a>`;
+  const { fetchImpl, calls } = fakeSite({
+    [thread]: page(1),
+    [`${thread}page-3`]: page(3),
+    [`${thread}page-4`]: page(4),
+  });
+  const result = await crawl({ url: thread, mode: 'last', lastN: 2, ignoreHistory: true, fetchImpl, assertUrl: async () => {}, delayMs: 0 });
+  assert.equal(result.error, null);
+  assert.equal(result.maxPage, 4);
+  assert.deepEqual(result.pages.map((p) => p.page), [3, 4]);
+  assert.deepEqual(result.links.map((l) => l.url).sort(), ['https://files.example.net/f/3', 'https://files.example.net/f/4']);
+  assert.equal(result.threadUrl, thread);
+  assert.equal(calls.length, 3);
+});
+
+test('sendToJDownloader records the thread URL in history, not the JDownloader address', async () => {
+  clearHistory();
+  const fetchImpl = async () => new Response('success', { status: 200 });
+  await sendToJDownloader(['https://a.com/x'], {
+    baseUrl: 'http://127.0.0.1:9666',
+    packageName: 'Thread',
+    threadUrl: 'https://forum.example.com/threads/t.1/',
+    fetchImpl,
+  });
+  const db = require('../db');
+  const row = db.prepare('SELECT thread_url FROM linkgrabber_history WHERE url = ?').get('https://a.com/x');
+  assert.equal(row.thread_url, 'https://forum.example.com/threads/t.1/');
+  clearHistory();
+});

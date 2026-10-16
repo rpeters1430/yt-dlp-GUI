@@ -210,8 +210,8 @@ export default function LinkGrabber() {
 
   // Auto-detect thread mode when a XenForo thread URL is typed/pasted
   useEffect(() => {
-    if (/\/threads\/[^/]+/.test(url) && mode === 'follow') {
-      setMode('all');
+    if (/\/threads\/[^/]+/.test(url)) {
+      setMode((m) => (m === 'follow' ? 'all' : m));
     }
   }, [url]);
 
@@ -304,6 +304,7 @@ export default function LinkGrabber() {
         passwords: result?.passwords || [],
         packagePerPage,
         urlMetadata: result?.links || [],
+        threadUrl: result?.threadUrl || '',
       });
       const failed = res.failed || [];
       showToast(`Sent ${res.sent} link${res.sent === 1 ? '' : 's'}${failed.length ? ` · ${failed.length} failed` : ''}`, { error: failed.length > 0 && res.sent === 0 });

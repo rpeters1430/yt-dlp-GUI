@@ -138,7 +138,7 @@ function extractPasswords(text) {
   const found = new Set();
   for (const pat of PASSWORD_PATTERNS) {
     for (const m of text.matchAll(pat)) {
-      const clean = m[1].replace(/^[.,;:"'!?\[\]()]+|[.,;:"'!?\[\]()]+$/g, '');
+      const clean = m[1].replace(/^[.,;:"'!?[\]()]+|[.,;:"'!?[\]()]+$/g, '');
       if (clean && clean.length >= 2 && !IGNORE_PASSWORDS.has(clean.toLowerCase()) && !clean.startsWith('http')) {
         found.add(clean);
       }
@@ -211,13 +211,23 @@ function getThreadPageUrl(baseUrl, pageNum) {
   return `${base}page-${pageNum}`;
 }
 
-function detectMaxPage(html, currentPage = 1) {
+// Only /page-N links under `baseUrl` count, so a post linking another thread's page 400
+// doesn't inflate this thread's page count.
+function detectMaxPage(html, currentPage = 1, baseUrl = '') {
   const pages = [currentPage];
   for (const m of html.matchAll(/class="[^"]*(?:pageNav-page|pageNav-main)[^"]*"[^>]*>(\d+)</gi)) {
     const n = parseInt(m[1], 10);
     if (!isNaN(n) && n > 0 && n < 100000) pages.push(n);
   }
-  for (const m of html.matchAll(/\/page-(\d+)["'/?#]/gi)) {
+  let threadPath = '';
+  try {
+    threadPath = new URL(baseUrl).pathname.replace(/\/+$/, '');
+  } catch {
+    // No base URL: the pageNav markup above is all there is to go on
+  }
+  if (!threadPath) return Math.max(...pages);
+  const escaped = threadPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const m of html.matchAll(new RegExp(`${escaped}/page-(\\d+)["'/?#]`, 'gi'))) {
     const n = parseInt(m[1], 10);
     if (!isNaN(n) && n > 0 && n < 100000) pages.push(n);
   }
@@ -396,9 +406,7 @@ async function crawl({
   visited.add(startUrl);
 
   const firstTitle = pageTitle(firstPage.html);
-  pages.push({ url: firstPage.url, title: firstTitle, page: threadInfo.page });
-
-  const detectedMaxPage = detectMaxPage(firstPage.html, threadInfo.page);
+  const detectedMaxPage = detectMaxPage(firstPage.html, threadInfo.page, threadInfo.isThread ? threadInfo.baseUrl : '');
 
   function processPageLinks(html, pageUrl, pageNumber) {
     const extracted = extractLinks(html, pageUrl, { skipQuotes, skipBots, decodeBase64 });
@@ -420,8 +428,6 @@ async function crawl({
     }
   }
 
-  processPageLinks(firstPage.html, firstPage.url, threadInfo.page);
-
   // 2. Fetch remaining pages based on mode
   if (threadInfo.isThread && ['all', 'last', 'range'].includes(mode)) {
     let targetPages = [];
@@ -438,6 +444,12 @@ async function crawl({
       for (let p = s; p <= Math.min(e, s + MAX_PAGES_LIMIT - 1); p++) targetPages.push(p);
     }
 
+    // The first page was only fetched to find the page count; its links count only when it
+    // is one of the requested pages.
+    if (targetPages.length === 0 || targetPages.includes(threadInfo.page)) {
+      pages.push({ url: firstPage.url, title: firstTitle, page: threadInfo.page });
+      processPageLinks(firstPage.html, firstPage.url, threadInfo.page);
+    }
     targetPages = targetPages.filter((p) => p !== threadInfo.page);
 
     for (const pNum of targetPages) {
@@ -455,7 +467,12 @@ async function crawl({
         break;
       }
     }
-  } else if (mode !== 'single') {
+  } else {
+    pages.push({ url: firstPage.url, title: firstTitle, page: threadInfo.page });
+    processPageLinks(firstPage.html, firstPage.url, threadInfo.page);
+  }
+
+  if (!(threadInfo.isThread && ['all', 'last', 'range'].includes(mode)) && mode !== 'single') {
     let candidate = findNextPage(firstPage.html, firstPage.url);
     let next = candidate && hostOf(candidate) === siteHost ? candidate : null;
 
@@ -510,6 +527,7 @@ async function crawl({
     newCount,
     historyCount,
     maxPage: detectedMaxPage,
+    threadUrl: threadInfo.isThread ? threadInfo.baseUrl : firstPage.url,
     threadTitle: cleanThreadTitle(firstTitle),
     truncated,
     error,
@@ -558,7 +576,7 @@ function clearHistory() {
     db.exec('DELETE FROM linkgrabber_history');
     return { ok: true };
   } catch (err) {
-    throw new Error(`Failed to clear history: ${err.message}`);
+    throw new Error(`Failed to clear history: ${err.message}`, { cause: err });
   }
 }
 
@@ -570,7 +588,7 @@ function cleanUrls(urls) {
 }
 
 // JDownloader's Click'n'Load listener (port 9666).
-async function sendToJDownloader(urls, { baseUrl, packageName, passwords, packagePerPage, urlMetadata, fetchImpl = fetch }) {
+async function sendToJDownloader(urls, { baseUrl, packageName, passwords, packagePerPage, urlMetadata, threadUrl = '', fetchImpl = fetch }) {
   if (!baseUrl) throw new Error('JDownloader address is not configured');
   let parsed;
   try {
@@ -618,7 +636,7 @@ async function sendToJDownloader(urls, { baseUrl, packageName, passwords, packag
       totalSent += pageUrls.length;
       if (byPage.size > 1) await delay(250);
     }
-    recordCrawledLinks(urls, packageName, baseUrl);
+    recordCrawledLinks(urls, packageName, threadUrl);
     return { sent: totalSent };
   }
 
@@ -634,7 +652,7 @@ async function sendToJDownloader(urls, { baseUrl, packageName, passwords, packag
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`JDownloader responded with HTTP ${res.status}`);
-  recordCrawledLinks(urls, packageName, baseUrl);
+  recordCrawledLinks(urls, packageName, threadUrl);
   return { sent: urls.length };
 }
 

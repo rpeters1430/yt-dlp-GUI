@@ -11,5 +11,9 @@ config/
 __pycache__/
 *.pyc
 cookies.txt
+cookies.json
+*_cookies.json
+*_cookies.txt
+crawler/threads.txt
 links_*.txt
-*.png
+crawler/*.png
