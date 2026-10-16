@@ -6,7 +6,7 @@
 const fs = require('fs');
 const db = require('../db');
 const ytdlp = require('./ytdlp');
-const { COOKIES_FILE } = require('./ytdlpPaths');
+const { COOKIES_FILE, CRAWLER_COOKIES_FILE } = require('./ytdlpPaths');
 
 const DEFAULT_MAX_PAGES = 5;
 const MAX_PAGES_LIMIT = 25;
@@ -48,6 +48,60 @@ function parseNetscapeCookies(text) {
   return cookies;
 }
 
+// Parses cookies from Netscape format, JSON array (Cookie-Editor format), or key=value headers.
+function parseCookiesContent(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return [];
+
+  // Try JSON (e.g. Cookie-Editor export)
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const list = Array.isArray(parsed) ? parsed : Object.entries(parsed).map(([k, v]) => ({ name: k, value: String(v) }));
+      const cookies = [];
+      for (const item of list) {
+        if (!item || !item.name) continue;
+        cookies.push({
+          domain: (item.domain || '').toLowerCase().replace(/^\./, ''),
+          path: item.path || '/',
+          secure: Boolean(item.secure),
+          expiry: Number(item.expirationDate || item.expiry || 0),
+          name: item.name,
+          value: String(item.value ?? ''),
+        });
+      }
+      if (cookies.length > 0) return cookies;
+    } catch {
+      // Fall through
+    }
+  }
+
+  // Netscape cookies.txt
+  const netscape = parseNetscapeCookies(trimmed);
+  if (netscape.length > 0) return netscape;
+
+  // Raw header fallback: "name=val; name2=val2"
+  if (trimmed.includes('=')) {
+    const cookies = [];
+    for (const part of trimmed.split(';')) {
+      const p = part.trim();
+      if (!p || !p.includes('=')) continue;
+      const [k, ...v] = p.split('=');
+      cookies.push({
+        domain: '',
+        path: '/',
+        secure: false,
+        expiry: 0,
+        name: k.trim(),
+        value: v.join('=').trim(),
+      });
+    }
+    if (cookies.length > 0) return cookies;
+  }
+
+  return [];
+}
+
 // The Cookie header a browser would send to `url`: domain, path, secure and expiry all have
 // to match, so a cookie is never leaked to a host it wasn't set for (including redirects).
 function cookieHeaderFor(cookies, url, now = Date.now()) {
@@ -57,8 +111,8 @@ function cookieHeaderFor(cookies, url, now = Date.now()) {
   const nowSec = Math.floor(now / 1000);
   const pairs = [];
   for (const c of cookies) {
-    const domain = c.domain.replace(/^\./, '');
-    if (!domain || (host !== domain && !host.endsWith(`.${domain}`))) continue;
+    const domain = (c.domain || '').replace(/^\./, '');
+    if (domain && host !== domain && !host.endsWith(`.${domain}`)) continue;
     if (c.secure && parsed.protocol !== 'https:') continue;
     if (c.expiry && c.expiry < nowSec) continue;
     const cookiePath = c.path || '/';
@@ -68,12 +122,72 @@ function cookieHeaderFor(cookies, url, now = Date.now()) {
   return pairs.join('; ');
 }
 
+function getCrawlerCookiesStatus() {
+  if (fs.existsSync(CRAWLER_COOKIES_FILE)) {
+    try {
+      const content = fs.readFileSync(CRAWLER_COOKIES_FILE, 'utf8');
+      const cookies = parseCookiesContent(content);
+      const domains = [...new Set(cookies.map((c) => c.domain).filter(Boolean))];
+      return {
+        configured: true,
+        cookieCount: cookies.length,
+        domains,
+        hasFile: true,
+      };
+    } catch {
+      return { configured: false, cookieCount: 0, domains: [] };
+    }
+  }
+  // Check if global COOKIES_FILE exists as fallback
+  if (fs.existsSync(COOKIES_FILE)) {
+    try {
+      const content = fs.readFileSync(COOKIES_FILE, 'utf8');
+      const cookies = parseCookiesContent(content);
+      const domains = [...new Set(cookies.map((c) => c.domain).filter(Boolean))];
+      return {
+        configured: false,
+        fallbackAvailable: true,
+        cookieCount: cookies.length,
+        domains,
+      };
+    } catch {
+      // ignore
+    }
+  }
+  return { configured: false, cookieCount: 0, domains: [] };
+}
+
+function saveCrawlerCookies(content) {
+  if (!content || typeof content !== 'string' || !content.trim()) {
+    throw new Error('Cookie content is required');
+  }
+  const cookies = parseCookiesContent(content);
+  if (cookies.length === 0) {
+    throw new Error('No valid cookies found. Please paste Netscape cookies.txt or JSON cookie export.');
+  }
+  fs.writeFileSync(CRAWLER_COOKIES_FILE, content.trim(), { mode: 0o600 });
+  const domains = [...new Set(cookies.map((c) => c.domain).filter(Boolean))];
+  return { ok: true, cookieCount: cookies.length, domains };
+}
+
+function deleteCrawlerCookies() {
+  if (fs.existsSync(CRAWLER_COOKIES_FILE)) {
+    fs.unlinkSync(CRAWLER_COOKIES_FILE);
+  }
+  return { ok: true };
+}
+
 function loadCookies({ cookiesText, useSavedCookies }) {
   const cookies = [];
-  if (useSavedCookies && fs.existsSync(COOKIES_FILE)) {
-    cookies.push(...parseNetscapeCookies(fs.readFileSync(COOKIES_FILE, 'utf8')));
+  // 1. Dedicated crawler cookies file
+  if (fs.existsSync(CRAWLER_COOKIES_FILE)) {
+    cookies.push(...parseCookiesContent(fs.readFileSync(CRAWLER_COOKIES_FILE, 'utf8')));
+  } else if (useSavedCookies && fs.existsSync(COOKIES_FILE)) {
+    // 2. Global YouTube cookies fallback
+    cookies.push(...parseCookiesContent(fs.readFileSync(COOKIES_FILE, 'utf8')));
   }
-  if (cookiesText) cookies.push(...parseNetscapeCookies(cookiesText));
+  // 3. User supplied custom cookies in the request
+  if (cookiesText) cookies.push(...parseCookiesContent(cookiesText));
   return cookies;
 }
 
@@ -750,7 +864,11 @@ module.exports = {
   DEFAULT_MAX_PAGES,
   MAX_PAGES_LIMIT,
   parseNetscapeCookies,
+  parseCookiesContent,
   cookieHeaderFor,
+  getCrawlerCookiesStatus,
+  saveCrawlerCookies,
+  deleteCrawlerCookies,
   extractLinks,
   extractPasswords,
   extractBase64Links,

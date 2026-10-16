@@ -56,6 +56,9 @@ export const api = {
   testJDownloader: () => request('/linkgrabber/test-jd', { method: 'POST', body: '{}' }),
   getLinkGrabberHistoryStats: () => request('/linkgrabber/history/stats'),
   clearLinkGrabberHistory: () => request('/linkgrabber/history', { method: 'DELETE' }),
+  getLinkGrabberCookies: () => request('/linkgrabber/cookies'),
+  saveLinkGrabberCookies: (content) => request('/linkgrabber/cookies', { method: 'PUT', body: JSON.stringify({ content }) }),
+  deleteLinkGrabberCookies: () => request('/linkgrabber/cookies', { method: 'DELETE' }),
 
   listWatches: () => request('/watches'),
   inspectWatch: (url) => request('/watches/inspect', { method: 'POST', body: JSON.stringify({ url }) }),

@@ -30,6 +30,7 @@ export default function DownloadsSettings() {
   const [chunkMins, setChunkMins] = useState(null);
   const [limitRate, setLimitRate] = useState('');
   const [sleepInterval, setSleepInterval] = useState(0);
+  const [impersonateTarget, setImpersonateTarget] = useState('');
   const [autoAnalyze, setAutoAnalyze] = useState(getAutoAnalyzeOnPaste);
 
   useEffect(() => {
@@ -38,6 +39,7 @@ export default function DownloadsSettings() {
       setChunkMins(parseInt(s.default_live_chunk_mins, 10) || 0);
       setLimitRate(s.download_limit_rate || '');
       setSleepInterval(parseInt(s.download_sleep_interval, 10) || 0);
+      setImpersonateTarget(s.impersonate_target || '');
     }).catch(() => {});
   }, []);
 
@@ -78,6 +80,16 @@ export default function DownloadsSettings() {
     const prev = sleepInterval;
     setSleepInterval(value);
     save({ download_sleep_interval: String(value) }, value ? `Added ${value}–${value * 2}s delay between downloads` : 'Download sleep delay disabled', () => setSleepInterval(prev));
+  }
+
+  function changeImpersonate(value) {
+    const prev = impersonateTarget;
+    setImpersonateTarget(value);
+    save(
+      { impersonate_target: value },
+      value ? `Browser TLS impersonation enabled (${value})` : 'Browser TLS impersonation disabled',
+      () => setImpersonateTarget(prev)
+    );
   }
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -154,6 +166,32 @@ export default function DownloadsSettings() {
           checked={autoAnalyze}
           onChange={(v) => { setAutoAnalyze(v); setAutoAnalyzeOnPaste(v); }}
         />
+      </SettingRow>
+      <SettingRow
+        label="Browser TLS impersonation"
+        description="Impersonate real browser TLS handshakes via curl_cffi (--impersonate) to bypass bot checks and Cloudflare on YouTube and other sites"
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Switch
+            size="lg"
+            label="Enable browser impersonation"
+            checked={!!impersonateTarget}
+            onChange={(checked) => changeImpersonate(checked ? 'chrome' : '')}
+          />
+          {impersonateTarget && (
+            <select
+              className="value-chip"
+              value={impersonateTarget}
+              onChange={(e) => changeImpersonate(e.target.value)}
+              aria-label="Browser impersonation target"
+            >
+              <option value="chrome">Chrome (recommended)</option>
+              <option value="safari">Safari</option>
+              <option value="firefox">Firefox</option>
+              <option value="edge">Edge</option>
+            </select>
+          )}
+        </div>
       </SettingRow>
       <SettingRow
         label="One-click browser bookmarklet & Android Share"

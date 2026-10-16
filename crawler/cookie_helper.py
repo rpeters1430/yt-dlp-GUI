@@ -74,8 +74,16 @@ def load_cookies(source: str = "cookies.json") -> Dict[str, str]:
 
 
 def find_default_cookie_file() -> Dict[str, str]:
-    """Auto-detect common cookie files in current directory."""
-    for filename in ["cookies.json", "cookies.txt", "simpcity_cookies.json", "simpcity_cookies.txt"]:
+    """Auto-detect common cookie files in current directory or web app config."""
+    candidates = [
+        "cookies.json",
+        "cookies.txt",
+        "simpcity_cookies.json",
+        "simpcity_cookies.txt",
+        os.path.join(os.path.dirname(__file__), "..", "config", "crawler_cookies.txt"),
+        os.path.join(os.path.dirname(__file__), "..", "config", "cookies.txt"),
+    ]
+    for filename in candidates:
         if os.path.isfile(filename):
             cookies = load_cookies(filename)
             if cookies:

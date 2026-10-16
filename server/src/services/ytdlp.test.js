@@ -602,3 +602,31 @@ test('parseStageLine reads yt-dlp status lines and drops the video id', () => {
   assert.equal(parseStageLine('{"id": "x"}'), null);
   assert.equal(parseStageLine(''), null);
 });
+
+test('impersonateArgs and commonArgs support browser TLS impersonation setting', () => {
+  const db = require('../db');
+  const { commonArgs, impersonateArgs } = require('./ytdlp');
+
+  // When disabled
+  db.prepare("INSERT INTO settings (key, value) VALUES ('impersonate_target', '') ON CONFLICT(key) DO UPDATE SET value = ''").run();
+  assert.deepEqual(impersonateArgs(), []);
+  assert.equal(commonArgs().includes('--impersonate'), false);
+
+  // When enabled via settings
+  db.prepare("INSERT INTO settings (key, value) VALUES ('impersonate_target', 'chrome') ON CONFLICT(key) DO UPDATE SET value = 'chrome'").run();
+  assert.deepEqual(impersonateArgs(), ['--impersonate', 'chrome']);
+  const cArgs = commonArgs();
+  const idx = cArgs.indexOf('--impersonate');
+  assert.notEqual(idx, -1);
+  assert.equal(cArgs[idx + 1], 'chrome');
+
+  // Override via options
+  const overridden = commonArgs({ impersonate: 'firefox' });
+  const oIdx = overridden.indexOf('--impersonate');
+  assert.notEqual(oIdx, -1);
+  assert.equal(overridden[oIdx + 1], 'firefox');
+
+  // Cleanup
+  db.prepare("INSERT INTO settings (key, value) VALUES ('impersonate_target', '') ON CONFLICT(key) DO UPDATE SET value = ''").run();
+});
+

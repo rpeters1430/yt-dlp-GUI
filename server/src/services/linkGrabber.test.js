@@ -2,7 +2,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   parseNetscapeCookies,
+  parseCookiesContent,
   cookieHeaderFor,
+  getCrawlerCookiesStatus,
+  saveCrawlerCookies,
+  deleteCrawlerCookies,
   extractLinks,
   extractPasswords,
   extractBase64Links,
@@ -396,4 +400,50 @@ test('crawl reports passwords per page', async () => {
   });
   const result = await crawl({ url: thread, mode: 'all', ignoreHistory: true, fetchImpl, assertUrl: async () => {}, delayMs: 0 });
   assert.deepEqual(result.pagePasswords, { 1: ['alpha'], 2: ['beta'] });
+});
+
+test('parseCookiesContent handles JSON, Netscape and header formats', () => {
+  const jsonCookies = JSON.stringify([
+    { name: 'xf_user', value: '123_abc', domain: '.simpcity.cr', path: '/' },
+    { name: 'xf_session', value: 'xyz', domain: 'simpcity.cr' },
+  ]);
+  const parsedJson = parseCookiesContent(jsonCookies);
+  assert.equal(parsedJson.length, 2);
+  assert.equal(parsedJson[0].name, 'xf_user');
+  assert.equal(parsedJson[0].value, '123_abc');
+  assert.equal(parsedJson[0].domain, 'simpcity.cr');
+
+  const netscapeCookies = '.example.com\tTRUE\t/\tTRUE\t0\tsess\t123';
+  const parsedNetscape = parseCookiesContent(netscapeCookies);
+  assert.equal(parsedNetscape.length, 1);
+  assert.equal(parsedNetscape[0].name, 'sess');
+
+  const headerCookies = 'foo=bar; baz=qux';
+  const parsedHeader = parseCookiesContent(headerCookies);
+  assert.equal(parsedHeader.length, 2);
+  assert.equal(parsedHeader[0].name, 'foo');
+  assert.equal(parsedHeader[0].value, 'bar');
+});
+
+test('crawler cookie persistence: save, get status, and delete', () => {
+  deleteCrawlerCookies();
+  const initStatus = getCrawlerCookiesStatus();
+  assert.equal(initStatus.configured, false);
+
+  const sampleCookie = JSON.stringify([
+    { name: 'xf_user', value: 'test_token', domain: 'simpcity.cr' },
+  ]);
+  const saveRes = saveCrawlerCookies(sampleCookie);
+  assert.equal(saveRes.ok, true);
+  assert.equal(saveRes.cookieCount, 1);
+  assert.deepEqual(saveRes.domains, ['simpcity.cr']);
+
+  const afterStatus = getCrawlerCookiesStatus();
+  assert.equal(afterStatus.configured, true);
+  assert.equal(afterStatus.cookieCount, 1);
+  assert.deepEqual(afterStatus.domains, ['simpcity.cr']);
+
+  const delRes = deleteCrawlerCookies();
+  assert.equal(delRes.ok, true);
+  assert.equal(getCrawlerCookiesStatus().configured, false);
 });

@@ -90,6 +90,27 @@ router.delete('/history', (req, res) => {
   }
 });
 
+router.get('/cookies', (req, res) => {
+  res.json(linkGrabber.getCrawlerCookiesStatus());
+});
+
+router.put('/cookies', (req, res) => {
+  try {
+    const { content } = req.body || {};
+    res.json(linkGrabber.saveCrawlerCookies(content));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.delete('/cookies', (req, res) => {
+  try {
+    res.json(linkGrabber.deleteCrawlerCookies());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/crawl', async (req, res) => {
   const {
     url,
