@@ -420,12 +420,22 @@ test('MP4 video downloads prefer AAC audio so the merged file stays in sync', ()
   assert.equal(args[args.indexOf('-f') + 1], 'bestvideo*+bestaudio[ext=m4a]/bestvideo*+bestaudio/best');
 });
 
-test('cutting the file (SponsorBlock, sections) forces keyframes so audio stays in sync', () => {
+test('cutting the file only forces keyframes (a full re-encode) when FORCE_KEYFRAMES_AT_CUTS is set', () => {
   const { buildDownloadArgs } = require('./ytdlp');
   const url = 'https://www.youtube.com/watch?v=abc123';
-  assert.ok(buildDownloadArgs(url, { sponsorblockRemove: 'sponsor' }).includes('--force-keyframes-at-cuts'));
-  assert.ok(buildDownloadArgs(url, { downloadSections: '*0-60' }).includes('--force-keyframes-at-cuts'));
-  assert.equal(buildDownloadArgs(url, {}).includes('--force-keyframes-at-cuts'), false);
+  const saved = process.env.FORCE_KEYFRAMES_AT_CUTS;
+  try {
+    delete process.env.FORCE_KEYFRAMES_AT_CUTS;
+    assert.equal(buildDownloadArgs(url, { sponsorblockRemove: 'sponsor' }).includes('--force-keyframes-at-cuts'), false);
+    assert.equal(buildDownloadArgs(url, { downloadSections: '*0-60' }).includes('--force-keyframes-at-cuts'), false);
+    process.env.FORCE_KEYFRAMES_AT_CUTS = '1';
+    assert.ok(buildDownloadArgs(url, { sponsorblockRemove: 'sponsor' }).includes('--force-keyframes-at-cuts'));
+    assert.ok(buildDownloadArgs(url, { downloadSections: '*0-60' }).includes('--force-keyframes-at-cuts'));
+    assert.equal(buildDownloadArgs(url, {}).includes('--force-keyframes-at-cuts'), false);
+  } finally {
+    if (saved === undefined) delete process.env.FORCE_KEYFRAMES_AT_CUTS;
+    else process.env.FORCE_KEYFRAMES_AT_CUTS = saved;
+  }
 });
 
 test('assertPublicUrl blocks loopback and private hosts in every spelling', () => {

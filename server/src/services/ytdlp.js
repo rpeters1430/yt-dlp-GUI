@@ -875,10 +875,13 @@ function buildDownloadArgs(url, rawOptions = {}) {
     args.push('--download-sections', options.downloadSections.trim());
   }
 
-  // SponsorBlock removal and --download-sections cut the file with a stream copy, which can
-  // only start video on a keyframe while audio is cut exactly — so every cut leaves the audio
-  // ahead of the video. Re-encoding just around the cut points keeps the two in sync.
-  if (sponsorblockRemoveCats || (options.downloadSections && options.downloadSections.trim())) {
+  // SponsorBlock removal and --download-sections cut the file with a stream copy, which snaps
+  // video to the nearest keyframe and can leave a brief glitch at each cut.
+  // --force-keyframes-at-cuts avoids that, but yt-dlp does it by re-encoding the WHOLE video
+  // in software — that pins every CPU core for as long as the video plays, or longer, on a
+  // small NAS. So it's opt-in only (FORCE_KEYFRAMES_AT_CUTS=1).
+  const cutsFile = sponsorblockRemoveCats || (options.downloadSections && options.downloadSections.trim());
+  if (cutsFile && /^(1|true|yes|on)$/i.test(String(process.env.FORCE_KEYFRAMES_AT_CUTS || '').trim())) {
     args.push('--force-keyframes-at-cuts');
   }
 
