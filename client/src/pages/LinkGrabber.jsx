@@ -44,7 +44,9 @@ function DownloaderSettings({ onClose }) {
     setTestingJd(true);
     setJdTestStatus(null);
     try {
-      const res = await api.testJDownloader({ jdUrl: jdUrl.trim() });
+      // The server only tests the saved address, so save what's in the box first.
+      await api.updateLinkGrabberSettings({ jdUrl: jdUrl.trim() });
+      const res = await api.testJDownloader();
       setJdTestStatus(res);
     } catch (err) {
       setJdTestStatus({ ok: false, message: err.message });

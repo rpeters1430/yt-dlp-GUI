@@ -103,3 +103,24 @@ test('unknown /api paths are not answered with the client app', async (t) => {
   const res = await call('GET', '/api/does-not-exist');
   assert.equal(res.status, 404);
 });
+
+test('linkgrabber test-jd only contacts the saved JDownloader address', async (t) => {
+  const http = require('http');
+  const hits = [];
+  const fake = http.createServer((req, res) => { hits.push(req.url); res.end('jdownloader=true'); });
+  await new Promise((resolve) => fake.listen(0, '127.0.0.1', resolve));
+  t.after(() => fake.close());
+  const fakeUrl = `http://127.0.0.1:${fake.address().port}`;
+
+  const { call } = await startApp(t);
+  await call('POST', '/api/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
+
+  const unsaved = await call('POST', '/api/linkgrabber/test-jd', { jdUrl: fakeUrl });
+  assert.equal(unsaved.status, 400, 'a URL in the request body is ignored');
+  assert.equal(hits.length, 0);
+
+  assert.equal((await call('PUT', '/api/linkgrabber/settings', { jdUrl: fakeUrl })).status, 200);
+  const saved = await call('POST', '/api/linkgrabber/test-jd', { jdUrl: 'http://10.0.0.1:9666' });
+  assert.equal(saved.body.ok, true);
+  assert.deepEqual(hits, ['/jdcheck.js']);
+});

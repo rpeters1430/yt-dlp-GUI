@@ -65,8 +65,10 @@ router.put('/settings', (req, res) => {
   res.json({ ok: true });
 });
 
+// Tests only the saved address. Taking a URL from the request would let any signed-in
+// client probe arbitrary hosts on the server's network and read back the result.
 router.post('/test-jd', async (req, res) => {
-  const jdUrl = (req.body?.jdUrl || getSetting(KEYS.jdUrl) || '').trim();
+  const jdUrl = getSetting(KEYS.jdUrl).trim();
   if (!jdUrl) return res.status(400).json({ ok: false, message: 'JDownloader URL is not configured' });
   try {
     const result = await linkGrabber.testJDownloaderConnection(jdUrl);
