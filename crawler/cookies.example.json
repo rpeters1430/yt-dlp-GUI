@@ -1,0 +1,17 @@
+[
+  {
+    "name": "xf_user",
+    "value": "YOUR_XF_USER_COOKIE_VALUE",
+    "domain": "simpcity.cr"
+  },
+  {
+    "name": "xf_session",
+    "value": "YOUR_XF_SESSION_COOKIE_VALUE",
+    "domain": "simpcity.cr"
+  },
+  {
+    "name": "xf_csrf",
+    "value": "YOUR_XF_CSRF_COOKIE_VALUE",
+    "domain": "simpcity.cr"
+  }
+]

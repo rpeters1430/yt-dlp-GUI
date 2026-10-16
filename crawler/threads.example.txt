@@ -1,0 +1,4 @@
+# SimpCity Watchlist
+# Add one thread URL per line. Lines starting with # are comments and will be ignored.
+
+https://simpcity.cr/threads/ashley-matheson-smashedely.74421/

@@ -65,19 +65,70 @@ router.put('/settings', (req, res) => {
   res.json({ ok: true });
 });
 
+router.post('/test-jd', async (req, res) => {
+  const jdUrl = (req.body?.jdUrl || getSetting(KEYS.jdUrl) || '').trim();
+  if (!jdUrl) return res.status(400).json({ ok: false, message: 'JDownloader URL is not configured' });
+  try {
+    const result = await linkGrabber.testJDownloaderConnection(jdUrl);
+    res.json(result);
+  } catch (err) {
+    res.json({ ok: false, message: err.message });
+  }
+});
+
+router.get('/history/stats', (req, res) => {
+  res.json(linkGrabber.getHistoryStats());
+});
+
+router.delete('/history', (req, res) => {
+  try {
+    res.json(linkGrabber.clearHistory());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/crawl', async (req, res) => {
-  const { url, maxPages, cookies, useSavedCookies } = req.body || {};
+  const {
+    url,
+    mode,
+    maxPages,
+    startPage,
+    endPage,
+    lastN,
+    skipQuotes,
+    skipBots,
+    decodeBase64,
+    ignoreHistory,
+    cookies,
+    useSavedCookies,
+  } = req.body || {};
+
   if (!url || typeof url !== 'string') return res.status(400).json({ error: 'url is required' });
   if (cookies !== undefined && typeof cookies !== 'string') return res.status(400).json({ error: 'cookies must be cookies.txt text' });
+
   try {
-    res.json(await linkGrabber.crawl({ url, maxPages, cookiesText: cookies || '', useSavedCookies: !!useSavedCookies }));
+    res.json(await linkGrabber.crawl({
+      url,
+      mode,
+      maxPages,
+      startPage,
+      endPage,
+      lastN,
+      skipQuotes: skipQuotes !== false,
+      skipBots: skipBots !== false,
+      decodeBase64: decodeBase64 !== false,
+      ignoreHistory: !!ignoreHistory,
+      cookiesText: cookies || '',
+      useSavedCookies: !!useSavedCookies,
+    }));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
 router.post('/send', async (req, res) => {
-  const { target, urls, packageName } = req.body || {};
+  const { target, urls, packageName, passwords, packagePerPage, urlMetadata } = req.body || {};
   const list = linkGrabber.cleanUrls(urls);
   if (list.length === 0) return res.status(400).json({ error: 'At least one URL is required' });
   if (list.length > MAX_SEND) return res.status(400).json({ error: `Too many URLs in one request (max ${MAX_SEND})` });
@@ -100,6 +151,9 @@ router.post('/send', async (req, res) => {
       const result = await linkGrabber.sendToJDownloader(list, {
         baseUrl: getSetting(KEYS.jdUrl),
         packageName: typeof packageName === 'string' ? packageName.slice(0, 200) : '',
+        passwords,
+        packagePerPage: !!packagePerPage,
+        urlMetadata: Array.isArray(urlMetadata) ? urlMetadata : [],
       });
       return res.json({ ...result, failed: [] });
     }

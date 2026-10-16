@@ -4,12 +4,23 @@ const {
   parseNetscapeCookies,
   cookieHeaderFor,
   extractLinks,
+  extractPasswords,
+  extractBase64Links,
+  stripQuotesAndBots,
+  cleanThreadTitle,
+  parseThreadUrl,
+  getThreadPageUrl,
+  detectMaxPage,
   findNextPage,
   unwrapRedirect,
   classify,
   crawl,
   cleanUrls,
+  recordCrawledLinks,
+  getHistoryStats,
+  clearHistory,
   sendToJDownloader,
+  testJDownloaderConnection,
   sendToAria2,
 } = require('./linkGrabber');
 
@@ -182,4 +193,114 @@ test('sendToAria2 multicalls addUri with the token and reports faults', async ()
   assert.deepEqual(payload.params[0][0], { methodName: 'aria2.addUri', params: ['token:s3', ['https://a.example.com/1'], { dir: '/data' }] });
   assert.equal(result.sent, 1);
   assert.deepEqual(result.failed, ['bad uri']);
+});
+
+test('extractPasswords finds passwords across various formats and skips common words', () => {
+  const text = `
+    Download here: https://mega.nz/file/123
+    Password: SecretPass123
+    pw: my_archive_pw
+    Pass: none
+    contraseña: password
+  `;
+  const pws = extractPasswords(text);
+  assert.ok(pws.includes('SecretPass123'));
+  assert.ok(pws.includes('my_archive_pw'));
+  assert.ok(!pws.includes('none'));
+  assert.ok(!pws.includes('password'));
+});
+
+test('extractBase64Links decodes valid hidden URLs', () => {
+  // "https://pixeldrain.com/u/abcdef" in Base64 is "aHR0cHM6Ly9waXhlbGRyYWluLmNvbS91L2FiY2RlZg=="
+  const text = 'Here is the download string: aHR0cHM6Ly9waXhlbGRyYWluLmNvbS91L2FiY2RlZg== thanks!';
+  const b64 = extractBase64Links(text);
+  assert.deepEqual(b64, ['https://pixeldrain.com/u/abcdef']);
+});
+
+test('stripQuotesAndBots removes quoted text and bot replies', () => {
+  const html = `
+    <article data-author="sussybot"><p>bot mirror: https://mirror.example.com/bot</p></article>
+    <div class="bbCodeBlock bbCodeBlock--quote"><blockquote>https://quoted.example.com/old</blockquote></div>
+    <p>Real link: https://mega.nz/file/real</p>
+  `;
+  const cleaned = stripQuotesAndBots(html, { skipQuotes: true, skipBots: true });
+  assert.ok(!cleaned.includes('mirror.example.com/bot'));
+  assert.ok(!cleaned.includes('quoted.example.com/old'));
+  assert.ok(cleaned.includes('https://mega.nz/file/real'));
+});
+
+test('parseThreadUrl and XenForo pagination helpers work accurately', () => {
+  const parsed = parseThreadUrl('https://simpcity.cr/threads/artist-name.12345/page-27');
+  assert.equal(parsed.isThread, true);
+  assert.equal(parsed.baseUrl, 'https://simpcity.cr/threads/artist-name.12345/');
+  assert.equal(parsed.page, 27);
+
+  assert.equal(getThreadPageUrl(parsed.baseUrl, 1), 'https://simpcity.cr/threads/artist-name.12345/');
+  assert.equal(getThreadPageUrl(parsed.baseUrl, 5), 'https://simpcity.cr/threads/artist-name.12345/page-5');
+
+  const html = `
+    <div class="pageNav-main">
+      <a class="pageNav-page" href="/threads/name.123/page-2">2</a>
+      <a class="pageNav-page" href="/threads/name.123/page-52">52</a>
+    </div>
+  `;
+  assert.equal(detectMaxPage(html, 1), 52);
+  assert.equal(cleanThreadTitle('Artist Name | SimpCity'), 'Artist Name');
+});
+
+test('sendToJDownloader handles passwords and packages per page', async () => {
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push({ url, body: new URLSearchParams(opts.body) });
+    return new Response('success', { status: 200 });
+  };
+
+  const urls = ['https://a.com/1', 'https://a.com/2', 'https://a.com/3'];
+  const urlMetadata = [
+    { url: 'https://a.com/1', page: 1 },
+    { url: 'https://a.com/2', page: 2 },
+    { url: 'https://a.com/3', page: 2 },
+  ];
+
+  const res = await sendToJDownloader(urls, {
+    baseUrl: 'http://192.168.50.114:9666',
+    packageName: 'MyThread',
+    passwords: ['secretPW'],
+    packagePerPage: true,
+    urlMetadata,
+    fetchImpl,
+  });
+
+  assert.equal(res.sent, 3);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].body.get('package'), '[Page 1] MyThread');
+  assert.equal(calls[0].body.get('passwords'), 'secretPW');
+  assert.equal(calls[1].body.get('package'), '[Page 2] MyThread');
+});
+
+test('sendToJDownloader and testJDownloaderConnection diagnose port 5800 vs 9666', async () => {
+  await assert.rejects(
+    sendToJDownloader(['https://a.com/1'], { baseUrl: 'http://192.168.50.114:5800', fetchImpl: async () => {} }),
+    /Port 5800 is JDownloader's Web UI/
+  );
+
+  const mockWebUiFetch = async () => new Response('<html><title>noVNC JDownloader 2</title></html>', { status: 200 });
+  const diag = await testJDownloaderConnection('http://192.168.50.114:5800', { fetchImpl: mockWebUiFetch });
+  assert.equal(diag.ok, false);
+  assert.equal(diag.isWebUi, true);
+  assert.ok(diag.message.includes('Click\'n\'Load requires port 9666'));
+
+  const mockJdFetch = async () => new Response('jdownloader running', { status: 200 });
+  const successDiag = await testJDownloaderConnection('http://192.168.50.114:9666', { fetchImpl: mockJdFetch });
+  assert.equal(successDiag.ok, true);
+});
+
+test('history records and reports stats', () => {
+  clearHistory();
+  const added = recordCrawledLinks(['https://host.com/f/1', 'https://host.com/f/2'], 'Test Thread', 'https://forum.com/thread/1');
+  assert.equal(added, 2);
+
+  const stats = getHistoryStats();
+  assert.equal(stats.totalLinks, 2);
+  assert.equal(stats.totalThreads, 1);
 });

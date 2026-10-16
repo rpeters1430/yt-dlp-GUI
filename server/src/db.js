@@ -89,11 +89,45 @@ CREATE TABLE IF NOT EXISTS lidarr_tasks (
 
 CREATE INDEX IF NOT EXISTS idx_lidarr_tasks_hash ON lidarr_tasks (hash);
 CREATE INDEX IF NOT EXISTS idx_lidarr_tasks_status ON lidarr_tasks (status);
+
+CREATE TABLE IF NOT EXISTS linkgrabber_history (
+  url TEXT PRIMARY KEY,
+  thread_title TEXT,
+  thread_url TEXT,
+  discovered_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_linkgrabber_history_thread ON linkgrabber_history(thread_url);
 `);
 // Lookups compare hashes as stored (lowercase) so they can use the index.
 // A mixed-case duplicate of an existing row is the same grab; drop it rather than fail.
 db.prepare('UPDATE OR IGNORE lidarr_tasks SET hash = lower(hash) WHERE hash <> lower(hash)').run();
 db.prepare('DELETE FROM lidarr_tasks WHERE hash <> lower(hash)').run();
+
+// Migrate crawler/crawled_history.db if it exists
+function migrateCrawlerHistory() {
+  try {
+    const crawlerDbPath = path.join(__dirname, '..', '..', 'crawler', 'crawled_history.db');
+    if (fs.existsSync(crawlerDbPath)) {
+      const crawlerDb = new Database(crawlerDbPath, { readonly: true });
+      const rows = crawlerDb.prepare('SELECT url, thread_title, thread_url, discovered_at FROM links').all();
+      if (rows && rows.length > 0) {
+        const insert = db.prepare(`
+          INSERT OR IGNORE INTO linkgrabber_history (url, thread_title, thread_url, discovered_at)
+          VALUES (?, ?, ?, ?)
+        `);
+        db.transaction(() => {
+          for (const r of rows) {
+            insert.run(r.url, r.thread_title || '', r.thread_url || '', r.discovered_at || new Date().toISOString());
+          }
+        })();
+      }
+      crawlerDb.close();
+    }
+  } catch {
+    // Non-fatal if crawler DB format differs
+  }
+}
+migrateCrawlerHistory();
 
 // CREATE TABLE IF NOT EXISTS above only applies to brand-new databases, so upgrades of an
 // existing /config/app.db need these columns added by hand.

@@ -8,3 +8,8 @@ config/
 *.db-shm
 .env
 .worktrees/
+__pycache__/
+*.pyc
+cookies.txt
+links_*.txt
+*.png
