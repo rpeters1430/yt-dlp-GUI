@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link2, Settings2, CheckCircle2, AlertCircle, Key, Copy, RefreshCw, Trash2 } from 'lucide-react';
+import { Link2, Settings2, CheckCircle2, AlertCircle, Key, Copy, RefreshCw, Trash2, Cookie, Upload } from 'lucide-react';
 import { api } from '../api.js';
 import { useToast } from '../context/ToastContext.jsx';
 
 const KIND_LABELS = { video: 'Video file', audio: 'Audio file', archive: 'Archive', embed: 'Embed', link: 'Link', base64: 'Base64 link' };
 const TARGETS = [
   { id: 'queue', label: 'Download here (yt-dlp)' },
-  { id: 'jdownloader', label: 'Send to JDownloader' },
+  { id: 'jdownloader', label: 'Send to JDownloader / pyLoad' },
   { id: 'aria2', label: 'Send to aria2' },
 ];
 
@@ -97,9 +97,9 @@ function DownloaderSettings({ onClose }) {
         <button type="button" className="btn-ghost" onClick={onClose}>Close</button>
       </div>
       <p className="panel-description">
-        JDownloader receives links via Click&apos;n&apos;Load on port <strong>9666</strong>. If JDownloader is running in Docker
-        on a NAS (e.g. at <code>192.168.50.114</code>), ensure port 9666 is mapped in Docker (port 5800 is only the web GUI), and
-        disable <em>RemoteAPI: Extern Interface Localhost Only</em> in JDownloader Advanced Settings.
+        JDownloader and pyLoad receive links via Click&apos;n&apos;Load on port <strong>9666</strong>. If running in Docker
+        on a NAS (e.g. <code>jlesage/docker-jdownloader-2</code> or <code>linuxserver/pyload-ng</code>), ensure port 9666 is mapped in Docker (port 5800/8000 is only the web GUI), and
+        ensure external connections are permitted.
       </p>
       {!settings ? (
         error ? <div className="alert alert-error"><AlertCircle size={15} />{error}</div> : <div className="empty-state"><div className="spinner" /></div>
@@ -182,6 +182,118 @@ function DownloaderSettings({ onClose }) {
   );
 }
 
+function CrawlerCookiesModal({ status, onClose, onSaved, onDeleted }) {
+  const [text, setText] = useState('');
+  const [fileName, setFileName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState(false);
+
+  function handleFileChange(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setError('');
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const content = String(evt.target.result || '').trim();
+      setText(content);
+      if (!content) return;
+      setSaving(true);
+      try {
+        await onSaved(content);
+        onClose();
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setSaving(false);
+      }
+    };
+    reader.onerror = () => setError('Failed to read the selected file.');
+    reader.readAsText(file);
+  }
+
+  async function handleSave(e) {
+    e.preventDefault();
+    if (!text.trim()) return;
+    setSaving(true);
+    setError('');
+    try {
+      await onSaved(text.trim());
+      onClose();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!window.confirm('Delete the saved crawler cookie file?')) return;
+    setDeleting(true);
+    try {
+      await onDeleted();
+      onClose();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <section className="panel" style={{ border: '1px solid var(--accent, #6366f1)', marginBottom: '16px' }}>
+      <div className="panel-header">
+        <h2><Cookie size={16} /> Forum Crawler Cookies</h2>
+        <button type="button" className="btn-ghost" onClick={onClose}>Close</button>
+      </div>
+      <p className="panel-description">
+        Save forum cookies so the crawler can access members-only content, attachments, and threads without asking every time.
+        Export while logged into the forum using <em>Cookie-Editor</em> (JSON) or <em>Get cookies.txt LOCALLY</em> (Netscape format).
+        Saved as <code>config/crawler_cookies.txt</code> and kept permanently.
+      </p>
+
+      {status?.configured && (
+        <div className="alert alert-success" style={{ margin: '8px 0 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+          <div>
+            <strong>✓ Cookie file is currently saved and active:</strong> {status.cookieCount} cookies
+            {status.domains?.length ? ` (${status.domains.join(', ')})` : ''}
+          </div>
+          <button type="button" className="btn-ghost small" onClick={handleDelete} disabled={deleting}>
+            <Trash2 size={14} /> {deleting ? 'Removing…' : 'Delete saved cookies'}
+          </button>
+        </div>
+      )}
+
+      <form onSubmit={handleSave} className="settings-form">
+        <label className="field-label">
+          Choose a cookies file (.txt or .json)
+          <input type="file" accept=".txt,.json" onChange={handleFileChange} />
+          {fileName && <span className="muted small">Selected: {fileName}</span>}
+        </label>
+        <label className="field-label">
+          …or paste cookies directly
+          <textarea
+            className="mono"
+            rows={6}
+            placeholder="# Netscape HTTP Cookie File or JSON array..."
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            spellCheck={false}
+          />
+        </label>
+        <div className="options-row" style={{ marginTop: 0, gap: '8px' }}>
+          <button type="submit" disabled={saving || !text.trim()}>
+            {saving ? 'Saving…' : 'Save cookie file'}
+          </button>
+          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+        </div>
+        {error && <div className="alert alert-error"><AlertCircle size={15} />{error}</div>}
+      </form>
+    </section>
+  );
+}
+
 export default function LinkGrabber() {
   const showToast = useToast();
   const [url, setUrl] = useState('');
@@ -194,10 +306,12 @@ export default function LinkGrabber() {
   const [skipBots, setSkipBots] = useState(true);
   const [decodeBase64, setDecodeBase64] = useState(true);
   const [ignoreHistory, setIgnoreHistory] = useState(false);
-  const [useSavedCookies, setUseSavedCookies] = useState(false);
+  const [useSavedCookies, setUseSavedCookies] = useState(true);
   const [cookiesText, setCookiesText] = useState('');
   const [showCookies, setShowCookies] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showCookiesModal, setShowCookiesModal] = useState(false);
+  const [cookieStatus, setCookieStatus] = useState(null);
   const [crawling, setCrawling] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
@@ -208,7 +322,51 @@ export default function LinkGrabber() {
   const [search, setSearch] = useState('');
   const [target, setTarget] = useState('queue');
   const [packagePerPage, setPackagePerPage] = useState(true);
+  const [onlySendFiltered, setOnlySendFiltered] = useState(true);
   const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    loadCookieStatus();
+  }, []);
+
+  async function loadCookieStatus() {
+    try {
+      const st = await api.getLinkGrabberCookies();
+      setCookieStatus(st);
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  async function handleSaveCrawlerCookies(content) {
+    const res = await api.saveLinkGrabberCookies(content);
+    showToast(`Saved crawler cookies (${res.cookieCount} cookies)`);
+    await loadCookieStatus();
+  }
+
+  async function handleDeleteCrawlerCookies() {
+    await api.deleteLinkGrabberCookies();
+    showToast('Saved crawler cookies deleted');
+    await loadCookieStatus();
+  }
+
+  async function handleDirectCookieUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const content = String(evt.target.result || '').trim();
+      if (!content) return;
+      try {
+        await handleSaveCrawlerCookies(content);
+      } catch (err) {
+        showToast(err.message, { error: true });
+      }
+    };
+    reader.onerror = () => showToast('Failed to read selected cookie file', { error: true });
+    reader.readAsText(file);
+    e.target.value = '';
+  }
 
   // Auto-detect thread mode when a XenForo thread URL is typed/pasted
   useEffect(() => {
@@ -263,6 +421,14 @@ export default function LinkGrabber() {
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   }, [result]);
 
+  const kinds = useMemo(() => {
+    const counts = new Map();
+    for (const l of result?.links || []) counts.set(l.kind, (counts.get(l.kind) || 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [result]);
+
+  const isFiltered = hostFilter !== 'all' || kindFilter !== 'all' || statusFilter !== 'all' || Boolean(search.trim());
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return (result?.links || []).filter((l) =>
@@ -272,7 +438,18 @@ export default function LinkGrabber() {
       && (!q || l.url.toLowerCase().includes(q)));
   }, [result, hostFilter, kindFilter, statusFilter, search]);
 
-  const allVisibleSelected = visible.length > 0 && visible.every((l) => selected.has(l.url));
+  const visibleSelected = useMemo(() => {
+    return visible.filter((l) => selected.has(l.url));
+  }, [visible, selected]);
+
+  const allVisibleSelected = visible.length > 0 && visibleSelected.length === visible.length;
+
+  const urlsToSend = useMemo(() => {
+    if (isFiltered && onlySendFiltered) {
+      return visibleSelected.map((l) => l.url);
+    }
+    return [...selected];
+  }, [isFiltered, onlySendFiltered, visibleSelected, selected]);
 
   function toggle(linkUrl) {
     setSelected((prev) => {
@@ -294,8 +471,32 @@ export default function LinkGrabber() {
     });
   }
 
+  function selectOnlyVisible() {
+    const next = new Set();
+    for (const l of visible) next.add(l.url);
+    setSelected(next);
+  }
+
+  function deselectVisible() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const l of visible) next.delete(l.url);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    const next = new Set();
+    for (const l of result?.links || []) next.add(l.url);
+    setSelected(next);
+  }
+
+  function clearSelection() {
+    setSelected(new Set());
+  }
+
   async function handleSend() {
-    const urls = [...selected];
+    const urls = urlsToSend;
     if (urls.length === 0) return;
     setSending(true);
     try {
@@ -312,7 +513,12 @@ export default function LinkGrabber() {
       const failed = res.failed || [];
       showToast(`Sent ${res.sent} link${res.sent === 1 ? '' : 's'}${failed.length ? ` · ${failed.length} failed` : ''}`, { error: failed.length > 0 && res.sent === 0 });
       if (failed.length) setError(failed.slice(0, 5).join('\n'));
-      setSelected(new Set());
+      // Remove successfully sent URLs from selection
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const u of urls) next.delete(u);
+        return next;
+      });
     } catch (err) {
       showToast(err.message, { error: true });
     } finally {
@@ -321,9 +527,11 @@ export default function LinkGrabber() {
   }
 
   async function copySelected() {
+    const urls = urlsToSend;
+    if (urls.length === 0) return;
     try {
-      await navigator.clipboard.writeText([...selected].join('\n'));
-      showToast(`Copied ${selected.size} link${selected.size === 1 ? '' : 's'}`);
+      await navigator.clipboard.writeText(urls.join('\n'));
+      showToast(`Copied ${urls.length} link${urls.length === 1 ? '' : 's'}`);
     } catch {
       showToast('Clipboard is not available', { error: true });
     }
@@ -343,11 +551,23 @@ export default function LinkGrabber() {
       <div className="page-title-row">
         <h1>Link grabber &amp; forum crawler</h1>
         <div className="page-title-actions">
+          <button type="button" className="btn-secondary" onClick={() => setShowCookiesModal((v) => !v)}>
+            <Cookie size={15} /> Crawler cookies {cookieStatus?.configured ? `(${cookieStatus.cookieCount})` : ''}
+          </button>
           <button type="button" className="btn-secondary" onClick={() => setShowSettings((v) => !v)}>
             <Settings2 size={15} /> Downloaders
           </button>
         </div>
       </div>
+
+      {showCookiesModal && (
+        <CrawlerCookiesModal
+          status={cookieStatus}
+          onClose={() => setShowCookiesModal(false)}
+          onSaved={handleSaveCrawlerCookies}
+          onDeleted={handleDeleteCrawlerCookies}
+        />
+      )}
 
       {showSettings && <DownloaderSettings onClose={() => setShowSettings(false)} />}
 
@@ -405,10 +625,10 @@ export default function LinkGrabber() {
             )}
           </div>
 
-          <div className="options-row" style={{ marginTop: 0, gap: '16px', flexWrap: 'wrap' }}>
+          <div className="options-row" style={{ marginTop: 0, gap: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
             <label className="checkbox-label">
               <input type="checkbox" checked={skipQuotes} onChange={(e) => setSkipQuotes(e.target.checked)} />
-              Strip quote blocks (prevents duplicate links from user replies)
+              Strip quote blocks (prevents duplicate links)
             </label>
             <label className="checkbox-label">
               <input type="checkbox" checked={skipBots} onChange={(e) => setSkipBots(e.target.checked)} />
@@ -422,18 +642,40 @@ export default function LinkGrabber() {
               <input type="checkbox" checked={ignoreHistory} onChange={(e) => setIgnoreHistory(e.target.checked)} />
               Ignore crawl history
             </label>
-            <label className="checkbox-label">
-              <input type="checkbox" checked={useSavedCookies} onChange={(e) => setUseSavedCookies(e.target.checked)} />
-              Use saved cookies.txt
-            </label>
-            <button type="button" className="btn-link" onClick={() => setShowCookies((v) => !v)}>
-              {showCookies ? 'Hide' : 'Paste'} custom cookies
+
+            {cookieStatus?.configured ? (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <span className="badge" style={{ background: '#10b981', color: '#fff', fontSize: '11px', padding: '2px 8px', borderRadius: '4px' }}>
+                  ✓ Saved cookies active ({cookieStatus.cookieCount})
+                </span>
+                <label className="btn-secondary small" style={{ cursor: 'pointer', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <Upload size={13} /> Replace cookies.txt
+                  <input type="file" accept=".txt,.json" onChange={handleDirectCookieUpload} hidden />
+                </label>
+                <button type="button" className="btn-ghost small" onClick={() => setShowCookiesModal(true)}>
+                  Manage
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <label className="btn-secondary small" style={{ cursor: 'pointer', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <Upload size={13} /> Upload cookies.txt (save for all crawls)
+                  <input type="file" accept=".txt,.json" onChange={handleDirectCookieUpload} hidden />
+                </label>
+                <button type="button" className="btn-ghost small" onClick={() => setShowCookiesModal(true)}>
+                  <Cookie size={13} /> Paste
+                </button>
+              </div>
+            )}
+
+            <button type="button" className="btn-link small" onClick={() => setShowCookies((v) => !v)}>
+              {showCookies ? 'Hide' : 'Paste'} temporary cookies
             </button>
           </div>
 
           {showCookies && (
             <label className="field-label">
-              cookies.txt (Netscape format, used for this crawl only and not saved)
+              Temporary one-off cookies (Netscape or JSON format, overrides saved cookies for this crawl only without modifying your saved file)
               <textarea className="mono" rows={5} value={cookiesText} onChange={(e) => setCookiesText(e.target.value)} spellCheck={false} />
             </label>
           )}
@@ -503,23 +745,52 @@ export default function LinkGrabber() {
                 ))}
               </div>
 
+              {kinds.length > 0 && (
+                <div className="chip-row lg-filters">
+                  <button type="button" className={`chip${kindFilter === 'all' ? ' active' : ''}`} onClick={() => setKindFilter('all')}>
+                    All types <span className="chip-count">{result.links.length}</span>
+                  </button>
+                  {kinds.map(([kind, count]) => (
+                    <button key={kind} type="button" className={`chip${kindFilter === kind ? ' active' : ''}`} onClick={() => setKindFilter(kind)}>
+                      {KIND_LABELS[kind] || kind} <span className="chip-count">{count}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <div className="toolbar lg-toolbar">
                 <input type="search" placeholder="Filter by text in the URL" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Filter links" />
-                <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)} aria-label="Link type">
-                  <option value="all">All types</option>
-                  {Object.entries(KIND_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-                </select>
               </div>
 
               <ul className="lg-list">
-                <li className="lg-row lg-row-head">
-                  <label className="checkbox-label">
-                    <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} />
-                    Select {visible.length} shown
-                  </label>
-                  <span className="muted small">
-                    {selected.size} of {result.links.length} selected
-                  </span>
+                <li className="lg-row lg-row-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <label className="checkbox-label" style={{ fontWeight: '600' }}>
+                      <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} />
+                      Select all shown ({visible.length})
+                    </label>
+                    <button type="button" className="btn-ghost small" onClick={deselectVisible} disabled={visibleSelected.length === 0}>
+                      Deselect shown
+                    </button>
+                    {isFiltered && (
+                      <button type="button" className="btn-ghost small" onClick={selectOnlyVisible}>
+                        Select only shown
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span className="muted small">
+                      <strong>{visibleSelected.length}</strong> of {visible.length} shown selected
+                      {selected.size !== visibleSelected.length && (
+                        <span> ({selected.size} total selected)</span>
+                      )}
+                    </span>
+                    {selected.size > 0 && (
+                      <button type="button" className="btn-ghost small" onClick={clearSelection}>
+                        Clear all ({selected.size})
+                      </button>
+                    )}
+                  </div>
                 </li>
                 {visible.map((l) => (
                   <li key={l.url} className="lg-row">
@@ -536,8 +807,18 @@ export default function LinkGrabber() {
                 ))}
               </ul>
 
-              <div className="options-row lg-send" style={{ flexWrap: 'wrap', gap: '10px' }}>
-                <span className="muted small">{selected.size} selected</span>
+              <div className="options-row lg-send" style={{ flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
+                <span className="muted small" style={{ fontWeight: '600' }}>
+                  {urlsToSend.length} link{urlsToSend.length === 1 ? '' : 's'} to send
+                </span>
+
+                {isFiltered && selected.size !== visibleSelected.length && (
+                  <label className="checkbox-label" style={{ fontSize: '13px', background: 'var(--bg-elevated)', padding: '4px 8px', borderRadius: '4px' }}>
+                    <input type="checkbox" checked={onlySendFiltered} onChange={(e) => setOnlySendFiltered(e.target.checked)} />
+                    Send only filtered links ({visibleSelected.length})
+                  </label>
+                )}
+
                 <select value={target} onChange={(e) => setTarget(e.target.value)} aria-label="Send to">
                   {TARGETS.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
                 </select>
@@ -549,8 +830,12 @@ export default function LinkGrabber() {
                   </label>
                 )}
 
-                <button type="button" onClick={handleSend} disabled={sending || selected.size === 0}>{sending ? 'Sending…' : 'Send links'}</button>
-                <button type="button" className="btn-secondary" onClick={copySelected} disabled={selected.size === 0}>Copy selected links</button>
+                <button type="button" onClick={handleSend} disabled={sending || urlsToSend.length === 0}>
+                  {sending ? 'Sending…' : `Send ${urlsToSend.length} link${urlsToSend.length === 1 ? '' : 's'}`}
+                </button>
+                <button type="button" className="btn-secondary" onClick={copySelected} disabled={urlsToSend.length === 0}>
+                  Copy {urlsToSend.length} link{urlsToSend.length === 1 ? '' : 's'}
+                </button>
               </div>
 
               {target === 'jdownloader' && result.passwords?.length > 0 && (

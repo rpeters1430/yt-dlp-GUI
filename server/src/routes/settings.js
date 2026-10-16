@@ -23,6 +23,7 @@ const ALLOWED_SETTINGS_KEYS = new Set([
   'max_concurrent_downloads',
   'download_limit_rate',
   'download_sleep_interval',
+  'impersonate_target',
 ]);
 
 function saveSetting(key, value) {
@@ -132,6 +133,7 @@ router.get('/', (req, res) => {
   settings.max_concurrent_downloads = queue.getMaxConcurrent();
   settings.download_limit_rate = settings.download_limit_rate || '';
   settings.download_sleep_interval = parseInt(settings.download_sleep_interval || '0', 10) || 0;
+  settings.impersonate_target = settings.impersonate_target || '';
   res.json(settings);
 });
 
@@ -144,6 +146,15 @@ router.put('/', (req, res) => {
   const invalidChannel = entries.some(([key, value]) => key === 'ytdlpChannel' && value !== 'stable' && value !== 'nightly');
   if (invalidChannel) {
     return res.status(400).json({ error: 'ytdlpChannel must be stable or nightly' });
+  }
+  const impersonate = entries.find(([key]) => key === 'impersonate_target');
+  if (impersonate) {
+    const val = String(impersonate[1] || '').trim().toLowerCase();
+    const allowed = new Set(['', 'chrome', 'safari', 'firefox', 'edge', 'tor']);
+    if (!allowed.has(val)) {
+      return res.status(400).json({ error: 'impersonate_target must be chrome, safari, firefox, edge, tor, or empty' });
+    }
+    impersonate[1] = val;
   }
   // A blank template is stored as-is and means "use the built-in default".
   const template = entries.find(([key]) => key === 'output_template');

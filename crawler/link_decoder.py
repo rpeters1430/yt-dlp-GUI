@@ -5,11 +5,13 @@ from typing import List, Set
 
 # Common password keywords
 PASSWORD_PATTERNS = [
-    re.compile(r"(?:archive\s*)?pass(?:word)?\s*[:=]\s*[\"']?([^\s\"'\n<>]+)", re.IGNORECASE),
-    re.compile(r"\bpw\s*[:=]\s*[\"']?([^\s\"'\n<>]+)", re.IGNORECASE),
-    re.compile(r"\bpass\s*[:=]\s*[\"']?([^\s\"'\n<>]+)", re.IGNORECASE),
-    re.compile(r"contrase[ñn]a\s*[:=]\s*[\"']?([^\s\"'\n<>]+)", re.IGNORECASE),
-    re.compile(r"mot\s*de\s*passe\s*[:=]\s*[\"']?([^\s\"'\n<>]+)", re.IGNORECASE),
+    re.compile(r"(?:archive\s*)?pass(?:word)?\s*(?:is|:|=)\s*[\"']([^\"'\n<]{2,60})[\"']", re.IGNORECASE),
+    re.compile(r"\bpw\s*(?:is|:|=)\s*[\"']([^\"'\n<]{2,60})[\"']", re.IGNORECASE),
+    re.compile(r"(?:archive\s*)?pass(?:word)?\s*(?:is|:|=)\s*[\"']?([^\s\"'\n<>]+)", re.IGNORECASE),
+    re.compile(r"\bpw\s*(?:is|:|=)\s*[\"']?([^\s\"'\n<>]+)", re.IGNORECASE),
+    re.compile(r"\bpass\s*(?:is|:|=)\s*[\"']?([^\s\"'\n<>]+)", re.IGNORECASE),
+    re.compile(r"contrase[ñn]a\s*(?:is|:|=)\s*[\"']?([^\s\"'\n<>]+)", re.IGNORECASE),
+    re.compile(r"mot\s*de\s*passe\s*(?:is|:|=)\s*[\"']?([^\s\"'\n<>]+)", re.IGNORECASE),
 ]
 
 IGNORE_PASSWORDS = {
@@ -17,8 +19,8 @@ IGNORE_PASSWORDS = {
     "password", "pass", "pw", "yes", "link", "download", "here", "mega", "pixeldrain",
 }
 
-# Base64 candidate regex (length >= 16, valid Base64 chars)
-BASE64_PATTERN = re.compile(r"(?:[A-Za-z0-9+/]{4}){4,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?")
+# Base64 candidate regex (length >= 16, valid Base64 / URL-safe Base64 chars)
+BASE64_PATTERN = re.compile(r"(?:[A-Za-z0-9+/_-]{4}){4,}(?:[A-Za-z0-9+/_-]{2}==|[A-Za-z0-9+/_-]{3}=)?")
 
 
 def extract_base64_links(text: str) -> List[str]:
@@ -30,9 +32,10 @@ def extract_base64_links(text: str) -> List[str]:
         if len(candidate) < 16:
             continue
         try:
-            # Pad if needed
-            pad_len = (-len(candidate)) % 4
-            padded = candidate + ("=" * pad_len)
+            # Normalize URL-safe Base64 and pad
+            normalized = candidate.replace("-", "+").replace("_", "/")
+            pad_len = (-len(normalized)) % 4
+            padded = normalized + ("=" * pad_len)
             decoded_bytes = base64.b64decode(padded, validate=True)
             decoded_str = decoded_bytes.decode("utf-8", errors="ignore").strip()
 

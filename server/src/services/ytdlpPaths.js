@@ -10,6 +10,7 @@ const VIDEO_DIR = process.env.VIDEO_DIR || DOWNLOAD_DIR;
 const MUSIC_DIR = process.env.MUSIC_DIR || '';
 const CONFIG_DIR = process.env.CONFIG_DIR || path.join(__dirname, '..', '..', 'config');
 const COOKIES_FILE = path.join(CONFIG_DIR, 'cookies.txt');
+const CRAWLER_COOKIES_FILE = path.join(CONFIG_DIR, 'crawler_cookies.txt');
 const YTDLP_CACHE_DIR = path.join(CONFIG_DIR, 'yt-dlp-cache');
 const CUSTOM_BIN_DIR = path.join(CONFIG_DIR, 'bin');
 const FFMPEG_BUILD_MARKER = path.join(CONFIG_DIR, 'ffmpeg-build-id');
@@ -111,7 +112,7 @@ function getFfmpegBin() {
 }
 
 module.exports = {
-  YTDLP_BIN, DOWNLOAD_DIR, VIDEO_DIR, MUSIC_DIR, CONFIG_DIR, COOKIES_FILE, YTDLP_CACHE_DIR, CUSTOM_BIN_DIR,
+  YTDLP_BIN, DOWNLOAD_DIR, VIDEO_DIR, MUSIC_DIR, CONFIG_DIR, COOKIES_FILE, CRAWLER_COOKIES_FILE, YTDLP_CACHE_DIR, CUSTOM_BIN_DIR,
   FFMPEG_BUILD_MARKER, resolveMusicDir, getQuickjsBin, getFfmpegDir, getFfmpegBin,
   findOnPath, getJsRuntimes, jsRuntimeArgs,
 };

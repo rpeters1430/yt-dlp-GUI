@@ -114,11 +114,30 @@ function ffmpegArgs() {
 // falls back to images-only formats unless we explicitly allow it to fetch that script at
 // runtime. --cache-dir persists it (and other yt-dlp caches) across container restarts
 // instead of re-fetching every time.
-function commonArgs() {
+function getImpersonateTarget() {
+  try {
+    const db = require('../db');
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'impersonate_target'").get();
+    return row && row.value ? row.value.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+function impersonateArgs(overrideTarget) {
+  const target = overrideTarget !== undefined ? overrideTarget : getImpersonateTarget();
+  if (target && target !== 'off' && target !== 'none') {
+    return ['--impersonate', target];
+  }
+  return [];
+}
+
+function commonArgs(options = {}) {
   return [
     ...jsRuntimeArgs(),
     '--remote-components', 'ejs:github',
     '--cache-dir', YTDLP_CACHE_DIR,
+    ...impersonateArgs(options?.impersonate),
     ...cookieArgs(),
     ...ffmpegArgs(),
   ];
@@ -376,7 +395,7 @@ function parseStageLine(line) {
 // onProgress, when given, receives each parseStageLine() result while yt-dlp works. -J is
 // quiet by default; --no-quiet prints those status lines on stdout ahead of the single JSON
 // line, so they're split off from the JSON below.
-function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, playlistEnd = null, onProgress = null } = {}) {
+function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, playlistEnd = null, onProgress = null, impersonate } = {}) {
   return new Promise((resolve, reject) => {
     try {
       assertPublicUrl(url);
@@ -386,7 +405,7 @@ function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, play
     // A scheduled (not yet live) broadcast has no formats, which yt-dlp otherwise treats as
     // an error ("This live event will begin in …") — so the link could never be probed and
     // offered as "wait for it to start". Callers check for empty formats themselves.
-    const args = ['-J', '--ignore-no-formats-error', ...commonArgs()];
+    const args = ['-J', '--ignore-no-formats-error', ...commonArgs({ impersonate })];
     if (flatPlaylist) args.push('--flat-playlist');
     if (playlistStart && playlistStart > 0) args.push('--playlist-start', String(playlistStart));
     if (playlistEnd) args.push('--playlist-end', String(playlistEnd));
@@ -745,7 +764,7 @@ function buildDownloadArgs(url, rawOptions = {}) {
   const args = [
     '--newline',
     '--progress',
-    ...commonArgs(),
+    ...commonArgs(options),
     '--progress-template', PROGRESS_TEMPLATE,
     '--progress-template', 'postprocess:YTDLP_POSTPROCESS %(progress._percent_str)s',
     '-o', targetOutput,
@@ -1589,4 +1608,7 @@ module.exports = {
   withPrivateCookies,
   sweepPrivateCookieDirs,
   PRIVATE_COOKIES_ROOT,
+  commonArgs,
+  getImpersonateTarget,
+  impersonateArgs,
 };

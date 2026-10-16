@@ -90,6 +90,27 @@ router.delete('/history', (req, res) => {
   }
 });
 
+router.get('/cookies', (req, res) => {
+  res.json(linkGrabber.getCrawlerCookiesStatus());
+});
+
+router.put('/cookies', (req, res) => {
+  try {
+    const { content } = req.body || {};
+    res.json(linkGrabber.saveCrawlerCookies(content));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.delete('/cookies', (req, res) => {
+  try {
+    res.json(linkGrabber.deleteCrawlerCookies());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/crawl', async (req, res) => {
   const {
     url,
@@ -139,12 +160,13 @@ router.post('/send', async (req, res) => {
     if (target === 'queue') {
       const ids = [];
       const failed = [];
-      for (const u of list) {
+      for (const rawUrl of list) {
+        const u = linkGrabber.resolveDirectDownloadUrl(rawUrl);
         try {
           await ytdlp.assertPublicUrlResolved(u);
           ids.push(queue.enqueue(u, {}));
         } catch (err) {
-          failed.push(`${u}: ${err.message}`);
+          failed.push(`${rawUrl}: ${err.message}`);
         }
       }
       return res.json({ sent: ids.length, ids, failed });
@@ -162,7 +184,8 @@ router.post('/send', async (req, res) => {
       return res.json({ ...result, failed: [] });
     }
     if (target === 'aria2') {
-      const result = await linkGrabber.sendToAria2(list, {
+      const aria2Urls = list.map(linkGrabber.resolveDirectDownloadUrl);
+      const result = await linkGrabber.sendToAria2(aria2Urls, {
         rpcUrl: getSetting(KEYS.aria2Url),
         secret: getSetting(KEYS.aria2Secret),
         dir: getSetting(KEYS.aria2Dir),

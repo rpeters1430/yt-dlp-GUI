@@ -36,6 +36,13 @@ export default function Settings({ username, onLogout }) {
   const [cookiesBusy, setCookiesBusy] = useState(false);
   const [cookiesFileName, setCookiesFileName] = useState('');
 
+  const [crawlerCookiesStatus, setCrawlerCookiesStatus] = useState(null);
+  const [crawlerCookiesText, setCrawlerCookiesText] = useState('');
+  const [crawlerCookiesFileName, setCrawlerCookiesFileName] = useState('');
+  const [crawlerCookiesBusy, setCrawlerCookiesBusy] = useState(false);
+  const [crawlerCookiesMessage, setCrawlerCookiesMessage] = useState('');
+  const [crawlerCookiesError, setCrawlerCookiesError] = useState('');
+
   const [versions, setVersions] = useState(null);
   const [channel, setChannel] = useState('stable');
   const [ytdlpBusy, setYtdlpBusy] = useState(false);
@@ -78,6 +85,7 @@ export default function Settings({ username, onLogout }) {
 
   function refreshCookiesStatus() {
     api.getCookiesStatus().then((s) => setCookiesConfigured(s.configured)).catch(() => {});
+    api.getLinkGrabberCookies().then(setCrawlerCookiesStatus).catch(() => {});
   }
 
   function refreshVersions() {
@@ -159,6 +167,62 @@ export default function Settings({ username, onLogout }) {
     reader.onload = () => setCookiesText(String(reader.result || ''));
     reader.onerror = () => setCookiesError('Failed to read the selected file.');
     reader.readAsText(file);
+  }
+
+  async function handleSaveCrawlerCookies(e) {
+    if (e) e.preventDefault();
+    setCrawlerCookiesMessage('');
+    setCrawlerCookiesError('');
+    setCrawlerCookiesBusy(true);
+    try {
+      const res = await api.saveLinkGrabberCookies(crawlerCookiesText);
+      setCrawlerCookiesText('');
+      setCrawlerCookiesMessage(`Crawler cookies saved (${res.cookieCount} cookies).`);
+      refreshCookiesStatus();
+    } catch (err) {
+      setCrawlerCookiesError(err.message);
+    } finally {
+      setCrawlerCookiesBusy(false);
+    }
+  }
+
+  async function handleClearCrawlerCookies() {
+    setCrawlerCookiesMessage('');
+    setCrawlerCookiesError('');
+    try {
+      await api.deleteLinkGrabberCookies();
+      setCrawlerCookiesMessage('Crawler cookies removed.');
+      refreshCookiesStatus();
+    } catch (err) {
+      setCrawlerCookiesError(err.message);
+    }
+  }
+
+  function handleCrawlerCookiesFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setCrawlerCookiesFileName(file.name);
+    setCrawlerCookiesError('');
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const content = String(reader.result || '').trim();
+      setCrawlerCookiesText(content);
+      if (content) {
+        setCrawlerCookiesBusy(true);
+        try {
+          const res = await api.saveLinkGrabberCookies(content);
+          setCrawlerCookiesMessage(`Crawler cookies saved (${res.cookieCount} cookies).`);
+          refreshCookiesStatus();
+        } catch (err) {
+          setCrawlerCookiesError(err.message);
+        } finally {
+          setCrawlerCookiesBusy(false);
+        }
+      }
+    };
+    reader.onerror = () => setCrawlerCookiesError('Failed to read the selected file.');
+    reader.readAsText(file);
+    e.target.value = '';
   }
 
   async function handleChannelChange(value) {
@@ -434,6 +498,7 @@ export default function Settings({ username, onLogout }) {
           )}
 
           {section === 'cookies' && (
+            <>
       <section className="panel">
         <div className="panel-header">
           <h2><Cookie size={16} /> Site cookies</h2>
@@ -481,6 +546,53 @@ export default function Settings({ username, onLogout }) {
           {cookiesError && <div className="alert alert-error"><AlertCircle size={15} />{cookiesError}</div>}
         </form>
       </section>
+
+      <section className="panel" style={{ marginTop: '24px' }}>
+        <div className="panel-header">
+          <h2><Cookie size={16} /> Forum crawler cookies</h2>
+          {crawlerCookiesStatus !== null && (
+            <span className={`tag status-tag ${crawlerCookiesStatus.configured ? 'status-completed' : ''}`}>
+              {crawlerCookiesStatus.configured ? `Active (${crawlerCookiesStatus.cookieCount} cookies)` : 'Not configured'}
+            </span>
+          )}
+        </div>
+        <p className="panel-description">
+          Used by the forum crawler &amp; link grabber (SimpCity / XenForo) to access members-only threads, hidden attachments,
+          and protected download links. Export cookies while signed into the forum using <em>Cookie-Editor</em> (JSON) or <em>Get cookies.txt LOCALLY</em> (Netscape format).
+          Saved permanently as <code>config/crawler_cookies.txt</code> and used automatically for all future crawls.
+          {crawlerCookiesStatus?.domains?.length > 0 && (
+            <span style={{ display: 'block', marginTop: '6px' }}>
+              <strong>Configured domains:</strong> {crawlerCookiesStatus.domains.join(', ')}
+            </span>
+          )}
+        </p>
+        <form onSubmit={handleSaveCrawlerCookies} className="settings-form">
+          <label className="file-input-label">
+            <Upload size={14} />
+            {crawlerCookiesFileName || 'Upload crawler cookies.txt or cookies.json…'}
+            <input type="file" accept=".txt,.json,text/plain" onChange={handleCrawlerCookiesFile} hidden />
+          </label>
+          <textarea
+            placeholder="…or paste crawler Netscape cookies.txt or JSON array here"
+            rows={6}
+            value={crawlerCookiesText}
+            onChange={(e) => setCrawlerCookiesText(e.target.value)}
+          />
+          <div className="options-row" style={{ marginTop: 0 }}>
+            <button type="submit" disabled={crawlerCookiesBusy || !crawlerCookiesText.trim()}>
+              {crawlerCookiesBusy ? 'Saving…' : 'Save crawler cookies'}
+            </button>
+            {crawlerCookiesStatus?.configured && (
+              <button type="button" className="btn-secondary" onClick={handleClearCrawlerCookies}>
+                Remove saved crawler cookies
+              </button>
+            )}
+          </div>
+          {crawlerCookiesMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{crawlerCookiesMessage}</div>}
+          {crawlerCookiesError && <div className="alert alert-error"><AlertCircle size={15} />{crawlerCookiesError}</div>}
+        </form>
+      </section>
+            </>
           )}
 
           {section === 'tools' && (
