@@ -53,6 +53,9 @@ export const api = {
   sendLinks: (payload) => request('/linkgrabber/send', { method: 'POST', body: JSON.stringify(payload) }),
   getLinkGrabberSettings: () => request('/linkgrabber/settings'),
   updateLinkGrabberSettings: (payload) => request('/linkgrabber/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  testJDownloader: () => request('/linkgrabber/test-jd', { method: 'POST', body: '{}' }),
+  getLinkGrabberHistoryStats: () => request('/linkgrabber/history/stats'),
+  clearLinkGrabberHistory: () => request('/linkgrabber/history', { method: 'DELETE' }),
 
   listWatches: () => request('/watches'),
   inspectWatch: (url) => request('/watches/inspect', { method: 'POST', body: JSON.stringify({ url }) }),
