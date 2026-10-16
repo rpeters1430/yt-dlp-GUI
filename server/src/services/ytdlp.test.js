@@ -63,19 +63,36 @@ test('getQuickjsBin resolves binary name correctly', () => {
   assert.ok(typeof bin === 'string' && bin.length > 0);
 });
 
-test('buildDownloadArgs uses QuickJS-ng instead of the default Deno runtime', () => {
+test('buildDownloadArgs enables Node and QuickJS-ng by path instead of the default Deno-only', () => {
   const { buildDownloadArgs } = require('./ytdlp');
   const args = buildDownloadArgs('https://www.youtube.com/watch?v=dQw4w9WgXcQ', {});
   const clear = args.indexOf('--no-js-runtimes');
-  const enable = args.indexOf('--js-runtimes');
-  assert.ok(clear !== -1 && enable > clear);
-  assert.match(args[enable + 1], /^quickjs(:|$)/);
+  const enabled = args.flatMap((a, i) => (a === '--js-runtimes' ? [args[i + 1]] : []));
+  assert.ok(clear !== -1 && args.indexOf('--js-runtimes') > clear);
+  assert.ok(enabled.includes(`node:${process.execPath}`), enabled.join(' '));
+  for (const rt of enabled) assert.match(rt, /^(deno|node|quickjs)(:|$)/);
+});
+
+test('JS_RUNTIMES limits which runtimes yt-dlp is given', () => {
+  const { getJsRuntimes } = require('./ytdlpPaths');
+  const saved = process.env.JS_RUNTIMES;
+  try {
+    process.env.JS_RUNTIMES = 'node';
+    assert.deepEqual(getJsRuntimes(), [{ name: 'node', path: process.execPath }]);
+    process.env.JS_RUNTIMES = 'bogus';
+    assert.deepEqual(getJsRuntimes(), [{ name: 'quickjs', path: null }]);
+  } finally {
+    if (saved === undefined) delete process.env.JS_RUNTIMES;
+    else process.env.JS_RUNTIMES = saved;
+  }
 });
 
 test('getVersions returns quickjs version property', async () => {
   const { getVersions } = require('./ytdlp');
   const versions = await getVersions();
   assert.ok('quickjs' in versions);
+  assert.ok('deno' in versions);
+  assert.ok('jsRuntimes' in versions);
   assert.ok('node' in versions);
 });
 

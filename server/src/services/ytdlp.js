@@ -6,14 +6,14 @@ const siteProfiles = require('./siteProfiles');
 const { DEFAULT_TEMPLATE: DEFAULT_OUTPUT_TEMPLATE } = require('./outputTemplate');
 
 const {
-  YTDLP_BIN, DOWNLOAD_DIR, VIDEO_DIR, MUSIC_DIR, COOKIES_FILE, YTDLP_CACHE_DIR, getQuickjsBin, getFfmpegDir, getFfmpegBin,
+  YTDLP_BIN, DOWNLOAD_DIR, VIDEO_DIR, MUSIC_DIR, COOKIES_FILE, YTDLP_CACHE_DIR, getQuickjsBin, getFfmpegDir, getFfmpegBin, jsRuntimeArgs,
 } = require('./ytdlpPaths');
 const {
   cookieArgs, setTwitchAuthCookie, hasTwitchAuthCookie, getTwitchAuthTokenMasked,
   writeCookiesFilePreservingTwitchAuth, withPrivateCookies, sweepPrivateCookieDirs, PRIVATE_COOKIES_ROOT,
 } = require('./ytdlpCookies');
 const {
-  getVersions, updateYtdlp, updateFfmpeg, updateFfmpegIfAvailable, updateQuickjs, updateQuickjsIfAvailable,
+  getVersions, detectJsRuntimes, updateYtdlp, updateFfmpeg, updateFfmpegIfAvailable, updateQuickjs, updateQuickjsIfAvailable,
   computeFileSha256, parseSha256ForAsset, verifyExecutableHeader,
 } = require('./ytdlpTools');
 
@@ -108,19 +108,12 @@ function ffmpegArgs() {
   return dir ? ['--ffmpeg-location', dir] : [];
 }
 
-// yt-dlp needs a JS runtime to solve YouTube's JS challenges. It only enables Deno by
-// default, so --no-js-runtimes clears that and QuickJS-ng (`qjs`) is enabled instead; a bare
-// `quickjs` lets yt-dlp find qjs on PATH. yt-dlp's pip package doesn't bundle the EJS
+// yt-dlp needs a JS runtime to solve YouTube's JS challenges; jsRuntimeArgs (ytdlpPaths)
+// enables every one that's installed. yt-dlp's pip package doesn't bundle the EJS
 // challenge-solver script the way official executables do, so YouTube extraction silently
 // falls back to images-only formats unless we explicitly allow it to fetch that script at
 // runtime. --cache-dir persists it (and other yt-dlp caches) across container restarts
 // instead of re-fetching every time.
-function jsRuntimeArgs() {
-  const qjsBin = getQuickjsBin();
-  const runtime = path.isAbsolute(qjsBin) ? `quickjs:${qjsBin}` : 'quickjs';
-  return ['--no-js-runtimes', '--js-runtimes', runtime];
-}
-
 function commonArgs() {
   return [
     ...jsRuntimeArgs(),
@@ -1553,6 +1546,7 @@ module.exports = {
   embedThumbnailFromUrl,
   formatCommand,
   getVersions,
+  detectJsRuntimes,
   updateYtdlp,
   updateFfmpeg,
   updateFfmpegIfAvailable,
