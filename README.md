@@ -96,6 +96,7 @@
   - [Auto-delete & Housekeeping](#auto-delete)
   - [Live Streams & Twitch Hub](#live-streams)
   - [Music Hub & Lidarr Integration](#music-hub--music-watcher)
+  - [Link Grabber & Forum Crawler](#link-grabber--forum-crawler)
   - [Notifications](#notifications)
   - [Media Server Sync (Jellyfin & Plex)](#jellyfin-playlist-sync)
 - [Quick start (Docker Compose)](#quick-start-docker-compose)
@@ -107,6 +108,7 @@
 - [Jellyfin integration](#jellyfin-integration)
 - [Plex integration](#plex-integration)
 - [Lidarr integration](#lidarr-integration)
+- [Link Grabber & forum crawler](#link-grabber-and-forum-crawler)
 - [Scheduled tasks](#scheduled-tasks)
 - [Where your data lives](#where-your-data-lives)
 - [Security notes](#security-notes)
@@ -183,6 +185,14 @@
 - **Download Client Bridge (`/api/lidarr/qbit` & `/api/lidarr/sab`)**: Emulates qBittorrent v2 or SABnzbd API endpoints for seamless handoff to Lidarr's Completed Download Handling.
 - **Wanted Albums Browser**: Direct UI interface within the Music page to browse Lidarr's wanted missing albums and grab them with one click.
 - **Automatic Library Rescan**: Automatically commands Lidarr to run `DownloadedAlbumsScan` upon job completion.
+
+### Link Grabber & Forum Crawler
+- **Links page**: Crawl a forum thread or any page and list every download link it contains, grouped by host, with filters and search.
+- **Thread-aware**: XenForo threads (SimpCity and similar) can be crawled whole, by page range, or just the last N pages; quoted replies and mirror-bot reposts are skipped and Base64-hidden links decoded.
+- **Archive passwords**: `Password: …` lines are picked up per page and shown for copying.
+- **Your choice of hand-off**: Copy the selected links, queue them here with yt-dlp, or send them to JDownloader (Click'n'Load) or aria2. Nothing is sent until you click **Send links**.
+- **History**: Links you've already sent are marked so re-crawling an active thread highlights only what's new.
+- **Command-line crawler** (`crawler/`): The same crawl from a terminal, printing a plain list of links to copy (see [below](#link-grabber-and-forum-crawler)).
 
 ### Notifications
 - Dispatches webhook payloads to **Discord**, **Slack**, **Mattermost**, **Rocket.Chat**, **ntfy**, **Gotify**, or generic JSON webhooks (Home Assistant, n8n, Node-RED).
@@ -447,6 +457,49 @@ flowchart LR
    - In the app's **Music → Lidarr** tab, enter your Lidarr server URL and API key.
    - Enable **Automatically notify Lidarr when downloads finish** to trigger `DownloadedAlbumsScan` as soon as music completes.
    - Browse and download wanted/missing albums from Lidarr with a single click.
+
+## Link Grabber and forum crawler
+
+### In the web app
+
+Open **Links** in the sidebar, paste a thread or page URL and pick how many pages to crawl:
+
+| Mode | Crawls |
+|---|---|
+| Follow "Next" links | Any site: the page plus the pages its *Next* links lead to |
+| Whole Thread | Every page of a forum thread |
+| Last N Pages | Only the newest pages, handy for checking an active thread |
+| Page Range | The pages you list, e.g. 20–27 |
+| Single Page | Just the URL you pasted |
+
+Forums that need a login use your site cookies: tick **Use saved cookies.txt** (the one from Settings) or use **Paste custom cookies** for that one crawl.
+
+Select the links you want, then **Copy selected links** or choose a target and **Send links**. For JDownloader, click **Downloaders**, enter its Click'n'Load address (`http://<host>:9666`, not the `5800` web UI port), and press **Test connection** to check it can be reached. In package-per-page mode each JDownloader package is named `[Page N] Thread title` and carries the passwords found on that page. **Clear history** in the same panel makes previously sent links show as new again.
+
+### From the command line
+
+`crawler/crawler.py` does the same crawl from a terminal and prints the links as a plain list, one URL per line. It runs from a checkout of this repo (it isn't part of the Docker image) and needs Python 3.9+:
+
+```bash
+cd crawler
+pip install -r requirements.txt
+
+python crawler.py "https://simpcity.cr/threads/name.12345/" --last 3   # newest 3 pages
+python crawler.py "https://simpcity.cr/threads/name.12345/" --all-pages
+python crawler.py "https://simpcity.cr/threads/name.12345/" --pages 20-
+python crawler.py threads.txt --last 3                                 # a watchlist, one URL per line
+
+python crawler.py URL > links.txt   # only the links go to stdout
+python crawler.py URL --copy        # also copy them to the clipboard
+python crawler.py URL --by-page     # '# title - page N' and '# password:' lines between groups
+```
+
+- **Cookies**: export your forum cookies while logged in to `cookies.json` or `cookies.txt` in the folder you run from (see `cookies.example.json`). Both names are git-ignored, as are `threads.txt` and `*_cookies.*`.
+- **History**: listed links are remembered in `crawler/crawled_history.db`, and in the web app's history when `config/app.db` is present, so the next run shows only new links. `--ignore-history` lists everything again; `--no-record` leaves the history untouched.
+- **JDownloader is off by default.** Add `--jd` (with `--jd-url http://<host>:9666` or `JD_URL`) to send the links, or set `CRAWLER_SEND_TO_JD=1` to send every run; `--no-jd` overrides that setting.
+- A thread that fails in a watchlist is skipped and reported at the end; the rest still run.
+
+All flags are listed in [`crawler/README.md`](crawler/README.md) and with `python crawler.py --help`.
 
 ## Scheduled tasks
 
