@@ -42,6 +42,56 @@ function getQuickjsBin() {
   return 'qjs';
 }
 
+// First executable named `name` in CUSTOM_BIN_DIR or on PATH, or null.
+function findOnPath(name) {
+  const binName = process.platform === 'win32' ? `${name}.exe` : name;
+  const dirs = [CUSTOM_BIN_DIR, ...(process.env.PATH || '').split(path.delimiter)].filter(Boolean);
+  for (const dir of dirs) {
+    const candidate = path.join(dir, binName);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch { /* not here */ }
+  }
+  return null;
+}
+
+// JS runtimes yt-dlp may use to solve YouTube's JS challenges, as yt-dlp names them.
+// JS_RUNTIMES (comma-separated, e.g. "quickjs" or "node,quickjs") limits the set; by default
+// every one that's present is enabled and yt-dlp picks its preferred (deno > node > quickjs).
+// Node is always present — it's what runs this app — and is far faster than QuickJS.
+const KNOWN_JS_RUNTIMES = ['deno', 'node', 'quickjs'];
+
+function getJsRuntimes() {
+  const wanted = String(process.env.JS_RUNTIMES || KNOWN_JS_RUNTIMES.join(','))
+    .split(',').map((s) => s.trim().toLowerCase()).filter((s) => KNOWN_JS_RUNTIMES.includes(s));
+  const runtimes = [];
+  for (const name of wanted) {
+    if (name === 'node') {
+      runtimes.push({ name, path: process.execPath });
+    } else if (name === 'deno') {
+      const deno = findOnPath('deno');
+      if (deno) runtimes.push({ name, path: deno });
+    } else if (name === 'quickjs') {
+      const qjs = getQuickjsBin();
+      const resolved = path.isAbsolute(qjs) ? qjs : findOnPath(qjs);
+      if (resolved) runtimes.push({ name, path: resolved });
+    }
+  }
+  // Nothing usable found: still hand yt-dlp QuickJS by name so its own lookup can try.
+  return runtimes.length ? runtimes : [{ name: 'quickjs', path: null }];
+}
+
+// yt-dlp only enables Deno by default, so --no-js-runtimes clears that and the runtimes
+// found above are enabled explicitly, each with its absolute path.
+function jsRuntimeArgs() {
+  const args = ['--no-js-runtimes'];
+  for (const { name, path: bin } of getJsRuntimes()) {
+    args.push('--js-runtimes', bin ? `${name}:${bin}` : name);
+  }
+  return args;
+}
+
 function getFfmpegDir() {
   if (process.env.FFMPEG_DIR) return process.env.FFMPEG_DIR;
   const binName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
@@ -63,4 +113,5 @@ function getFfmpegBin() {
 module.exports = {
   YTDLP_BIN, DOWNLOAD_DIR, VIDEO_DIR, MUSIC_DIR, CONFIG_DIR, COOKIES_FILE, YTDLP_CACHE_DIR, CUSTOM_BIN_DIR,
   FFMPEG_BUILD_MARKER, resolveMusicDir, getQuickjsBin, getFfmpegDir, getFfmpegBin,
+  findOnPath, getJsRuntimes, jsRuntimeArgs,
 };

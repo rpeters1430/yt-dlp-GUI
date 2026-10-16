@@ -8,7 +8,7 @@ const { pipeline } = require('stream/promises');
 const { Readable } = require('stream');
 const siteProfiles = require('./siteProfiles');
 const {
-  YTDLP_BIN, CONFIG_DIR, CUSTOM_BIN_DIR, FFMPEG_BUILD_MARKER, getQuickjsBin, getFfmpegBin,
+  YTDLP_BIN, CONFIG_DIR, CUSTOM_BIN_DIR, FFMPEG_BUILD_MARKER, getQuickjsBin, getFfmpegBin, findOnPath, jsRuntimeArgs,
 } = require('./ytdlpPaths');
 
 // Runs `cmd args` and resolves with stdout, or null if the binary is missing/errors —
@@ -27,18 +27,48 @@ function firstLine(output) {
   return output ? output.split('\n')[0].trim() : null;
 }
 
+// Asks yt-dlp itself which JS runtimes it can use with the flags the app passes, from the
+// "[debug] JS runtimes: ..." line `-v` prints before it complains there's no URL. Returns
+// e.g. "deno-2.9.7, node-24.22.0, quickjs-ng-0.17.0", "none", or null if yt-dlp didn't say.
+function detectJsRuntimes() {
+  return new Promise((resolve) => {
+    let output = '';
+    let proc;
+    try {
+      proc = spawn(YTDLP_BIN, ['-v', '--ignore-config', ...jsRuntimeArgs()]);
+    } catch {
+      resolve(null);
+      return;
+    }
+    const timer = setTimeout(() => proc.kill('SIGKILL'), 30000);
+    proc.stdout.on('data', (d) => (output += d));
+    proc.stderr.on('data', (d) => (output += d));
+    proc.on('error', () => { clearTimeout(timer); resolve(null); });
+    proc.on('close', () => {
+      clearTimeout(timer);
+      const match = output.match(/\[debug\] JS runtimes:\s*(.+)/);
+      resolve(match ? match[1].trim() : null);
+    });
+  });
+}
+
 async function getVersions() {
   const ffmpegBin = getFfmpegBin();
-  const [ytdlpOut, ffmpegOut, quickjsOut] = await Promise.all([
+  const denoBin = findOnPath('deno');
+  const [ytdlpOut, ffmpegOut, quickjsOut, denoOut, jsRuntimes] = await Promise.all([
     runCommand(YTDLP_BIN, ['--version']),
     runCommand(ffmpegBin, ['-version']),
     runCommand(getQuickjsBin(), ['--version']),
+    denoBin ? runCommand(denoBin, ['--version']) : Promise.resolve(null),
+    detectJsRuntimes(),
   ]);
   return {
     ytdlp: firstLine(ytdlpOut),
     ffmpeg: firstLine(ffmpegOut),
     quickjs: firstLine(quickjsOut),
+    deno: firstLine(denoOut),
     node: process.version,
+    jsRuntimes,
   };
 }
 
@@ -557,6 +587,7 @@ async function updateQuickjsIfAvailable() {
 }
 
 module.exports = {
+  detectJsRuntimes,
   runCommand,
   firstLine,
   getVersions,

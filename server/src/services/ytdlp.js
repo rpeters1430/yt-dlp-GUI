@@ -6,14 +6,14 @@ const siteProfiles = require('./siteProfiles');
 const { DEFAULT_TEMPLATE: DEFAULT_OUTPUT_TEMPLATE } = require('./outputTemplate');
 
 const {
-  YTDLP_BIN, DOWNLOAD_DIR, VIDEO_DIR, MUSIC_DIR, COOKIES_FILE, YTDLP_CACHE_DIR, getQuickjsBin, getFfmpegDir, getFfmpegBin,
+  YTDLP_BIN, DOWNLOAD_DIR, VIDEO_DIR, MUSIC_DIR, COOKIES_FILE, YTDLP_CACHE_DIR, getQuickjsBin, getFfmpegDir, getFfmpegBin, jsRuntimeArgs,
 } = require('./ytdlpPaths');
 const {
   cookieArgs, setTwitchAuthCookie, hasTwitchAuthCookie, getTwitchAuthTokenMasked,
   writeCookiesFilePreservingTwitchAuth, withPrivateCookies, sweepPrivateCookieDirs, PRIVATE_COOKIES_ROOT,
 } = require('./ytdlpCookies');
 const {
-  getVersions, updateYtdlp, updateFfmpeg, updateFfmpegIfAvailable, updateQuickjs, updateQuickjsIfAvailable,
+  getVersions, detectJsRuntimes, updateYtdlp, updateFfmpeg, updateFfmpegIfAvailable, updateQuickjs, updateQuickjsIfAvailable,
   computeFileSha256, parseSha256ForAsset, verifyExecutableHeader,
 } = require('./ytdlpTools');
 
@@ -108,19 +108,12 @@ function ffmpegArgs() {
   return dir ? ['--ffmpeg-location', dir] : [];
 }
 
-// yt-dlp needs a JS runtime to solve YouTube's JS challenges. It only enables Deno by
-// default, so --no-js-runtimes clears that and QuickJS-ng (`qjs`) is enabled instead; a bare
-// `quickjs` lets yt-dlp find qjs on PATH. yt-dlp's pip package doesn't bundle the EJS
+// yt-dlp needs a JS runtime to solve YouTube's JS challenges; jsRuntimeArgs (ytdlpPaths)
+// enables every one that's installed. yt-dlp's pip package doesn't bundle the EJS
 // challenge-solver script the way official executables do, so YouTube extraction silently
 // falls back to images-only formats unless we explicitly allow it to fetch that script at
 // runtime. --cache-dir persists it (and other yt-dlp caches) across container restarts
 // instead of re-fetching every time.
-function jsRuntimeArgs() {
-  const qjsBin = getQuickjsBin();
-  const runtime = path.isAbsolute(qjsBin) ? `quickjs:${qjsBin}` : 'quickjs';
-  return ['--no-js-runtimes', '--js-runtimes', runtime];
-}
-
 function commonArgs() {
   return [
     ...jsRuntimeArgs(),
@@ -875,10 +868,13 @@ function buildDownloadArgs(url, rawOptions = {}) {
     args.push('--download-sections', options.downloadSections.trim());
   }
 
-  // SponsorBlock removal and --download-sections cut the file with a stream copy, which can
-  // only start video on a keyframe while audio is cut exactly — so every cut leaves the audio
-  // ahead of the video. Re-encoding just around the cut points keeps the two in sync.
-  if (sponsorblockRemoveCats || (options.downloadSections && options.downloadSections.trim())) {
+  // SponsorBlock removal and --download-sections cut the file with a stream copy, which snaps
+  // video to the nearest keyframe and can leave a brief glitch at each cut.
+  // --force-keyframes-at-cuts avoids that, but yt-dlp does it by re-encoding the WHOLE video
+  // in software — that pins every CPU core for as long as the video plays, or longer, on a
+  // small NAS. So it's opt-in only (FORCE_KEYFRAMES_AT_CUTS=1).
+  const cutsFile = sponsorblockRemoveCats || (options.downloadSections && options.downloadSections.trim());
+  if (cutsFile && /^(1|true|yes|on)$/i.test(String(process.env.FORCE_KEYFRAMES_AT_CUTS || '').trim())) {
     args.push('--force-keyframes-at-cuts');
   }
 
@@ -1550,6 +1546,7 @@ module.exports = {
   embedThumbnailFromUrl,
   formatCommand,
   getVersions,
+  detectJsRuntimes,
   updateYtdlp,
   updateFfmpeg,
   updateFfmpegIfAvailable,

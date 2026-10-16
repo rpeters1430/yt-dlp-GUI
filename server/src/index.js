@@ -61,6 +61,14 @@ plexSync.start();
 dependencyUpdater.start();
 // Reads per-site feature support (e.g. --live-from-start) from the installed yt-dlp.
 require('./services/siteProfiles').refreshYtdlpFacts();
+// Log which JS runtimes yt-dlp can actually use for YouTube, so a missing one shows up in `docker logs`.
+ytdlp.detectJsRuntimes().then((found) => {
+  if (!found || found === 'none') {
+    console.warn('[ytdlp:js] yt-dlp found no usable JS runtime; YouTube downloads may fail or lose formats');
+  } else {
+    console.log(`[ytdlp:js] JS runtimes available to yt-dlp: ${found}`);
+  }
+}).catch(() => {});
 
 server.listen(PORT, () => {
   console.log(`yt-dlp GUI server listening on port ${PORT}`);

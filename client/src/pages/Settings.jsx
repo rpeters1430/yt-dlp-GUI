@@ -492,7 +492,9 @@ export default function Settings({ username, onLogout }) {
           <dt>yt-dlp</dt><dd>{versions ? versions.ytdlp || 'unknown' : 'Loading…'}</dd>
           <dt>ffmpeg</dt><dd>{versions ? versions.ffmpeg || 'unknown' : 'Loading…'}</dd>
           <dt>Node.js</dt><dd>{versions ? versions.node || 'unknown' : 'Loading…'}</dd>
-          <dt>QuickJS-ng</dt><dd>{versions ? versions.quickjs || 'unknown' : 'Loading…'}</dd>
+          <dt>QuickJS-ng</dt><dd>{versions ? versions.quickjs || 'not found' : 'Loading…'}</dd>
+          <dt>Deno</dt><dd>{versions ? versions.deno || 'not installed' : 'Loading…'}</dd>
+          <dt>JS runtimes yt-dlp can use</dt><dd>{versions ? versions.jsRuntimes || 'unknown' : 'Loading…'}</dd>
         </dl>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '16px' }}>

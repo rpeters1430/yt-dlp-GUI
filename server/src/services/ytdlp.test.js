@@ -63,19 +63,36 @@ test('getQuickjsBin resolves binary name correctly', () => {
   assert.ok(typeof bin === 'string' && bin.length > 0);
 });
 
-test('buildDownloadArgs uses QuickJS-ng instead of the default Deno runtime', () => {
+test('buildDownloadArgs enables Node and QuickJS-ng by path instead of the default Deno-only', () => {
   const { buildDownloadArgs } = require('./ytdlp');
   const args = buildDownloadArgs('https://www.youtube.com/watch?v=dQw4w9WgXcQ', {});
   const clear = args.indexOf('--no-js-runtimes');
-  const enable = args.indexOf('--js-runtimes');
-  assert.ok(clear !== -1 && enable > clear);
-  assert.match(args[enable + 1], /^quickjs(:|$)/);
+  const enabled = args.flatMap((a, i) => (a === '--js-runtimes' ? [args[i + 1]] : []));
+  assert.ok(clear !== -1 && args.indexOf('--js-runtimes') > clear);
+  assert.ok(enabled.includes(`node:${process.execPath}`), enabled.join(' '));
+  for (const rt of enabled) assert.match(rt, /^(deno|node|quickjs)(:|$)/);
+});
+
+test('JS_RUNTIMES limits which runtimes yt-dlp is given', () => {
+  const { getJsRuntimes } = require('./ytdlpPaths');
+  const saved = process.env.JS_RUNTIMES;
+  try {
+    process.env.JS_RUNTIMES = 'node';
+    assert.deepEqual(getJsRuntimes(), [{ name: 'node', path: process.execPath }]);
+    process.env.JS_RUNTIMES = 'bogus';
+    assert.deepEqual(getJsRuntimes(), [{ name: 'quickjs', path: null }]);
+  } finally {
+    if (saved === undefined) delete process.env.JS_RUNTIMES;
+    else process.env.JS_RUNTIMES = saved;
+  }
 });
 
 test('getVersions returns quickjs version property', async () => {
   const { getVersions } = require('./ytdlp');
   const versions = await getVersions();
   assert.ok('quickjs' in versions);
+  assert.ok('deno' in versions);
+  assert.ok('jsRuntimes' in versions);
   assert.ok('node' in versions);
 });
 
@@ -420,12 +437,22 @@ test('MP4 video downloads prefer AAC audio so the merged file stays in sync', ()
   assert.equal(args[args.indexOf('-f') + 1], 'bestvideo*+bestaudio[ext=m4a]/bestvideo*+bestaudio/best');
 });
 
-test('cutting the file (SponsorBlock, sections) forces keyframes so audio stays in sync', () => {
+test('cutting the file only forces keyframes (a full re-encode) when FORCE_KEYFRAMES_AT_CUTS is set', () => {
   const { buildDownloadArgs } = require('./ytdlp');
   const url = 'https://www.youtube.com/watch?v=abc123';
-  assert.ok(buildDownloadArgs(url, { sponsorblockRemove: 'sponsor' }).includes('--force-keyframes-at-cuts'));
-  assert.ok(buildDownloadArgs(url, { downloadSections: '*0-60' }).includes('--force-keyframes-at-cuts'));
-  assert.equal(buildDownloadArgs(url, {}).includes('--force-keyframes-at-cuts'), false);
+  const saved = process.env.FORCE_KEYFRAMES_AT_CUTS;
+  try {
+    delete process.env.FORCE_KEYFRAMES_AT_CUTS;
+    assert.equal(buildDownloadArgs(url, { sponsorblockRemove: 'sponsor' }).includes('--force-keyframes-at-cuts'), false);
+    assert.equal(buildDownloadArgs(url, { downloadSections: '*0-60' }).includes('--force-keyframes-at-cuts'), false);
+    process.env.FORCE_KEYFRAMES_AT_CUTS = '1';
+    assert.ok(buildDownloadArgs(url, { sponsorblockRemove: 'sponsor' }).includes('--force-keyframes-at-cuts'));
+    assert.ok(buildDownloadArgs(url, { downloadSections: '*0-60' }).includes('--force-keyframes-at-cuts'));
+    assert.equal(buildDownloadArgs(url, {}).includes('--force-keyframes-at-cuts'), false);
+  } finally {
+    if (saved === undefined) delete process.env.FORCE_KEYFRAMES_AT_CUTS;
+    else process.env.FORCE_KEYFRAMES_AT_CUTS = saved;
+  }
 });
 
 test('assertPublicUrl blocks loopback and private hosts in every spelling', () => {
