@@ -34,15 +34,27 @@ function parseNetscapeCookies(text) {
     line = line.replace(/\r$/, '');
     if (line.startsWith('#HttpOnly_')) line = line.slice('#HttpOnly_'.length);
     else if (!line.trim() || line.trim().startsWith('#')) continue;
-    const parts = line.split('\t');
-    if (parts.length < 7) continue;
+    let parts = line.split('\t');
+    if (parts.length < 7) {
+      // Fallback: split on whitespace (for copy-pasted or spaces-formatted Netscape cookies)
+      // The first 6 tokens are domain, includeSubdomains, path, secure, expiry, name.
+      // Token 7+ is the cookie value (which may contain spaces or symbols).
+      const tokens = line.trim().split(/\s+/);
+      if (tokens.length >= 6) {
+        parts = [...tokens.slice(0, 6), tokens.slice(6).join(' ')];
+      } else {
+        continue;
+      }
+    }
+    const name = parts[5];
+    if (!name) continue;
     cookies.push({
       domain: parts[0].toLowerCase(),
       path: parts[2] || '/',
-      secure: parts[3].toUpperCase() === 'TRUE',
+      secure: String(parts[3] || '').toUpperCase() === 'TRUE',
       expiry: Number(parts[4]) || 0,
-      name: parts[5],
-      value: parts.slice(6).join('\t'),
+      name,
+      value: parts.length > 6 ? parts.slice(6).join('\t') : '',
     });
   }
   return cookies;
@@ -234,12 +246,16 @@ function unwrapRedirect(url) {
   return url;
 }
 
+const BARE_HOST_REGEX = /\b((?:(?:https?:\/\/)?(?:[a-z0-9-]+\.)?(?:pixeldrain\.com|gofile\.io|turbo\.cr|saint2\.su|1fichier\.com|rapidgator\.net|mediafire\.com|krakenfiles\.com|workupload\.com|send\.cm|qiwi\.gg|terabox\.com|teraboxapp\.com|katfile\.com|filecrypt\.(?:cc|co)|buzzheavier\.com|fastupload\.io|catbox\.moe|quax\.is|mega\.(?:nz|co\.nz)|(?:bunkr|filester|cyberdrop)\.[a-z]{2,8}))\/[^\s"'<>()[\]{}]+)/gi;
+
 const PASSWORD_PATTERNS = [
-  /(?:archive\s*)?pass(?:word)?\s*[:=]\s*["']?([^\s"'\n<>]+)/gi,
-  /\bpw\s*[:=]\s*["']?([^\s"'\n<>]+)/gi,
-  /\bpass\s*[:=]\s*["']?([^\s"'\n<>]+)/gi,
-  /contrase[ñn]a\s*[:=]\s*["']?([^\s"'\n<>]+)/gi,
-  /mot\s*de\s*passe\s*[:=]\s*["']?([^\s"'\n<>]+)/gi,
+  /(?:archive\s*)?pass(?:word)?\s*(?:is|:|=)\s*["']([^"'\n<]{2,60})["']/gi,
+  /\bpw\s*(?:is|:|=)\s*["']([^"'\n<]{2,60})["']/gi,
+  /(?:archive\s*)?pass(?:word)?\s*(?:is|:|=)\s*["']?([^\s"'\n<>]+)/gi,
+  /\bpw\s*(?:is|:|=)\s*["']?([^\s"'\n<>]+)/gi,
+  /\bpass\s*(?:is|:|=)\s*["']?([^\s"'\n<>]+)/gi,
+  /contrase[ñn]a\s*(?:is|:|=)\s*["']?([^\s"'\n<>]+)/gi,
+  /mot\s*de\s*passe\s*(?:is|:|=)\s*["']?([^\s"'\n<>]+)/gi,
 ];
 
 const IGNORE_PASSWORDS = new Set([
@@ -261,7 +277,7 @@ function extractPasswords(text) {
   return [...found];
 }
 
-const BASE64_PATTERN = /(?:[A-Za-z0-9+/]{4}){4,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?/g;
+const BASE64_PATTERN = /(?:[A-Za-z0-9+/_-]{4}){4,}(?:[A-Za-z0-9+/_-]{2}==|[A-Za-z0-9+/_-]{3}=)?/g;
 
 function extractBase64Links(text) {
   if (!text) return [];
@@ -270,11 +286,19 @@ function extractBase64Links(text) {
   for (const candidate of matches) {
     if (candidate.length < 16) continue;
     try {
-      const padLen = (-candidate.length % 4 + 4) % 4;
-      const padded = candidate + '='.repeat(padLen);
+      const normalized = candidate.replace(/-/g, '+').replace(/_/g, '/');
+      const padLen = (-normalized.length % 4 + 4) % 4;
+      const padded = normalized + '='.repeat(padLen);
       const decoded = Buffer.from(padded, 'base64').toString('utf8');
       for (const m of decoded.matchAll(/https?:\/\/[^\s"'<>()[\]{}]+/gi)) {
         const clean = m[0].replace(/[.,;:!?]+$/, '');
+        if (clean && !found.includes(clean)) {
+          found.push(clean);
+        }
+      }
+      for (const m of decoded.matchAll(BARE_HOST_REGEX)) {
+        let clean = m[1].replace(/[.,;:!?]+$/, '');
+        if (!/^https?:\/\//i.test(clean)) clean = `https://${clean}`;
         if (clean && !found.includes(clean)) {
           found.push(clean);
         }
@@ -387,15 +411,39 @@ function extractLinks(html, baseUrl, options = {}) {
       if (url) found.push({ url, source: 'embed' });
     }
   }
+
+  // Also catch generic elements with data-url, data-src, data-href, data-video (e.g. bbMediaWrapper / XenForo embeds)
+  for (const tag of body.match(/<[a-z0-9_-]+\b[^>]*\b(?:data-url|data-src|data-href|data-video)\b[^>]*>/gi) || []) {
+    for (const name of ['data-url', 'data-src', 'data-href', 'data-video']) {
+      const val = attr(tag, name);
+      if (val) {
+        const url = resolveUrl(val, baseUrl);
+        if (url) found.push({ url: hostOf(url) === pageHost ? unwrapRedirect(url) : url, source: 'embed' });
+      }
+    }
+  }
+
   for (const tag of body.match(/<a\b[^>]*>/gi) || []) {
     const url = resolveUrl(attr(tag, 'href'), baseUrl);
     // Only the site's own links can be redirect wrappers; an outbound link's query string
     // (e.g. ?ref=https://...) is left alone.
     if (url) found.push({ url: hostOf(url) === pageHost ? unwrapRedirect(url) : url, source: 'link' });
   }
+
   const text = body.replace(/<[^>]+>/g, ' ');
-  for (const m of decodeEntities(text).matchAll(/https?:\/\/[^\s"'<>()[\]{}]+/gi)) {
+  const decodedText = decodeEntities(text);
+
+  // Full http(s) URLs in plain text
+  for (const m of decodedText.matchAll(/https?:\/\/[^\s"'<>()[\]{}]+/gi)) {
     const url = resolveUrl(m[0].replace(/[.,;:!?]+$/, ''), baseUrl);
+    if (url) found.push({ url, source: 'text' });
+  }
+
+  // Bare known hoster URLs in plain text (e.g. gofile.io/d/..., pixeldrain.com/u/..., turbo.cr/embed/...)
+  for (const m of decodedText.matchAll(BARE_HOST_REGEX)) {
+    let rawMatch = m[1].replace(/[.,;:!?]+$/, '');
+    if (!/^https?:\/\//i.test(rawMatch)) rawMatch = `https://${rawMatch}`;
+    const url = resolveUrl(rawMatch, baseUrl);
     if (url) found.push({ url, source: 'text' });
   }
 
@@ -409,7 +457,7 @@ function extractLinks(html, baseUrl, options = {}) {
   }
 
   // Passwords
-  found.passwords = extractPasswords(text);
+  found.passwords = extractPasswords(decodedText);
   return found;
 }
 
@@ -464,7 +512,13 @@ async function fetchPage(url, { cookies, fetchImpl = fetch, assertUrl = ytdlp.as
     await assertUrl(current);
     const headers = {
       'User-Agent': USER_AGENT,
-      Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'same-origin',
+      'Sec-Fetch-User': '?1',
+      'Upgrade-Insecure-Requests': '1',
     };
     const cookieHeader = cookieHeaderFor(cookies, current);
     if (cookieHeader) headers.Cookie = cookieHeader;
@@ -473,7 +527,12 @@ async function fetchPage(url, { cookies, fetchImpl = fetch, assertUrl = ytdlp.as
       current = new URL(res.headers.get('location'), current).toString();
       continue;
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${current}`);
+    if (!res.ok) {
+      if (res.status === 403) {
+        throw new Error(`HTTP 403 Forbidden fetching ${current} (forum cookies may be missing or expired, or anti-bot challenge active)`);
+      }
+      throw new Error(`HTTP ${res.status} fetching ${current}`);
+    }
     const type = res.headers.get('content-type') || '';
     if (type && !/html|xml|text\/plain/i.test(type)) throw new Error(`Not a web page (${type.split(';')[0]})`);
     return { url: current, html: await readCapped(res, MAX_PAGE_BYTES) };
@@ -860,6 +919,15 @@ async function sendToAria2(urls, { rpcUrl, secret, dir, fetchImpl = fetch }) {
   return { sent: results.length - failed.length, failed };
 }
 
+function resolveDirectDownloadUrl(url) {
+  if (!url || typeof url !== 'string') return url;
+  const pdMatch = url.match(/^https?:\/\/(?:[a-zA-Z0-9-]+\.)?pixeldrain\.com\/u\/([a-zA-Z0-9_-]+)/i);
+  if (pdMatch) {
+    return `https://pixeldrain.com/api/file/${pdMatch[1]}?download`;
+  }
+  return url;
+}
+
 module.exports = {
   DEFAULT_MAX_PAGES,
   MAX_PAGES_LIMIT,
@@ -888,4 +956,5 @@ module.exports = {
   sendToJDownloader,
   testJDownloaderConnection,
   sendToAria2,
+  resolveDirectDownloadUrl,
 };

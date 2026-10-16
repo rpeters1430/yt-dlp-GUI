@@ -80,6 +80,8 @@ def find_default_cookie_file() -> Dict[str, str]:
         "cookies.txt",
         "simpcity_cookies.json",
         "simpcity_cookies.txt",
+        os.path.join(os.path.dirname(__file__), "cookies.json"),
+        os.path.join(os.path.dirname(__file__), "cookies.txt"),
         os.path.join(os.path.dirname(__file__), "..", "config", "crawler_cookies.txt"),
         os.path.join(os.path.dirname(__file__), "..", "config", "cookies.txt"),
     ]

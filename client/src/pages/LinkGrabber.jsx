@@ -6,7 +6,7 @@ import { useToast } from '../context/ToastContext.jsx';
 const KIND_LABELS = { video: 'Video file', audio: 'Audio file', archive: 'Archive', embed: 'Embed', link: 'Link', base64: 'Base64 link' };
 const TARGETS = [
   { id: 'queue', label: 'Download here (yt-dlp)' },
-  { id: 'jdownloader', label: 'Send to JDownloader' },
+  { id: 'jdownloader', label: 'Send to JDownloader / pyLoad' },
   { id: 'aria2', label: 'Send to aria2' },
 ];
 
@@ -97,9 +97,9 @@ function DownloaderSettings({ onClose }) {
         <button type="button" className="btn-ghost" onClick={onClose}>Close</button>
       </div>
       <p className="panel-description">
-        JDownloader receives links via Click&apos;n&apos;Load on port <strong>9666</strong>. If JDownloader is running in Docker
-        on a NAS (e.g. at <code>192.168.50.114</code>), ensure port 9666 is mapped in Docker (port 5800 is only the web GUI), and
-        disable <em>RemoteAPI: Extern Interface Localhost Only</em> in JDownloader Advanced Settings.
+        JDownloader and pyLoad receive links via Click&apos;n&apos;Load on port <strong>9666</strong>. If running in Docker
+        on a NAS (e.g. <code>jlesage/docker-jdownloader-2</code> or <code>linuxserver/pyload-ng</code>), ensure port 9666 is mapped in Docker (port 5800/8000 is only the web GUI), and
+        ensure external connections are permitted.
       </p>
       {!settings ? (
         error ? <div className="alert alert-error"><AlertCircle size={15} />{error}</div> : <div className="empty-state"><div className="spinner" /></div>
@@ -193,10 +193,23 @@ function CrawlerCookiesModal({ status, onClose, onSaved, onDeleted }) {
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
+    setError('');
     const reader = new FileReader();
-    reader.onload = (evt) => {
-      setText(evt.target.result || '');
+    reader.onload = async (evt) => {
+      const content = String(evt.target.result || '').trim();
+      setText(content);
+      if (!content) return;
+      setSaving(true);
+      try {
+        await onSaved(content);
+        onClose();
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setSaving(false);
+      }
     };
+    reader.onerror = () => setError('Failed to read the selected file.');
     reader.readAsText(file);
   }
 
@@ -335,6 +348,24 @@ export default function LinkGrabber() {
     await api.deleteLinkGrabberCookies();
     showToast('Saved crawler cookies deleted');
     await loadCookieStatus();
+  }
+
+  async function handleDirectCookieUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const content = String(evt.target.result || '').trim();
+      if (!content) return;
+      try {
+        await handleSaveCrawlerCookies(content);
+      } catch (err) {
+        showToast(err.message, { error: true });
+      }
+    };
+    reader.onerror = () => showToast('Failed to read selected cookie file', { error: true });
+    reader.readAsText(file);
+    e.target.value = '';
   }
 
   // Auto-detect thread mode when a XenForo thread URL is typed/pasted
@@ -617,24 +648,34 @@ export default function LinkGrabber() {
                 <span className="badge" style={{ background: '#10b981', color: '#fff', fontSize: '11px', padding: '2px 8px', borderRadius: '4px' }}>
                   ✓ Saved cookies active ({cookieStatus.cookieCount})
                 </span>
+                <label className="btn-secondary small" style={{ cursor: 'pointer', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <Upload size={13} /> Replace cookies.txt
+                  <input type="file" accept=".txt,.json" onChange={handleDirectCookieUpload} hidden />
+                </label>
                 <button type="button" className="btn-ghost small" onClick={() => setShowCookiesModal(true)}>
-                  Edit
+                  Manage
                 </button>
               </div>
             ) : (
-              <button type="button" className="btn-secondary small" onClick={() => setShowCookiesModal(true)}>
-                <Cookie size={13} /> Save cookie file
-              </button>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <label className="btn-secondary small" style={{ cursor: 'pointer', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <Upload size={13} /> Upload cookies.txt (save for all crawls)
+                  <input type="file" accept=".txt,.json" onChange={handleDirectCookieUpload} hidden />
+                </label>
+                <button type="button" className="btn-ghost small" onClick={() => setShowCookiesModal(true)}>
+                  <Cookie size={13} /> Paste
+                </button>
+              </div>
             )}
 
             <button type="button" className="btn-link small" onClick={() => setShowCookies((v) => !v)}>
-              {showCookies ? 'Hide' : 'Paste'} one-off cookies
+              {showCookies ? 'Hide' : 'Paste'} temporary cookies
             </button>
           </div>
 
           {showCookies && (
             <label className="field-label">
-              one-off cookies (Netscape or JSON format, used for this crawl only and not saved)
+              Temporary one-off cookies (Netscape or JSON format, overrides saved cookies for this crawl only without modifying your saved file)
               <textarea className="mono" rows={5} value={cookiesText} onChange={(e) => setCookiesText(e.target.value)} spellCheck={false} />
             </label>
           )}

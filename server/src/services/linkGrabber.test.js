@@ -26,6 +26,7 @@ const {
   sendToJDownloader,
   testJDownloaderConnection,
   sendToAria2,
+  resolveDirectDownloadUrl,
 } = require('./linkGrabber');
 
 const COOKIES = [
@@ -418,6 +419,13 @@ test('parseCookiesContent handles JSON, Netscape and header formats', () => {
   assert.equal(parsedNetscape.length, 1);
   assert.equal(parsedNetscape[0].name, 'sess');
 
+  const spaceSeparatedCookies = 'simpcity.cr   FALSE   /   TRUE   1817954650   xf_user   user_val_123';
+  const parsedSpaces = parseCookiesContent(spaceSeparatedCookies);
+  assert.equal(parsedSpaces.length, 1);
+  assert.equal(parsedSpaces[0].name, 'xf_user');
+  assert.equal(parsedSpaces[0].value, 'user_val_123');
+  assert.equal(parsedSpaces[0].domain, 'simpcity.cr');
+
   const headerCookies = 'foo=bar; baz=qux';
   const parsedHeader = parseCookiesContent(headerCookies);
   assert.equal(parsedHeader.length, 2);
@@ -446,4 +454,39 @@ test('crawler cookie persistence: save, get status, and delete', () => {
   const delRes = deleteCrawlerCookies();
   assert.equal(delRes.ok, true);
   assert.equal(getCrawlerCookiesStatus().configured, false);
+});
+
+test('resolveDirectDownloadUrl transforms pixeldrain /u/ links', () => {
+  assert.equal(
+    resolveDirectDownloadUrl('https://pixeldrain.com/u/vW1VQoT5'),
+    'https://pixeldrain.com/api/file/vW1VQoT5?download'
+  );
+  assert.equal(
+    resolveDirectDownloadUrl('https://gofile.io/d/123'),
+    'https://gofile.io/d/123'
+  );
+});
+
+test('extractLinks discovers bare known host URLs and URL-safe base64', () => {
+  const html = `
+    <div>Post text without protocol: gofile.io/d/LSfcHEWs and pixeldrain.com/u/vW1VQoT5</div>
+    <div>Also turbo.cr/embed/V0JRVlNS_Erug and bunkr.sk/f/uvRZKMEfLEHqL</div>
+    <div data-url="https://filester.gg/d/4PFZvhT"></div>
+    <p>Password is "my cool pass"</p>
+  `;
+  const links = extractLinks(html, 'https://simpcity.cr/threads/test.123');
+  const urls = links.map((l) => l.url);
+
+  assert.ok(urls.includes('https://gofile.io/d/LSfcHEWs'));
+  assert.ok(urls.includes('https://pixeldrain.com/u/vW1VQoT5'));
+  assert.ok(urls.includes('https://turbo.cr/embed/V0JRVlNS_Erug'));
+  assert.ok(urls.includes('https://bunkr.sk/f/uvRZKMEfLEHqL'));
+  assert.ok(urls.includes('https://filester.gg/d/4PFZvhT'));
+  assert.ok(links.passwords.includes('my cool pass'));
+
+  // URL-safe Base64 test
+  const rawUrl = 'https://pixeldrain.com/u/test_123';
+  const urlSafeB64 = Buffer.from(rawUrl).toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
+  const b64Links = extractBase64Links(`Here is the encoded link: ${urlSafeB64}`);
+  assert.ok(b64Links.includes(rawUrl));
 });

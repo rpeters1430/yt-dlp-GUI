@@ -92,6 +92,12 @@ KNOWN_HOSTERS = [
     "filester.ai",
     "filester.si",
     "filester.",
+    "filecrypt.cc",
+    "filecrypt.co",
+    "buzzheavier.com",
+    "fastupload.io",
+    "catbox.moe",
+    "quax.is",
 ]
 
 # File extensions that indicate direct download links
@@ -108,6 +114,11 @@ IGNORED_DOMAINS = [
     "turbostats.xyz",
     "goonbox.cr"
 ]
+
+BARE_HOST_PATTERN = re.compile(
+    r"\b((?:(?:https?://)?(?:[a-z0-9-]+\.)?(?:pixeldrain\.com|gofile\.io|turbo\.cr|saint2\.su|1fichier\.com|rapidgator\.net|mediafire\.com|krakenfiles\.com|workupload\.com|send\.cm|qiwi\.gg|terabox\.com|teraboxapp\.com|katfile\.com|filecrypt\.(?:cc|co)|buzzheavier\.com|fastupload\.io|catbox\.moe|quax\.is|mega\.(?:nz|co\.nz)|(?:bunkr|filester|cyberdrop)\.[a-z]{2,8}))/[^\s<>\"'()]+)",
+    re.IGNORECASE,
+)
 
 
 def unwrap_proxy_url(url: str) -> str:
@@ -141,7 +152,9 @@ def is_target_link(url: str, filter_known_hosts: bool = True) -> bool:
         return False
 
     path = parsed.path.lower()
-    if path.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".css", ".js")):
+
+    # Drop web page furniture (scripts, styles, icons, fonts)
+    if path.endswith((".css", ".js", ".mjs", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".eot")):
         return False
 
     if not filter_known_hosts:
@@ -309,6 +322,13 @@ def parse_page_content(
         raw_urls = re.findall(r"https?://[^\s<>\"'()]+", post_text)
         for raw in raw_urls:
             clean_url = unwrap_proxy_url(raw.rstrip(".,;!"))
+            if is_target_link(clean_url, filter_known_hosts=filter_hosts):
+                collected_links.append(clean_url)
+
+        # 5b. Bare known hoster URLs in plain text (e.g. gofile.io/d/..., turbo.cr/embed/...)
+        for match in BARE_HOST_PATTERN.findall(post_text):
+            full = match if match.startswith("http") else f"https://{match}"
+            clean_url = unwrap_proxy_url(full.rstrip(".,;!"))
             if is_target_link(clean_url, filter_known_hosts=filter_hosts):
                 collected_links.append(clean_url)
 

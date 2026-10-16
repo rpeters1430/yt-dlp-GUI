@@ -160,12 +160,13 @@ router.post('/send', async (req, res) => {
     if (target === 'queue') {
       const ids = [];
       const failed = [];
-      for (const u of list) {
+      for (const rawUrl of list) {
+        const u = linkGrabber.resolveDirectDownloadUrl(rawUrl);
         try {
           await ytdlp.assertPublicUrlResolved(u);
           ids.push(queue.enqueue(u, {}));
         } catch (err) {
-          failed.push(`${u}: ${err.message}`);
+          failed.push(`${rawUrl}: ${err.message}`);
         }
       }
       return res.json({ sent: ids.length, ids, failed });
@@ -183,7 +184,8 @@ router.post('/send', async (req, res) => {
       return res.json({ ...result, failed: [] });
     }
     if (target === 'aria2') {
-      const result = await linkGrabber.sendToAria2(list, {
+      const aria2Urls = list.map(linkGrabber.resolveDirectDownloadUrl);
+      const result = await linkGrabber.sendToAria2(aria2Urls, {
         rpcUrl: getSetting(KEYS.aria2Url),
         secret: getSetting(KEYS.aria2Secret),
         dir: getSetting(KEYS.aria2Dir),
