@@ -1,4 +1,5 @@
-# SimpCity Watchlist
-# Add one thread URL per line. Lines starting with # are comments and will be ignored.
+# Thread watchlist
+# Copy this file to threads.txt (git-ignored) and add one thread URL per line.
+# Lines starting with # are ignored. Run: python crawler.py threads.txt --last 3
 
-https://simpcity.cr/threads/ashley-matheson-smashedely.74421/
+https://simpcity.cr/threads/example-thread.12345/
