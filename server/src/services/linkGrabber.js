@@ -397,6 +397,7 @@ async function crawl({
   const byUrl = new Map();
   const visited = new Set();
   const allPasswords = new Set();
+  const pagePasswords = {};
   let truncated = false;
   let error = null;
 
@@ -410,7 +411,10 @@ async function crawl({
 
   function processPageLinks(html, pageUrl, pageNumber) {
     const extracted = extractLinks(html, pageUrl, { skipQuotes, skipBots, decodeBase64 });
-    for (const pw of (extracted.passwords || [])) allPasswords.add(pw);
+    for (const pw of (extracted.passwords || [])) {
+      allPasswords.add(pw);
+      pagePasswords[pageNumber] = [...new Set([...(pagePasswords[pageNumber] || []), pw])];
+    }
 
     for (const { url: link, source } of extracted) {
       if (!shouldKeep(link, source, siteHost)) continue;
@@ -524,6 +528,7 @@ async function crawl({
     pages,
     links: allLinks,
     passwords: [...allPasswords],
+    pagePasswords,
     newCount,
     historyCount,
     maxPage: detectedMaxPage,
@@ -588,7 +593,9 @@ function cleanUrls(urls) {
 }
 
 // JDownloader's Click'n'Load listener (port 9666).
-async function sendToJDownloader(urls, { baseUrl, packageName, passwords, packagePerPage, urlMetadata, threadUrl = '', fetchImpl = fetch }) {
+// In package-per-page mode each package gets its own page's passwords when `pagePasswords`
+// ({ [page]: [...] }) is given, and each page is recorded in history as soon as it is accepted.
+async function sendToJDownloader(urls, { baseUrl, packageName, passwords, packagePerPage, urlMetadata, pagePasswords, threadUrl = '', fetchImpl = fetch }) {
   if (!baseUrl) throw new Error('JDownloader address is not configured');
   let parsed;
   try {
@@ -604,7 +611,9 @@ async function sendToJDownloader(urls, { baseUrl, packageName, passwords, packag
   }
 
   const endpoint = new URL('/flash/add', baseUrl).toString();
-  const passwordStr = Array.isArray(passwords) ? passwords.join(',') : (typeof passwords === 'string' ? passwords : '');
+  const joinPasswords = (pws) => (Array.isArray(pws) ? pws.filter((p) => typeof p === 'string').join(',') : (typeof pws === 'string' ? pws : ''));
+  const passwordStr = joinPasswords(passwords);
+  const perPagePasswords = pagePasswords && typeof pagePasswords === 'object' && !Array.isArray(pagePasswords) ? pagePasswords : null;
 
   // Package per page mode
   if (packagePerPage && Array.isArray(urlMetadata) && urlMetadata.length > 0) {
@@ -624,7 +633,8 @@ async function sendToJDownloader(urls, { baseUrl, packageName, passwords, packag
       const pkg = packageName ? `[Page ${pageNum}] ${packageName}` : `[Page ${pageNum}]`;
       const body = new URLSearchParams({ urls: pageUrls.join('\r\n'), source: 'yt-dlp-gui' });
       body.set('package', pkg);
-      if (passwordStr) body.set('passwords', passwordStr);
+      const pagePw = perPagePasswords ? joinPasswords(perPagePasswords[pageNum]) : passwordStr;
+      if (pagePw) body.set('passwords', pagePw);
 
       const res = await fetchImpl(endpoint, {
         method: 'POST',
@@ -632,11 +642,14 @@ async function sendToJDownloader(urls, { baseUrl, packageName, passwords, packag
         body: body.toString(),
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
-      if (!res.ok) throw new Error(`JDownloader responded with HTTP ${res.status}`);
+      if (!res.ok) {
+        const sentNote = totalSent ? ` after ${totalSent} of ${urls.length} links were sent` : '';
+        throw new Error(`JDownloader responded with HTTP ${res.status}${sentNote}`);
+      }
+      recordCrawledLinks(pageUrls, packageName, threadUrl);
       totalSent += pageUrls.length;
       if (byPage.size > 1) await delay(250);
     }
-    recordCrawledLinks(urls, packageName, threadUrl);
     return { sent: totalSent };
   }
 

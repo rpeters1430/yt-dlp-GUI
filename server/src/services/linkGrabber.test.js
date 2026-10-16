@@ -347,3 +347,53 @@ test('sendToJDownloader records the thread URL in history, not the JDownloader a
   assert.equal(row.thread_url, 'https://forum.example.com/threads/t.1/');
   clearHistory();
 });
+
+test('sendToJDownloader per-page packages carry their own page passwords', async () => {
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push(new URLSearchParams(opts.body));
+    return new Response('success', { status: 200 });
+  };
+  await sendToJDownloader(['https://a.com/1', 'https://a.com/2', 'https://a.com/3'], {
+    baseUrl: 'http://127.0.0.1:9666',
+    packageName: 'T',
+    passwords: ['pw1', 'pw2'],
+    pagePasswords: { 1: ['pw1'] },
+    packagePerPage: true,
+    urlMetadata: [{ url: 'https://a.com/1', page: 1 }, { url: 'https://a.com/2', page: 2 }, { url: 'https://a.com/3', page: 3 }],
+    fetchImpl,
+  });
+  assert.deepEqual(calls.map((b) => b.get('passwords')), ['pw1', null, null]);
+  clearHistory();
+});
+
+test('sendToJDownloader records the pages JDownloader accepted when a later page fails', async () => {
+  clearHistory();
+  let n = 0;
+  const fetchImpl = async () => new Response('', { status: ++n === 2 ? 500 : 200 });
+  await assert.rejects(
+    sendToJDownloader(['https://a.com/1', 'https://a.com/2'], {
+      baseUrl: 'http://127.0.0.1:9666',
+      packageName: 'T',
+      packagePerPage: true,
+      urlMetadata: [{ url: 'https://a.com/1', page: 1 }, { url: 'https://a.com/2', page: 2 }],
+      threadUrl: 'https://forum.example.com/threads/t.1/',
+      fetchImpl,
+    }),
+    /HTTP 500 after 1 of 2 links were sent/
+  );
+  const db = require('../db');
+  const urls = db.prepare('SELECT url FROM linkgrabber_history ORDER BY url').all().map((r) => r.url);
+  assert.deepEqual(urls, ['https://a.com/1']);
+  clearHistory();
+});
+
+test('crawl reports passwords per page', async () => {
+  const thread = 'https://forum.example.com/threads/t.1/';
+  const { fetchImpl } = fakeSite({
+    [thread]: '<a class="pageNav-page" href="/threads/t.1/page-2">2</a> Password: alpha <a href="https://files.example.net/f/1">f</a>',
+    [`${thread}page-2`]: 'Password: beta <a href="https://files.example.net/f/2">f</a>',
+  });
+  const result = await crawl({ url: thread, mode: 'all', ignoreHistory: true, fetchImpl, assertUrl: async () => {}, delayMs: 0 });
+  assert.deepEqual(result.pagePasswords, { 1: ['alpha'], 2: ['beta'] });
+});

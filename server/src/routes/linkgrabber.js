@@ -130,7 +130,7 @@ router.post('/crawl', async (req, res) => {
 });
 
 router.post('/send', async (req, res) => {
-  const { target, urls, packageName, passwords, packagePerPage, urlMetadata, threadUrl } = req.body || {};
+  const { target, urls, packageName, passwords, pagePasswords, packagePerPage, urlMetadata, threadUrl } = req.body || {};
   const list = linkGrabber.cleanUrls(urls);
   if (list.length === 0) return res.status(400).json({ error: 'At least one URL is required' });
   if (list.length > MAX_SEND) return res.status(400).json({ error: `Too many URLs in one request (max ${MAX_SEND})` });
@@ -154,6 +154,7 @@ router.post('/send', async (req, res) => {
         baseUrl: getSetting(KEYS.jdUrl),
         packageName: typeof packageName === 'string' ? packageName.slice(0, 200) : '',
         passwords,
+        pagePasswords: pagePasswords && typeof pagePasswords === 'object' && !Array.isArray(pagePasswords) ? pagePasswords : undefined,
         packagePerPage: !!packagePerPage,
         urlMetadata: Array.isArray(urlMetadata) ? urlMetadata : [],
         threadUrl: typeof threadUrl === 'string' ? threadUrl.slice(0, 2000) : '',

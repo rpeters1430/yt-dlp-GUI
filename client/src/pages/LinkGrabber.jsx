@@ -304,6 +304,7 @@ export default function LinkGrabber() {
         urls,
         packageName: result?.threadTitle || result?.pages?.[0]?.title || '',
         passwords: result?.passwords || [],
+        pagePasswords: result?.pagePasswords,
         packagePerPage,
         urlMetadata: result?.links || [],
         threadUrl: result?.threadUrl || '',
