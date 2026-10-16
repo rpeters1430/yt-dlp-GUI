@@ -59,9 +59,13 @@ function setTwitchAuthCookie(token) {
     }
     const expiry = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365 * 5; // 5 years out
     kept.push([TWITCH_AUTH_COOKIE_DOMAIN, 'TRUE', '/', 'TRUE', String(expiry), TWITCH_AUTH_COOKIE_NAME, token].join('\t'));
+    const dir = path.dirname(COOKIES_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(COOKIES_FILE, kept.join('\n') + '\n', { mode: 0o600 });
     fs.chmodSync(COOKIES_FILE, 0o600);
   } else if (hasOtherCookies) {
+    const dir = path.dirname(COOKIES_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(COOKIES_FILE, kept.join('\n') + '\n', { mode: 0o600 });
     fs.chmodSync(COOKIES_FILE, 0o600);
   } else if (fs.existsSync(COOKIES_FILE)) {
@@ -86,6 +90,8 @@ function getTwitchAuthTokenRaw() {
 // back in afterward so the two features don't clobber each other.
 function writeCookiesFilePreservingTwitchAuth(content) {
   const existingToken = getTwitchAuthTokenRaw();
+  const dir = path.dirname(COOKIES_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(COOKIES_FILE, content, { mode: 0o600 });
   fs.chmodSync(COOKIES_FILE, 0o600);
   if (existingToken) setTwitchAuthCookie(existingToken);

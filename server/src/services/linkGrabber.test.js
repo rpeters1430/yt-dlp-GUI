@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
 const {
   parseNetscapeCookies,
   parseCookiesContent,
@@ -434,26 +435,36 @@ test('parseCookiesContent handles JSON, Netscape and header formats', () => {
 });
 
 test('crawler cookie persistence: save, get status, and delete', () => {
-  deleteCrawlerCookies();
-  const initStatus = getCrawlerCookiesStatus();
-  assert.equal(initStatus.configured, false);
+  const { CRAWLER_COOKIES_FILE } = require('./ytdlpPaths');
+  const backup = fs.existsSync(CRAWLER_COOKIES_FILE) ? fs.readFileSync(CRAWLER_COOKIES_FILE, 'utf8') : null;
+  try {
+    deleteCrawlerCookies();
+    const initStatus = getCrawlerCookiesStatus();
+    assert.equal(initStatus.configured, false);
 
-  const sampleCookie = JSON.stringify([
-    { name: 'xf_user', value: 'test_token', domain: 'simpcity.cr' },
-  ]);
-  const saveRes = saveCrawlerCookies(sampleCookie);
-  assert.equal(saveRes.ok, true);
-  assert.equal(saveRes.cookieCount, 1);
-  assert.deepEqual(saveRes.domains, ['simpcity.cr']);
+    const sampleCookie = JSON.stringify([
+      { name: 'xf_user', value: 'test_token', domain: 'simpcity.cr' },
+    ]);
+    const saveRes = saveCrawlerCookies(sampleCookie);
+    assert.equal(saveRes.ok, true);
+    assert.equal(saveRes.cookieCount, 1);
+    assert.deepEqual(saveRes.domains, ['simpcity.cr']);
 
-  const afterStatus = getCrawlerCookiesStatus();
-  assert.equal(afterStatus.configured, true);
-  assert.equal(afterStatus.cookieCount, 1);
-  assert.deepEqual(afterStatus.domains, ['simpcity.cr']);
+    const afterStatus = getCrawlerCookiesStatus();
+    assert.equal(afterStatus.configured, true);
+    assert.equal(afterStatus.cookieCount, 1);
+    assert.deepEqual(afterStatus.domains, ['simpcity.cr']);
 
-  const delRes = deleteCrawlerCookies();
-  assert.equal(delRes.ok, true);
-  assert.equal(getCrawlerCookiesStatus().configured, false);
+    const delRes = deleteCrawlerCookies();
+    assert.equal(delRes.ok, true);
+    assert.equal(getCrawlerCookiesStatus().configured, false);
+  } finally {
+    if (backup !== null) {
+      saveCrawlerCookies(backup);
+    } else {
+      deleteCrawlerCookies();
+    }
+  }
 });
 
 test('resolveDirectDownloadUrl transforms pixeldrain /u/ links', () => {

@@ -4,6 +4,7 @@
 // yt-dlp queue, JDownloader (Click'n'Load) or aria2 (JSON-RPC). It has no per-site scraping
 // logic: anything a page links to is reported, grouped by host, and the user picks.
 const fs = require('fs');
+const path = require('path');
 const db = require('../db');
 const ytdlp = require('./ytdlp');
 const { COOKIES_FILE, CRAWLER_COOKIES_FILE } = require('./ytdlpPaths');
@@ -176,6 +177,10 @@ function saveCrawlerCookies(content) {
   const cookies = parseCookiesContent(content);
   if (cookies.length === 0) {
     throw new Error('No valid cookies found. Please paste Netscape cookies.txt or JSON cookie export.');
+  }
+  const dir = path.dirname(CRAWLER_COOKIES_FILE);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
   fs.writeFileSync(CRAWLER_COOKIES_FILE, content.trim(), { mode: 0o600 });
   const domains = [...new Set(cookies.map((c) => c.domain).filter(Boolean))];
