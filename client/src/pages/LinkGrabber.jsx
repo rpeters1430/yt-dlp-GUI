@@ -485,11 +485,6 @@ export default function LinkGrabber() {
     });
   }
 
-  function selectAll() {
-    const next = new Set();
-    for (const l of result?.links || []) next.add(l.url);
-    setSelected(next);
-  }
 
   function clearSelection() {
     setSelected(new Set());
@@ -644,9 +639,13 @@ export default function LinkGrabber() {
             </label>
 
             {cookieStatus?.configured ? (
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <label className="checkbox-label" style={{ margin: 0 }}>
+                  <input type="checkbox" checked={useSavedCookies} onChange={(e) => setUseSavedCookies(e.target.checked)} />
+                  Use saved cookies
+                </label>
                 <span className="badge" style={{ background: '#10b981', color: '#fff', fontSize: '11px', padding: '2px 8px', borderRadius: '4px' }}>
-                  ✓ Saved cookies active ({cookieStatus.cookieCount})
+                  ✓ Active ({cookieStatus.cookieCount})
                 </span>
                 <label className="btn-secondary small" style={{ cursor: 'pointer', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                   <Upload size={13} /> Replace cookies.txt
