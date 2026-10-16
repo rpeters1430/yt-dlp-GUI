@@ -1,72 +1,85 @@
-# SimpCity Link Crawler & JDownloader 2 Importer (Pro Suite)
+# Forum Link Crawler (SimpCity / XenForo)
 
-A high-performance link crawler and duplicate-filtering tool built for SimpCity and XenForo forums. Automatically crawls threads, strips bot reposts and quote blocks, decodes Base64 links, extracts archive passwords, tracks history via SQLite, and pushes clean links directly into **JDownloader 2 LinkGrabber**.
+Crawls forum threads and lists the file-hoster links found in the posts as a plain list, one URL per line, ready to copy. It strips quoted replies and mirror-bot reposts, decodes Base64-hidden links, picks up archive passwords and remembers which links it has already shown you.
 
----
-
-## What's Included
-
-- **Multi-Page & Whole-Thread Crawling:** Automatically detects max pages in a thread and supports crawling single pages, ranges (`--pages 1-5`), the latest pages (`--last 3`), or the entire thread (`--all-pages`).
-- **Incremental Sync (SQLite History DB):** Tracks every crawled link in `crawled_history.db`. When you re-crawl an active thread, it only imports **new links** added since your last run.
-- **Smart Duplicate Prevention:**
-  - Automatically strips reply quote blocks (`.bbCodeBlock--quote`) so quoted links are not duplicated.
-  - Automatically ignores automated mirror bots like `SussyBOT` (Filester re-uploads).
-- **Base64 Link Auto-Decoder:** Automatically scans post text and code blocks for Base64-encoded strings and decodes hidden download links.
-- **Archive Password Detection:** Automatically discovers archive passwords (`Password: 1234`, `Pass: ...`, `PW: ...`) and sends them directly to JDownloader 2 for automatic archive extraction upon download.
-- **Batch Watchlist Processing:** Provide a `threads.txt` file to crawl multiple bookmarked threads sequentially.
-- **Rich Terminal UI:** Visual summary tables and multi-page progress bars powered by `rich`.
-- **Zero-Prompt JDownloader Integration:** Pushes via Click'n'Load HTTP API (`127.0.0.1:9666/flash/add`) and automatically syncs to Windows clipboard for instant capture.
+**Nothing is sent anywhere by default.** Links are only printed. Sending to JDownloader is opt-in (`--jd`), and so is copying to the clipboard (`--copy`).
 
 ---
 
-## Usage Guide
+## Setup
 
-### 1. Crawl a Single Page
 ```bash
+pip install -r requirements.txt
+```
+
+Export your forum cookies while logged in (e.g. with the Cookie-Editor extension) to `cookies.json` or `cookies.txt` next to where you run the crawler. See `cookies.example.json`. Both names are git-ignored.
+
+---
+
+## Usage
+
+```bash
+# Links from one page
 python crawler.py "https://simpcity.cr/threads/thread-name.12345/page-27"
-```
 
-### 2. Crawl the Whole Thread (Page 1 to End)
-```bash
+# Whole thread / a range / everything from page 20 on / the last 3 pages
 python crawler.py "https://simpcity.cr/threads/thread-name.12345/" --all-pages
-```
-
-### 3. Crawl a Page Range
-```bash
 python crawler.py "https://simpcity.cr/threads/thread-name.12345/" --pages 20-27
-```
-
-### 4. Crawl Only the Last N Pages (Great for Daily Updates)
-```bash
+python crawler.py "https://simpcity.cr/threads/thread-name.12345/" --pages 20-
 python crawler.py "https://simpcity.cr/threads/thread-name.12345/" --last 3
+
+# A watchlist: one thread URL per line in threads.txt (git-ignored)
+python crawler.py threads.txt --last 3
 ```
 
-### 5. Batch Watchlist (Multiple Threads)
-Put your thread URLs in `threads.txt` (one per line) and run:
+The link list goes to **stdout** and everything else (progress, tables, passwords) to **stderr**, so you can:
+
 ```bash
-python crawler.py threads.txt
+python crawler.py URL > links.txt        # just the links in a file
+python crawler.py URL --copy             # also put them on the clipboard
+python crawler.py URL --by-page          # group by page, with passwords as '# ...' lines
 ```
-*(You can combine this with `--last 3` to check the latest updates on all watched threads!)*
+
+If one thread in a watchlist fails, the rest still run and the failures are listed at the end (exit code 1).
+
+### History
+
+Every link listed is recorded in `crawled_history.db` (and in the web app's history when `../config/app.db` exists), so the next run only lists **new** links. Use `--ignore-history` to list everything again, or `--no-record` to leave the history untouched for a run.
 
 ---
 
-## Useful CLI Flags
+## Flags
 
 | Flag | Description |
 | :--- | :--- |
-| `--all-pages` / `-a` | Crawl all pages of the thread |
-| `--pages START-END` / `-p` | Crawl a specific page range (e.g. `--pages 10-15`) |
-| `--last N` / `-l N` | Crawl only the last N pages of the thread |
-| `--ignore-history` | Bypass history database and re-extract all links |
-| `--history-stats` | Show total links and threads tracked in SQLite |
-| `--include-bots` | Include automated mirror bots like SussyBOT |
-| `--include-quotes` | Include links quoted inside user replies |
-| `--all-external` | Extract all external links, not just known file hosters |
-| `--no-jd` | Only save to text file, do not send to JDownloader |
-| `--single-package` | Bundle all pages into one package instead of a package per page |
-| `--jd-url URL` | Target JDownloader Click'n'Load URL (e.g. `http://192.168.50.114:9666`) |
-| `--jd-host IP` | Target JDownloader host IP (default: `127.0.0.1` or `JD_HOST` env) |
-| `--jd-port PORT` | Target Click'n'Load port (default: `9666`; note port 5800 is web UI only) |
+| `--all-pages` / `-a` | Crawl every page of the thread |
+| `--pages RANGE` / `-p` | `10-15`, `20-` (to the last page) or `7` |
+| `--last N` / `-l N` | Crawl only the last N pages |
+| `--delay SECONDS` | Wait between page requests (default 0.5) |
+| `--by-page` | Group the list by page with `# title - page N` and `# password:` lines |
+| `--copy` | Copy the list to the clipboard (`clip`, `pbcopy`, `wl-copy`, `xclip` or `xsel`). If JDownloader's clipboard monitor is on, it will pick these up |
+| `--output FILE` / `-o` | Write the list to FILE |
+| `--save` | Write each thread's list to `links_<title>.txt` |
+| `--ignore-history` | List links even if a previous run already found them |
+| `--no-record` | Don't add this run's links to the history |
+| `--history-stats` | Show how many links and threads the history holds |
+| `--include-bots` | Include mirror bots like SussyBOT |
+| `--include-quotes` | Include links inside quoted replies |
+| `--all-external` | Keep all external links, not just known file hosts |
+| `--cookies FILE` / `-c` | Cookie file to use instead of auto-detecting `cookies.json` / `cookies.txt` |
+
+### Sending to JDownloader (optional)
+
+| Flag / setting | Description |
+| :--- | :--- |
+| `--jd` | Send the new links to JDownloader via Click'n'Load |
+| `CRAWLER_SEND_TO_JD=1` | Environment setting: send every run without passing `--jd` |
+| `--no-jd` | Never send, even when `CRAWLER_SEND_TO_JD` is set |
+| `--single-package` | One package per thread instead of one per page |
+| `--jd-url URL` / `JD_URL` | Click'n'Load URL, e.g. `http://192.168.1.10:9666` |
+| `--jd-host` / `JD_HOST`, `--jd-port` / `JD_PORT` | Host and port instead of a URL (defaults `127.0.0.1`, `9666`) |
+
+Links are sent with their archive passwords. If JDownloader isn't reachable, the links are still listed.
 
 ---
 
@@ -81,7 +94,7 @@ To allow link pushing from other computers on your network:
 2. In the JDownloader GUI (accessed via port 5800), go to **Settings** -> **Advanced Settings**.
 3. Search for: `RemoteAPI: Extern Interface Localhost Only` and uncheck it (set to `false`).
 4. Search for: `RemoteAPIConfig: Extern Interface Auth` and add your local network or IP.
-5. In this app or CLI, configure the JDownloader address as `http://192.168.50.114:9666`.
+5. In the web app or with `--jd-url`, use `http://<nas-ip>:9666` as the JDownloader address.
 
 ---
 
@@ -92,6 +105,6 @@ To allow JDownloader to accept links with **zero popups or prompts**:
 2. Search for: `externinterfaceauth`
 3. Click on **`RemoteAPIConfig: Extern Interface Auth`** and add:
    ```json
-   ["127.0.0.1", "localhost", "http://127.0.0.1", "http://localhost", "192.168.50.*"]
+   ["127.0.0.1", "localhost", "http://127.0.0.1", "http://localhost", "192.168.1.*"]
    ```
 4. Also search for `addeddupes` and set **`LinkgrabberSettings: Default On Added Dupes Links Action`** to **`MERGE`** or **`SKIP`**.

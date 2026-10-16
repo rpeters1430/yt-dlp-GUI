@@ -1,29 +1,7 @@
 import os
 import requests
-from typing import List, Dict, Optional
+from typing import List, Optional
 from urllib.parse import urlparse
-
-try:
-    import win32clipboard
-    import win32con
-    HAS_WIN32 = True
-except ImportError:
-    HAS_WIN32 = False
-
-
-def copy_links_to_clipboard(links: List[str]) -> bool:
-    """Copy links to Windows clipboard so JDownloader's Clipboard Monitor catches them silently."""
-    if not links or not HAS_WIN32:
-        return False
-    try:
-        text = "\n".join(links)
-        win32clipboard.OpenClipboard()
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardText(text, win32con.CF_UNICODETEXT)
-        win32clipboard.CloseClipboard()
-        return True
-    except Exception:
-        return False
 
 
 class JDownloaderClient:
@@ -80,7 +58,6 @@ class JDownloaderClient:
         if not links:
             return False
 
-        # 1. Push via Click'n'Load first with exact package name & passwords
         data = {
             "urls": "\n".join(links),
             "source": f"http://{self.host}",
@@ -97,15 +74,6 @@ class JDownloaderClient:
 
         try:
             response = requests.post(self.add_url, data=data, headers=headers, timeout=15)
-            if (response.status_code in (200, 204)) and ("failed" not in response.text.lower()):
-                return True
         except Exception:
-            pass
-
-        # 2. Fallback to Windows clipboard only if Click'n'Load failed or timed out
-        copied = copy_links_to_clipboard(links)
-        if copied:
-            print("[Notice] Sent via Windows clipboard fallback (JDownloader Clipboard Monitor).")
-            return True
-
-        return False
+            return False
+        return response.status_code in (200, 204) and "failed" not in response.text.lower()

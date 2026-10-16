@@ -1,6 +1,18 @@
+"""
+Forum thread link crawler.
+
+Crawls XenForo threads (SimpCity and similar), pulls file-hoster links out of the
+posts and prints them as a plain list, one URL per line, ready to copy. Status
+output goes to stderr, so `python crawler.py URL > links.txt` captures only links.
+
+Nothing is sent anywhere unless asked: pass --jd (or set CRAWLER_SEND_TO_JD=1) to
+push the links to JDownloader, or --copy to put them on the clipboard.
+"""
 import argparse
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 
@@ -11,7 +23,7 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 from urllib.parse import urlparse, parse_qs, unquote, urljoin
-from typing import List, Set, Tuple, Dict, Optional
+from typing import Any, List, Set, Tuple, Dict, Optional
 
 import requests as std_requests
 try:
@@ -31,9 +43,21 @@ from history_db import filter_new_links, record_links, get_history_stats
 from link_decoder import extract_base64_links, extract_passwords
 
 
-console = Console()
+# Status, tables and progress go to stderr; stdout carries only the link list.
+console = Console(stderr=True)
 
-# Target file/video hosters
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+FETCH_RETRIES = 2
+RETRY_STATUSES = {429, 500, 502, 503, 504, 520, 521, 522, 524}
+
+
+class CrawlError(Exception):
+    """A page could not be fetched; the message says why."""
+
+
 KNOWN_HOSTERS = [
     "mega.nz",
     "mega.co.nz",
@@ -166,49 +190,46 @@ def detect_max_page(soup: BeautifulSoup, current_page: int = 1) -> int:
     return max(pages)
 
 
-def fetch_page_html(url: str, cookies: Dict[str, str]) -> str:
-    """Fetch thread page HTML with automatic fallback on TLS/SSL error."""
+def _http_get(url: str, cookies: Dict[str, str], headers: Dict[str, str]) -> Tuple[int, str]:
+    """GET with Chrome TLS fingerprinting when curl_cffi is installed, plain requests otherwise."""
+    if curl_requests is not None:
+        try:
+            resp = curl_requests.get(url, headers=headers, cookies=cookies, impersonate="chrome124", timeout=20)
+            return resp.status_code, resp.text
+        except Exception:
+            pass  # TLS/impersonation trouble: fall back to plain requests
+    resp = std_requests.get(url, headers=headers, cookies=cookies, timeout=20)
+    return resp.status_code, resp.text
+
+
+def fetch_page_html(url: str, cookies: Dict[str, str], retries: int = FETCH_RETRIES) -> str:
+    """Fetch a page, retrying rate limits, server errors and network failures with backoff."""
+    parsed = urlparse(url)
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Referer": "https://simpcity.cr/",
+        "User-Agent": USER_AGENT,
+        "Referer": f"{parsed.scheme}://{parsed.netloc}/",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }
 
-    # Attempt 1: curl_cffi with Chrome fingerprinting
-    if curl_requests is not None:
+    last_error = ""
+    for attempt in range(retries + 1):
+        if attempt:
+            time.sleep(2 ** attempt)
         try:
-            session = curl_requests.Session(impersonate="chrome124")
-            for k, v in cookies.items():
-                session.cookies.set(k, v, domain="simpcity.cr")
-            resp = session.get(url, headers=headers, timeout=20)
-            if resp.status_code == 200:
-                return resp.text
-            if resp.status_code == 403:
-                console.print("[bold red]403 Forbidden received from SimpCity.[/bold red]")
-                console.print("  -> Please make sure your cookies.txt or cookies.json are fresh and logged in.")
-                sys.exit(1)
-        except Exception:
-            pass
-
-    # Attempt 2: Standard requests fallback
-    session = std_requests.Session()
-    session.headers.update(headers)
-    for k, v in cookies.items():
-        session.cookies.set(k, v, domain="simpcity.cr")
-
-    try:
-        resp = session.get(url, timeout=20)
-        if resp.status_code == 403:
-            console.print("[bold red]403 Forbidden received from SimpCity.[/bold red]")
-            sys.exit(1)
-        if resp.status_code != 200:
-            console.print(f"[bold red]HTTP {resp.status_code} while fetching page.[/bold red]")
-            sys.exit(1)
-        return resp.text
-    except Exception as e:
-        console.print(f"[bold red]Network error fetching {url}: {e}[/bold red]")
-        sys.exit(1)
+            status, text = _http_get(url, cookies, headers)
+        except Exception as e:
+            last_error = f"network error: {e}"
+            continue
+        if status == 200:
+            return text
+        if status == 403:
+            raise CrawlError("403 Forbidden - your cookies are missing or expired; export fresh ones while logged in")
+        if status in RETRY_STATUSES:
+            last_error = f"HTTP {status}"
+            continue
+        raise CrawlError(f"HTTP {status}")
+    raise CrawlError(f"{last_error} (after {retries + 1} attempts)")
 
 
 def parse_page_content(
@@ -309,6 +330,29 @@ def parse_page_content(
     return title, unique_links, list(collected_passwords), max_page
 
 
+def select_pages(
+    start_page: int,
+    max_page: int,
+    all_pages: bool = False,
+    page_range: Optional[Tuple[int, Optional[int]]] = None,
+    last_n_pages: Optional[int] = None,
+) -> List[int]:
+    """Pick the page numbers to crawl from the CLI options."""
+    if all_pages:
+        return list(range(1, max_page + 1))
+    if last_n_pages:
+        return list(range(max(1, max_page - last_n_pages + 1), max_page + 1))
+    if page_range:
+        start = max(1, page_range[0])
+        end = min(page_range[1] or max_page, max_page)
+        return list(range(start, end + 1))
+    return [start_page]
+
+
+def dedupe(items: List[str]) -> List[str]:
+    return list(dict.fromkeys(items))
+
+
 def crawl_thread(
     input_url: str,
     cookies: Dict[str, str],
@@ -316,56 +360,37 @@ def crawl_thread(
     skip_quotes: bool = True,
     skip_bots: bool = True,
     all_pages: bool = False,
-    page_range: Optional[Tuple[int, int]] = None,
+    page_range: Optional[Tuple[int, Optional[int]]] = None,
     last_n_pages: Optional[int] = None,
     ignore_history: bool = False,
-    no_jd: bool = False,
-    single_package: bool = False,
-    jd_host: Optional[str] = None,
-    jd_port: Optional[int] = None,
-    jd_url: Optional[str] = None,
-):
-    """Crawl a thread with multi-page handling, deduplication, and JD2 ingestion."""
+    delay: float = 0.5,
+) -> Dict[str, Any]:
+    """
+    Crawl the selected pages of one thread. Raises CrawlError if the first page fails;
+    a later page failing stops the crawl but keeps what was found so far.
+    """
     base_url, start_page = parse_thread_url(input_url)
+    console.print(Panel(f"[bold cyan]Crawling thread:[/bold cyan] {base_url}", expand=False))
 
-    console.print(Panel(f"[bold cyan]Crawling Thread:[/bold cyan] {base_url}", expand=False))
-
-    # Fetch initial page to discover title and total page count
-    initial_url = get_page_url(base_url, start_page)
+    # The starting page tells us the title and how many pages the thread has.
     with console.status(f"[bold yellow]Fetching page {start_page}...[/bold yellow]"):
-        first_html = fetch_page_html(initial_url, cookies)
+        first_html = fetch_page_html(get_page_url(base_url, start_page), cookies)
 
-    title, first_links, first_passwords, detected_max_page = parse_page_content(
-        first_html,
-        base_url,
-        filter_hosts=filter_hosts,
-        skip_quotes=skip_quotes,
-        skip_bots=skip_bots,
-    )
+    def parse(html: str) -> Tuple[str, List[str], List[str], int]:
+        return parse_page_content(html, base_url, filter_hosts=filter_hosts, skip_quotes=skip_quotes, skip_bots=skip_bots)
 
-    # Determine pages to crawl
-    if all_pages:
-        pages_to_crawl = list(range(1, detected_max_page + 1))
-    elif last_n_pages:
-        start_p = max(1, detected_max_page - last_n_pages + 1)
-        pages_to_crawl = list(range(start_p, detected_max_page + 1))
-    elif page_range:
-        start_p = max(1, page_range[0])
-        end_p = min(page_range[1], detected_max_page)
-        pages_to_crawl = list(range(start_p, end_p + 1))
-    else:
-        # Single page crawl
-        pages_to_crawl = [start_page]
+    title, first_links, first_passwords, max_page = parse(first_html)
+    pages_to_crawl = select_pages(start_page, max_page, all_pages, page_range, last_n_pages)
+    if not pages_to_crawl:
+        console.print(f"[yellow]No pages in the requested range (thread has {max_page} pages).[/yellow]")
 
-    # Store per-page links and passwords
-    page_data: Dict[int, Dict[str, Any]] = {}
-    page_data[start_page] = {
-        "links": first_links,
-        "passwords": first_passwords,
+    page_data: Dict[int, Dict[str, List[str]]] = {
+        start_page: {"links": first_links, "passwords": first_passwords},
     }
+    to_fetch = [p for p in pages_to_crawl if p not in page_data]
+    error = None
 
-    # Execute crawl with progress bar if multiple pages
-    if len(pages_to_crawl) > 1:
+    if to_fetch:
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -373,310 +398,303 @@ def crawl_thread(
             TaskProgressColumn(),
             console=console,
         ) as progress:
-            task = progress.add_task(f"Crawling {len(pages_to_crawl)} pages...", total=len(pages_to_crawl))
-
-            for p_num in pages_to_crawl:
-                progress.update(task, description=f"Crawling page {p_num}/{detected_max_page}...")
-                if p_num != start_page:
-                    p_url = get_page_url(base_url, p_num)
-                    html = fetch_page_html(p_url, cookies)
-                    _, p_links, p_pw, _ = parse_page_content(
-                        html,
-                        base_url,
-                        filter_hosts=filter_hosts,
-                        skip_quotes=skip_quotes,
-                        skip_bots=skip_bots,
-                    )
-                    page_data[p_num] = {
-                        "links": p_links,
-                        "passwords": p_pw,
-                    }
-                    time.sleep(0.5)  # Gentle rate limiting
+            task = progress.add_task("Crawling pages...", total=len(to_fetch))
+            for p_num in to_fetch:
+                progress.update(task, description=f"Crawling page {p_num}/{max_page}...")
+                time.sleep(delay)
+                try:
+                    html = fetch_page_html(get_page_url(base_url, p_num), cookies)
+                except CrawlError as e:
+                    error = f"page {p_num}: {e}"
+                    break
+                _, p_links, p_pw, _ = parse(html)
+                page_data[p_num] = {"links": p_links, "passwords": p_pw}
                 progress.advance(task)
 
-    # Collect all links while preserving order
-    all_links: List[str] = []
-    all_passwords: Set[str] = set()
-    for p_num in pages_to_crawl:
-        p_info = page_data.get(p_num, {})
-        all_links.extend(p_info.get("links", []))
-        all_passwords.update(p_info.get("passwords", []))
+    if error:
+        console.print(f"[bold red]Stopped early - {error}. Keeping the pages fetched so far.[/bold red]")
 
-    # Deduplicate all links across pages
-    seen = set()
-    unique_links = []
-    for link in all_links:
-        if link not in seen:
-            seen.add(link)
-            unique_links.append(link)
-
-    # Filter with SQLite History Database
+    crawled = [p for p in pages_to_crawl if p in page_data]
+    unique_links = dedupe([link for p in crawled for link in page_data[p]["links"]])
+    passwords = dedupe([pw for p in crawled for pw in page_data[p]["passwords"]])
     new_links, skipped_history = filter_new_links(unique_links, ignore_history=ignore_history)
-    new_links_set = set(new_links)
+    new_set = set(new_links)
 
-    # Display Rich Results Table
-    table = Table(title=f"Results: {title}", show_header=True, header_style="bold magenta")
-    table.add_column("Metric", style="dim", width=25)
+    return {
+        "title": title,
+        "base_url": base_url,
+        "max_page": max_page,
+        "pages": {p: {"links": [l for l in page_data[p]["links"] if l in new_set], "passwords": page_data[p]["passwords"]} for p in crawled},
+        "all_links": unique_links,
+        "new_links": new_links,
+        "skipped_history": skipped_history,
+        "passwords": passwords,
+        "error": error,
+    }
+
+
+def print_summary(result: Dict[str, Any]) -> None:
+    table = Table(title=f"Results: {result['title']}", show_header=True, header_style="bold magenta")
+    table.add_column("Metric", style="dim", width=28)
     table.add_column("Value", style="bold")
-
-    table.add_row("Pages Scanned", f"{len(pages_to_crawl)} (Total in thread: {detected_max_page})")
-    table.add_row("Total Links Found", str(len(unique_links)))
-    table.add_row("New Links (Unseen)", f"[green]{len(new_links)}[/green]")
-    table.add_row("Previously Crawled (History)", f"[yellow]{skipped_history}[/yellow]")
-    if all_passwords:
-        table.add_row("Detected Passwords", f"[cyan]{', '.join(all_passwords)}[/cyan]")
-
+    table.add_row("Pages scanned", f"{len(result['pages'])} (thread has {result['max_page']})")
+    table.add_row("Links found", str(len(result["all_links"])))
+    table.add_row("New links", f"[green]{len(result['new_links'])}[/green]")
+    table.add_row("Already seen (history)", f"[yellow]{result['skipped_history']}[/yellow]")
+    if result["passwords"]:
+        table.add_row("Archive passwords", f"[cyan]{', '.join(result['passwords'])}[/cyan]")
     console.print(table)
 
-    # Domain breakdown table
-    if new_links:
-        domain_counts: Dict[str, int] = {}
-        for link in new_links:
+    if result["new_links"]:
+        counts: Dict[str, int] = {}
+        for link in result["new_links"]:
             domain = urlparse(link).netloc.lower()
-            domain_counts[domain] = domain_counts.get(domain, 0) + 1
-
-        d_table = Table(title="New Links Breakdown by Hoster", show_header=True, header_style="bold green")
-        d_table.add_column("Host Domain", style="cyan")
+            counts[domain] = counts.get(domain, 0) + 1
+        d_table = Table(title="New links by host", show_header=True, header_style="bold green")
+        d_table.add_column("Host", style="cyan")
         d_table.add_column("Count", justify="right", style="bold white")
-        for domain, count in sorted(domain_counts.items(), key=lambda x: x[1], reverse=True):
+        for domain, count in sorted(counts.items(), key=lambda x: x[1], reverse=True):
             d_table.add_row(domain, str(count))
         console.print(d_table)
 
-    # Save to file
-    safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", title)[:50]
-    out_filename = f"links_{safe_name}.txt"
-    with open(out_filename, "w", encoding="utf-8") as f:
-        f.write("\n".join(new_links if new_links else unique_links) + "\n")
-    console.print(f"[dim]Saved links to {out_filename}[/dim]")
 
-    # Record newly crawled links in SQLite DB
-    if new_links:
-        record_links(new_links, title, base_url)
+def format_links(results: List[Dict[str, Any]], by_page: bool = False) -> str:
+    """Plain text for copying: one URL per line, optionally with '# ...' headers per page."""
+    lines: List[str] = []
+    for result in results:
+        if not by_page:
+            lines.extend(result["new_links"])
+            continue
+        for p_num, info in result["pages"].items():
+            if not info["links"]:
+                continue
+            if lines:
+                lines.append("")
+            lines.append(f"# {result['title']} - page {p_num}")
+            if info["passwords"]:
+                lines.append(f"# password: {', '.join(info['passwords'])}")
+            lines.extend(info["links"])
+    return "\n".join(lines)
 
-    # Send to JDownloader 2
-    if not no_jd:
-        if not new_links:
-            console.print("[yellow]No new links to send to JDownloader (all links previously crawled).[/yellow]")
+
+def copy_to_clipboard(text: str) -> bool:
+    """Copy text with the platform's clipboard tool. Returns False if none is available."""
+    candidates = [
+        ["clip"],
+        ["pbcopy"],
+        ["wl-copy"],
+        ["xclip", "-selection", "clipboard"],
+        ["xsel", "--clipboard", "--input"],
+    ]
+    for cmd in candidates:
+        if shutil.which(cmd[0]):
+            try:
+                # clip.exe needs a UTF-16 BOM to read non-ASCII; the others take UTF-8
+                data = text.encode("utf-16" if cmd[0] == "clip" else "utf-8")
+                subprocess.run(cmd, input=data, check=True, timeout=10)
+                return True
+            except Exception:
+                continue
+    return False
+
+
+def safe_filename(title: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_\-]", "_", title)[:50] or "thread"
+
+
+def send_to_jdownloader(result: Dict[str, Any], jd: JDownloaderClient, single_package: bool) -> None:
+    if not result["new_links"]:
+        console.print("[yellow]No new links to send to JDownloader.[/yellow]")
+        return
+    if single_package:
+        package = f"[SimpCity] {result['title']}"
+        pw = ",".join(result["passwords"]) or None
+        if jd.add_links(result["new_links"], package_name=package, passwords=pw):
+            console.print(f"[bold green][OK] Sent {len(result['new_links'])} links to JDownloader as '{package}'[/bold green]")
         else:
-            jd = JDownloaderClient(host=jd_host, port=jd_port, url=jd_url)
-            if not jd.is_running():
-                console.print(f"[bold red][!] JDownloader 2 is not responding on {jd.base_url}.[/bold red]")
-                console.print("    Ensure JDownloader is running, port 9666 is mapped, and RemoteAPI allows external connections.")
-            else:
-                if single_package:
-                    package_name = f"[SimpCity] {title}"
-                    pw_str = ",".join(all_passwords) if all_passwords else None
-                    success = jd.add_links(new_links, package_name=package_name, passwords=pw_str)
-                    if success:
-                        console.print(f"[bold green][OK] Added {len(new_links)} new links to JDownloader 2 LinkGrabber under package '{package_name}'![/bold green]")
-                    else:
-                        console.print("[bold red]Failed to send links to JDownloader.[/bold red]")
-                else:
-                    # Package Per Page Mode (Default)
-                    console.print(f"[bold cyan]Sending links to JDownloader (Package per Page):[/bold cyan]")
-                    total_sent = 0
-                    for p_num in pages_to_crawl:
-                        p_info = page_data.get(p_num, {})
-                        # Filter to only links that are new
-                        p_new = [l for l in p_info.get("links", []) if l in new_links_set]
-                        if not p_new:
-                            continue
+            console.print("[bold red]Failed to send links to JDownloader.[/bold red]")
+        return
 
-                        # Format with [Page N] at front so it is never cut off in LinkGrabber
-                        pkg_name = f"[Page {p_num}] {title}"
-                        p_pw = p_info.get("passwords", [])
-                        pw_str = ",".join(p_pw) if p_pw else None
+    total = 0
+    for p_num, info in result["pages"].items():
+        if not info["links"]:
+            continue
+        # [Page N] goes first so it isn't cut off in the LinkGrabber column
+        package = f"[Page {p_num}] {result['title']}"
+        pw = ",".join(info["passwords"]) or None
+        if jd.add_links(info["links"], package_name=package, passwords=pw):
+            console.print(f"  [green][OK][/green] Page {p_num}: {len(info['links'])} links -> '{package}'")
+            total += len(info["links"])
+        else:
+            console.print(f"  [red][!][/red] Page {p_num}: failed to send {len(info['links'])} links")
+        time.sleep(0.3)
+    if total:
+        console.print(f"[bold green][OK] Sent {total} links to JDownloader.[/bold green]")
 
-                        success = jd.add_links(p_new, package_name=pkg_name, passwords=pw_str)
-                        if success:
-                            console.print(f"  [bold green][OK][/bold green] Page {p_num}: Added {len(p_new)} links to package '[cyan]{pkg_name}[/cyan]'")
-                            total_sent += len(p_new)
-                        else:
-                            console.print(f"  [bold red][!][/bold red] Page {p_num}: Failed to send {len(p_new)} links.")
-                        time.sleep(0.3)
-                    if total_sent > 0:
-                        console.print(f"[bold green][OK] Finished sending all {total_sent} links in packages per page![/bold green]")
+
+def parse_page_range(raw: str) -> Optional[Tuple[int, Optional[int]]]:
+    """'20-27' -> (20, 27); '5' -> (5, 5); '20-' -> (20, None) meaning through the last page."""
+    match = re.match(r"^\s*(\d+)\s*(?:-\s*(\d*)\s*)?$", raw)
+    if not match:
+        return None
+    start = int(match.group(1))
+    if match.group(2) is None:
+        return start, start
+    end = int(match.group(2)) if match.group(2) else None
+    if end is not None and end < start:
+        return None
+    return start, end
+
+
+def env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="SimpCity Thread Crawler & JDownloader 2 Importer (Pro Suite)"
+        description="Crawl forum threads and list their download links (SimpCity / XenForo).",
+        epilog="Links print to stdout one per line; everything else goes to stderr.",
     )
-    parser.add_argument(
-        "target",
-        nargs="?",
-        help="SimpCity thread URL OR path to a text file with URLs (e.g. threads.txt)"
-    )
-    parser.add_argument(
-        "--all-pages",
-        "-a",
-        action="store_true",
-        help="Crawl all pages of the thread from page 1 to the end"
-    )
-    parser.add_argument(
-        "--pages",
-        "-p",
-        default=None,
-        help="Crawl a page range, e.g. --pages 20-27"
-    )
-    parser.add_argument(
-        "--last",
-        "-l",
-        type=int,
-        default=None,
-        help="Crawl only the last N pages of the thread (e.g. --last 3)"
-    )
-    parser.add_argument(
-        "--cookies",
-        "-c",
-        default=None,
-        help="Path to cookies file (cookies.json / cookies.txt)"
-    )
-    parser.add_argument(
-        "--all-external",
-        action="store_true",
-        help="Extract all external links, not just known file hosters"
-    )
-    parser.add_argument(
-        "--include-quotes",
-        action="store_true",
-        help="Include links inside user quotes (default: excluded)"
-    )
-    parser.add_argument(
-        "--include-bots",
-        action="store_true",
-        help="Include automated mirror bots like SussyBOT (default: excluded)"
-    )
-    parser.add_argument(
-        "--ignore-history",
-        action="store_true",
-        help="Ignore history DB and re-extract all links"
-    )
-    parser.add_argument(
-        "--no-jd",
-        action="store_true",
-        help="Do not send links to JDownloader 2 (only save to text file)"
-    )
-    parser.add_argument(
-        "--single-package",
-        action="store_true",
-        help="Put all links into a single JDownloader package instead of a package per page"
-    )
-    parser.add_argument(
-        "--history-stats",
-        action="store_true",
-        help="Show crawler history database stats and exit"
-    )
-    parser.add_argument(
-        "--jd-url",
-        default=None,
-        help="JDownloader Click'n'Load URL (e.g. http://192.168.50.114:9666)"
-    )
-    parser.add_argument(
-        "--jd-host",
-        default=None,
-        help="JDownloader host IP (e.g. 192.168.50.114)"
-    )
-    parser.add_argument(
-        "--jd-port",
-        type=int,
-        default=None,
-        help="JDownloader port (default: 9666; note port 5800 is web UI only)"
-    )
+    parser.add_argument("target", nargs="?", help="Thread URL, or a text file with one thread URL per line")
+
+    pages = parser.add_argument_group("pages")
+    pages.add_argument("--all-pages", "-a", action="store_true", help="Crawl every page of the thread")
+    pages.add_argument("--pages", "-p", default=None, help="Page range: 20-27, 20- (to the end) or 5")
+    pages.add_argument("--last", "-l", type=int, default=None, help="Crawl only the last N pages")
+    pages.add_argument("--delay", type=float, default=0.5, help="Seconds to wait between page requests (default 0.5)")
+
+    filters = parser.add_argument_group("filtering")
+    filters.add_argument("--all-external", action="store_true", help="Keep all external links, not just known file hosts")
+    filters.add_argument("--include-quotes", action="store_true", help="Include links inside quoted replies")
+    filters.add_argument("--include-bots", action="store_true", help="Include mirror bots like SussyBOT")
+    filters.add_argument("--ignore-history", action="store_true", help="List links even if a previous run already found them")
+    filters.add_argument("--no-record", action="store_true", help="Don't add this run's links to the history database")
+
+    output = parser.add_argument_group("output")
+    output.add_argument("--by-page", action="store_true", help="Group the list by page with '# ...' headers and passwords")
+    output.add_argument("--copy", action="store_true", help="Also copy the link list to the clipboard")
+    output.add_argument("--output", "-o", default=None, help="Write the link list to this file")
+    output.add_argument("--save", action="store_true", help="Write each thread's links to links_<title>.txt")
+
+    jd_group = parser.add_argument_group("JDownloader (off unless --jd or CRAWLER_SEND_TO_JD=1)")
+    jd_group.add_argument("--jd", action="store_true", help="Send the new links to JDownloader via Click'n'Load")
+    jd_group.add_argument("--no-jd", action="store_true", help="Never send to JDownloader, even if CRAWLER_SEND_TO_JD is set")
+    jd_group.add_argument("--single-package", action="store_true", help="One JDownloader package per thread instead of per page")
+    jd_group.add_argument("--jd-url", default=None, help="Click'n'Load URL, e.g. http://192.168.1.10:9666 (or JD_URL env)")
+    jd_group.add_argument("--jd-host", default=None, help="JDownloader host (or JD_HOST env, default 127.0.0.1)")
+    jd_group.add_argument("--jd-port", type=int, default=None, help="Click'n'Load port (or JD_PORT env, default 9666)")
+
+    parser.add_argument("--cookies", "-c", default=None, help="Cookie file (cookies.json / cookies.txt)")
+    parser.add_argument("--history-stats", action="store_true", help="Show history database stats and exit")
 
     args = parser.parse_args()
 
-    # Show History Stats
     if args.history_stats:
         stats = get_history_stats()
         console.print(Panel(
-            f"[bold green]History DB Stats:[/bold green]\n"
-            f"  • Total Unique Links Saved: [cyan]{stats['total_links']}[/cyan]\n"
-            f"  • Total Threads Tracked   : [cyan]{stats['total_threads']}[/cyan]",
-            title="Crawler Database"
+            f"Links saved : [cyan]{stats['total_links']}[/cyan]\n"
+            f"Threads     : [cyan]{stats['total_threads']}[/cyan]",
+            title="Crawler history",
         ))
         return
 
-    # Parse Range
     page_range = None
     if args.pages:
-        try:
-            parts = args.pages.split("-")
-            page_range = (int(parts[0]), int(parts[1]))
-        except Exception:
-            console.print("[red]Invalid --pages format. Use: --pages 1-5[/red]")
-            sys.exit(1)
+        page_range = parse_page_range(args.pages)
+        if page_range is None:
+            console.print("[red]Invalid --pages value. Use e.g. 1-5, 20- or 7.[/red]")
+            sys.exit(2)
+    if args.last is not None and args.last < 1:
+        console.print("[red]--last must be at least 1.[/red]")
+        sys.exit(2)
 
-    # Get target (URL or file)
-    target = args.target
-    if not target:
-        target = console.input("[bold cyan]Enter SimpCity thread URL or path to threads.txt:[/bold cyan] ").strip()
+    send_jd = (args.jd or env_flag("CRAWLER_SEND_TO_JD")) and not args.no_jd
 
+    target = args.target or console.input("[bold cyan]Thread URL or path to threads.txt:[/bold cyan] ").strip()
     if not target:
         console.print("[red]No target provided.[/red]")
-        sys.exit(1)
+        sys.exit(2)
 
-    # Load cookies
-    cookies = {}
-    if args.cookies:
-        cookies = load_cookies(args.cookies)
-    else:
-        cookies = find_default_cookie_file()
-
-    if not cookies:
-        console.print("\n[yellow]No cookies.txt or cookies.json found.[/yellow]")
+    cookies = load_cookies(args.cookies) if args.cookies else find_default_cookie_file()
+    if not cookies and sys.stdin.isatty():
+        console.print("\n[yellow]No cookies.json or cookies.txt found.[/yellow]")
         cookie_input = console.input("Paste cookie string (or press Enter to try without): ").strip()
         if cookie_input:
             cookies = load_cookies(cookie_input)
 
-    filter_hosts = not args.all_external
-    skip_quotes = not args.include_quotes
-    skip_bots = not args.include_bots
-
-    # Batch file mode
     if os.path.isfile(target) and not target.startswith("http"):
-        console.print(f"[bold green]Loading threads from watchlist file:[/bold green] {target}")
         with open(target, "r", encoding="utf-8") as f:
             urls = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
+        console.print(f"[bold green]Watchlist:[/bold green] {target} ({len(urls)} threads)\n")
+    else:
+        urls = [target]
 
-        console.print(f"Found [cyan]{len(urls)}[/cyan] thread URLs to crawl.\n")
-        for i, u in enumerate(urls, 1):
+    jd = JDownloaderClient(host=args.jd_host, port=args.jd_port, url=args.jd_url) if send_jd else None
+    if jd and not jd.is_running():
+        console.print(f"[bold red]JDownloader is not responding on {jd.base_url}; links will only be listed.[/bold red]")
+        console.print("    Check that it is running, port 9666 is reachable and remote Click'n'Load is allowed.")
+        jd = None
+
+    results: List[Dict[str, Any]] = []
+    failed: List[str] = []
+    for i, url in enumerate(urls, 1):
+        if len(urls) > 1:
             console.rule(f"[bold yellow]Thread {i} of {len(urls)}[/bold yellow]")
-            crawl_thread(
-                u,
+        try:
+            result = crawl_thread(
+                url,
                 cookies=cookies,
-                filter_hosts=filter_hosts,
-                skip_quotes=skip_quotes,
-                skip_bots=skip_bots,
+                filter_hosts=not args.all_external,
+                skip_quotes=not args.include_quotes,
+                skip_bots=not args.include_bots,
                 all_pages=args.all_pages,
                 page_range=page_range,
                 last_n_pages=args.last,
                 ignore_history=args.ignore_history,
-                no_jd=args.no_jd,
-                single_package=args.single_package,
-                jd_host=args.jd_host,
-                jd_port=args.jd_port,
-                jd_url=args.jd_url,
+                delay=args.delay,
             )
+        except CrawlError as e:
+            console.print(f"[bold red]Skipping {url}: {e}[/bold red]")
+            failed.append(url)
+            continue
+        print_summary(result)
+        results.append(result)
+
+        if args.save:
+            out_name = f"links_{safe_filename(result['title'])}.txt"
+            with open(out_name, "w", encoding="utf-8") as f:
+                f.write(format_links([result], by_page=args.by_page) + "\n")
+            console.print(f"[dim]Saved to {out_name}[/dim]")
+        if jd:
+            send_to_jdownloader(result, jd, args.single_package)
+        if not args.no_record and result["new_links"]:
+            record_links(result["new_links"], result["title"], result["base_url"])
+        if i < len(urls):
             time.sleep(1)
+
+    text = format_links(results, by_page=args.by_page)
+    total_new = sum(len(r["new_links"]) for r in results)
+
+    if text:
+        if sys.stdout.isatty():
+            console.rule(f"[bold green]{total_new} new link{'s' if total_new != 1 else ''}[/bold green]")
+        print(text, flush=True)
     else:
-        # Single thread URL mode
-        crawl_thread(
-            target,
-            cookies=cookies,
-            filter_hosts=filter_hosts,
-            skip_quotes=skip_quotes,
-            skip_bots=skip_bots,
-            all_pages=args.all_pages,
-            page_range=page_range,
-            last_n_pages=args.last,
-            ignore_history=args.ignore_history,
-            no_jd=args.no_jd,
-            single_package=args.single_package,
-            jd_host=args.jd_host,
-            jd_port=args.jd_port,
-            jd_url=args.jd_url,
-        )
+        console.print("[yellow]No new links found.[/yellow]")
+
+    if text and args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+        console.print(f"[dim]Saved to {args.output}[/dim]")
+    if text and args.copy:
+        if copy_to_clipboard(text):
+            console.print(f"[green]Copied {total_new} links to the clipboard.[/green]")
+        else:
+            console.print("[yellow]No clipboard tool found (clip, pbcopy, wl-copy, xclip or xsel).[/yellow]")
+
+    if failed:
+        console.print(f"[bold red]{len(failed)} thread(s) failed:[/bold red] " + ", ".join(failed))
+        sys.exit(1)
 
 
 if __name__ == "__main__":
