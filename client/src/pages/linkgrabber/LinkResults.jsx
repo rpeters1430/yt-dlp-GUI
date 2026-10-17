@@ -3,6 +3,7 @@ import { Key, Copy, Eye, ShieldCheck } from 'lucide-react';
 import { api } from '../../api.js';
 import { formatBytes } from '../../format.js';
 import { useToast } from '../../context/ToastContext.jsx';
+import { siteName } from './sites.js';
 
 const KIND_LABELS = { video: 'Video file', audio: 'Audio file', archive: 'Archive', embed: 'Embed', link: 'Link' };
 const TARGETS = [
@@ -78,7 +79,17 @@ export default function LinkResults({ crawl, onLinksChange, onWatch }) {
 
   useEffect(() => savePrefs({ target, packagePerPage }), [target, packagePerPage]);
 
-  const hosts = useMemo(() => countBy(links, (l) => l.host), [links]);
+  // One chip per site, however many mirror domains it was linked through.
+  const hosts = useMemo(() => countBy(links, (l) => siteName(l.host)), [links]);
+  const siteDomains = useMemo(() => {
+    const domains = new Map();
+    for (const l of links) {
+      const site = siteName(l.host);
+      if (!domains.has(site)) domains.set(site, new Set());
+      domains.get(site).add(l.host);
+    }
+    return domains;
+  }, [links]);
   const kinds = useMemo(() => countBy(links, (l) => l.kind), [links]);
   const checks = useMemo(() => countBy(links, checkState), [links]);
   const anyChecked = links.some((l) => l.check);
@@ -89,7 +100,7 @@ export default function LinkResults({ crawl, onLinksChange, onWatch }) {
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return links.filter((l) =>
-      (hostFilter === 'all' || l.host === hostFilter)
+      (hostFilter === 'all' || siteName(l.host) === hostFilter)
       && (kindFilter === 'all' || l.kind === kindFilter)
       && (statusFilter === 'all' || (statusFilter === 'new' ? l.isNew : !l.isNew))
       && (checkFilter === 'all' || checkState(l) === checkFilter)
@@ -219,8 +230,8 @@ export default function LinkResults({ crawl, onLinksChange, onWatch }) {
     setMany(links.filter((l) => checkState(l) === 'offline').map((l) => l.url), false);
   }
 
-  const chip = (active, onClick, label, count) => (
-    <button type="button" className={`chip${active ? ' active' : ''}`} onClick={onClick}>
+  const chip = (active, onClick, label, count, title) => (
+    <button type="button" className={`chip${active ? ' active' : ''}`} onClick={onClick} title={title}>
       {label}{count !== undefined && <span className="chip-count">{count}</span>}
     </button>
   );
@@ -273,7 +284,16 @@ export default function LinkResults({ crawl, onLinksChange, onWatch }) {
           </div>
           <div className="chip-row lg-filters">
             {chip(hostFilter === 'all', () => setHostFilter('all'), 'All hosts', links.length)}
-            {hosts.map(([host, count]) => <React.Fragment key={host}>{chip(hostFilter === host, () => setHostFilter(host), host, count)}</React.Fragment>)}
+            {hosts.map(([site, count]) => {
+              const domains = [...(siteDomains.get(site) || [])].sort();
+              // A site seen under one domain keeps that domain as its label.
+              const label = domains.length === 1 ? domains[0] : site;
+              return (
+                <React.Fragment key={site}>
+                  {chip(hostFilter === site, () => setHostFilter(site), label, count, domains.length > 1 ? domains.join(', ') : undefined)}
+                </React.Fragment>
+              );
+            })}
           </div>
           <div className="chip-row lg-filters">
             {chip(kindFilter === 'all', () => setKindFilter('all'), 'All types', links.length)}
