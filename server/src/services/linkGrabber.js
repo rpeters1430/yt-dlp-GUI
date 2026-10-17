@@ -5,6 +5,7 @@
 // logic: anything a page links to is reported, grouped by host, and the user picks.
 const fs = require('fs');
 const path = require('path');
+const cheerio = require('cheerio');
 const db = require('../db');
 const ytdlp = require('./ytdlp');
 const { COOKIES_FILE, CRAWLER_COOKIES_FILE } = require('./ytdlpPaths');
@@ -17,6 +18,12 @@ const FETCH_TIMEOUT_MS = 20000;
 const MAX_REDIRECTS = 5;
 // Pause between page fetches so a multi-page crawl doesn't hammer the site.
 const PAGE_DELAY_MS = 1500;
+const FETCH_RETRIES = 2;
+const RETRY_BASE_MS = 2000;
+const MAX_RETRY_AFTER_MS = 30000;
+const RETRY_STATUSES = new Set([429, 500, 502, 503, 504, 520, 521, 522, 524]);
+// Enough of an error page to recognise a Cloudflare challenge.
+const ERROR_BODY_BYTES = 256 * 1024;
 const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 
 const VIDEO_EXT = /\.(?:mp4|m4v|webm|mkv|mov|avi|wmv|flv|ts|m3u8|mpd)(?:$|[?#])/i;
@@ -194,18 +201,17 @@ function deleteCrawlerCookies() {
   return { ok: true };
 }
 
-function loadCookies({ cookiesText, useSavedCookies }) {
-  const cookies = [];
-  // 1. Dedicated crawler cookies file
-  if (fs.existsSync(CRAWLER_COOKIES_FILE)) {
-    cookies.push(...parseCookiesContent(fs.readFileSync(CRAWLER_COOKIES_FILE, 'utf8')));
-  } else if (useSavedCookies && fs.existsSync(COOKIES_FILE)) {
-    // 2. Global YouTube cookies fallback
-    cookies.push(...parseCookiesContent(fs.readFileSync(COOKIES_FILE, 'utf8')));
+// Cookies pasted for one crawl replace the saved ones rather than adding to them. Saved cookies
+// come from the crawler's own file, else the global cookies.txt, and only when useSavedCookies.
+// A cookie with no domain (pasted as a "name=val; ..." header) is scoped to the crawled site,
+// so a redirect to another host can't carry it along.
+function loadCookies({ cookiesText, useSavedCookies, siteHost }) {
+  let cookies = cookiesText ? parseCookiesContent(cookiesText) : [];
+  if (cookies.length === 0 && useSavedCookies) {
+    const file = [CRAWLER_COOKIES_FILE, COOKIES_FILE].find((f) => fs.existsSync(f));
+    if (file) cookies = parseCookiesContent(fs.readFileSync(file, 'utf8'));
   }
-  // 3. User supplied custom cookies in the request
-  if (cookiesText) cookies.push(...parseCookiesContent(cookiesText));
-  return cookies;
+  return cookies.map((c) => (c.domain ? c : { ...c, domain: siteHost }));
 }
 
 // --- HTML parsing ----------------------------------------------------------------------
@@ -253,10 +259,11 @@ function unwrapRedirect(url) {
 
 const BARE_HOST_REGEX = /\b((?:(?:https?:\/\/)?(?:[a-z0-9-]+\.)?(?:pixeldrain\.com|gofile\.io|turbo\.cr|saint2\.su|1fichier\.com|rapidgator\.net|mediafire\.com|krakenfiles\.com|workupload\.com|send\.cm|qiwi\.gg|terabox\.com|teraboxapp\.com|katfile\.com|filecrypt\.(?:cc|co)|buzzheavier\.com|fastupload\.io|catbox\.moe|quax\.is|mega\.(?:nz|co\.nz)|(?:bunkr|filester|cyberdrop)\.[a-z]{2,8}))\/[^\s"'<>()[\]{}]+)/gi;
 
+// \b keeps words like "bypass:" and "compass =" from reading as a password label.
 const PASSWORD_PATTERNS = [
-  /(?:archive\s*)?pass(?:word)?\s*(?:is|:|=)\s*["']([^"'\n<]{2,60})["']/gi,
+  /\b(?:archive\s*)?pass(?:word)?\s*(?:is|:|=)\s*["']([^"'\n<]{2,60})["']/gi,
   /\bpw\s*(?:is|:|=)\s*["']([^"'\n<]{2,60})["']/gi,
-  /(?:archive\s*)?pass(?:word)?\s*(?:is|:|=)\s*["']?([^\s"'\n<>]+)/gi,
+  /\b(?:archive\s*)?pass(?:word)?\s*(?:is|:|=)\s*["']?([^\s"'\n<>]+)/gi,
   /\bpw\s*(?:is|:|=)\s*["']?([^\s"'\n<>]+)/gi,
   /\bpass\s*(?:is|:|=)\s*["']?([^\s"'\n<>]+)/gi,
   /contrase[ñn]a\s*(?:is|:|=)\s*["']?([^\s"'\n<>]+)/gi,
@@ -265,7 +272,7 @@ const PASSWORD_PATTERNS = [
 
 const IGNORE_PASSWORDS = new Set([
   'none', 'n/a', 'no', 'required', 'protected', 'unknown', 'null', 'false', 'true',
-  'password', 'pass', 'pw', 'yes', 'link', 'download', 'here', 'mega', 'pixeldrain'
+  'password', 'pass', 'pw', 'yes', 'link', 'download', 'here', 'mega', 'pixeldrain', 'forgot',
 ]);
 
 function extractPasswords(text) {
@@ -315,18 +322,36 @@ function extractBase64Links(text) {
   return found;
 }
 
-function stripQuotesAndBots(html, { skipQuotes = true, skipBots = true } = {}) {
-  let cleaned = html;
-  if (skipQuotes) {
-    // Strip XenForo quote blocks and standard blockquote elements so replies quoting OP don't duplicate links
-    cleaned = cleaned.replace(/<div\b[^>]*class="[^"]*bbCodeBlock--quote[^"]*"[^>]*>[\s\S]*?<\/div>\s*<\/div>/gi, ' ');
-    cleaned = cleaned.replace(/<blockquote\b[^>]*>[\s\S]*?<\/blockquote>/gi, ' ');
-  }
+// Automated mirror re-upload accounts whose posts only repeat links from earlier posts.
+const BOT_AUTHORS = new Set(['sussybot']);
+// XenForo's post container. Pages without one are read whole, minus PAGE_CHROME.
+const POST_SELECTOR = 'article.message--post';
+const QUOTE_SELECTOR = '.bbCodeBlock--quote, blockquote';
+// Site furniture and signatures: their links (ads, socials, "similar threads") are never the
+// content being grabbed.
+const PAGE_CHROME = 'header, nav, footer, aside, .message-signature, .p-breadcrumbs, .block--similarContents';
+
+// Quotes go so a reply quoting the OP doesn't re-list its links; nested quotes go with them.
+function removeQuotesAndBots($, { skipQuotes, skipBots }) {
+  if (skipQuotes) $(QUOTE_SELECTOR).remove();
   if (skipBots) {
-    // Strip automated mirror re-upload bots (e.g. sussybot)
-    cleaned = cleaned.replace(/<article\b[^>]*data-author="sussybot"[^>]*>[\s\S]*?<\/article>/gi, ' ');
+    $('article[data-author]')
+      .filter((_, el) => BOT_AUTHORS.has(String($(el).attr('data-author')).trim().toLowerCase()))
+      .remove();
   }
-  return cleaned;
+}
+
+function stripQuotesAndBots(html, { skipQuotes = true, skipBots = true } = {}) {
+  const $ = cheerio.load(html);
+  removeQuotesAndBots($, { skipQuotes, skipBots });
+  return $.html();
+}
+
+// XenForo marks a post as data-content="post-123" (id="js-post-123" on older themes).
+function postInfo($post) {
+  const raw = $post.attr('data-content') || $post.attr('id') || '';
+  const id = (raw.match(/post-(\d+)/) || [])[1] || '';
+  return { postId: id, author: String($post.attr('data-author') || '').trim() };
 }
 
 function cleanThreadTitle(title) {
@@ -400,69 +425,72 @@ function findNextPage(html, baseUrl) {
   return null;
 }
 
-// Returns [{ url, source }] where source is 'embed' (iframe/video/audio/source/embed),
-// 'link' (an <a href>), 'text' (a bare URL in the page text), or 'base64' (decoded URL).
-// Also attaches discovered archive passwords as `links.passwords = [...]`.
+// Returns [{ url, source, postId, author, passwords }] where source is 'embed'
+// (iframe/video/audio/source/embed or a data-* media attribute), 'link' (an <a href>),
+// 'text' (a bare URL in the text) or 'base64' (a decoded URL). On a forum page each link
+// carries the post it came from and the passwords given in that post; elsewhere postId and
+// author are ''. All passwords found are also attached as `links.passwords = [...]`.
 function extractLinks(html, baseUrl, options = {}) {
   const { skipQuotes = true, skipBots = true, decodeBase64 = true } = options;
-  const cleanedHtml = stripQuotesAndBots(html, { skipQuotes, skipBots });
-  const found = [];
+  const $ = cheerio.load(html);
+  $('script, style, noscript, template').remove();
+  removeQuotesAndBots($, { skipQuotes, skipBots });
+  $(PAGE_CHROME).remove();
+
   const pageHost = hostOf(baseUrl);
-  const body = cleanedHtml.replace(/<script\b[\s\S]*?<\/script>/gi, ' ').replace(/<style\b[\s\S]*?<\/style>/gi, ' ');
+  // Only the site's own links can be redirect wrappers; an outbound link's query string
+  // (e.g. ?ref=https://...) is left alone.
+  const unwrapOwn = (url) => (hostOf(url) === pageHost ? unwrapRedirect(url) : url);
+  const posts = $(POST_SELECTOR).toArray();
+  const blocks = posts.length ? posts.map((el) => $(el)) : [$.root()];
+  const found = [];
+  const allPasswords = new Set();
 
-  for (const tag of body.match(/<(?:iframe|video|audio|source|embed)\b[^>]*>/gi) || []) {
-    for (const name of ['src', 'data-src', 'data-url', 'data-video']) {
-      const url = resolveUrl(attr(tag, name), baseUrl);
-      if (url) found.push({ url, source: 'embed' });
+  for (const $block of blocks) {
+    const info = posts.length ? postInfo($block) : { postId: '', author: '' };
+    // Tags become spaces so "Password: abc<br>Mirror" doesn't read as one word.
+    const text = decodeEntities(($block.html() || '').replace(/<[^>]+>/g, ' '));
+    const passwords = extractPasswords(text);
+    for (const pw of passwords) allPasswords.add(pw);
+    const seen = new Set();
+    const add = (url, source) => {
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      found.push({ url, source, ...info, passwords });
+    };
+
+    $block.find('iframe, video, audio, source, embed').each((_, el) => {
+      for (const name of ['src', 'data-src', 'data-url', 'data-video']) add(resolveUrl($(el).attr(name), baseUrl), 'embed');
+    });
+    // Lazy-loaded players and XenForo media wrappers keep their URL in a data attribute.
+    $block.find('[data-url], [data-src], [data-href], [data-video]').each((_, el) => {
+      for (const name of ['data-url', 'data-src', 'data-href', 'data-video']) {
+        const url = resolveUrl($(el).attr(name), baseUrl);
+        if (url) add(unwrapOwn(url), 'embed');
+      }
+    });
+    $block.find('a[href]').each((_, el) => {
+      const url = resolveUrl($(el).attr('href'), baseUrl);
+      if (url) add(unwrapOwn(url), 'link');
+    });
+
+    for (const m of text.matchAll(/https?:\/\/[^\s"'<>()[\]{}]+/gi)) {
+      add(resolveUrl(m[0].replace(/[.,;:!?]+$/, ''), baseUrl), 'text');
     }
-  }
-
-  // Also catch generic elements with data-url, data-src, data-href, data-video (e.g. bbMediaWrapper / XenForo embeds)
-  for (const tag of body.match(/<[a-z0-9_-]+\b[^>]*\b(?:data-url|data-src|data-href|data-video)\b[^>]*>/gi) || []) {
-    for (const name of ['data-url', 'data-src', 'data-href', 'data-video']) {
-      const val = attr(tag, name);
-      if (val) {
-        const url = resolveUrl(val, baseUrl);
-        if (url) found.push({ url: hostOf(url) === pageHost ? unwrapRedirect(url) : url, source: 'embed' });
+    // Known hoster URLs written without a scheme (gofile.io/d/..., pixeldrain.com/u/...).
+    for (const m of text.matchAll(BARE_HOST_REGEX)) {
+      const raw = m[1].replace(/[.,;:!?]+$/, '');
+      add(resolveUrl(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`, baseUrl), 'text');
+    }
+    if (decodeBase64) {
+      for (const b64Url of extractBase64Links(text)) {
+        const url = resolveUrl(b64Url, baseUrl);
+        if (url) add(unwrapOwn(url), 'base64');
       }
     }
   }
 
-  for (const tag of body.match(/<a\b[^>]*>/gi) || []) {
-    const url = resolveUrl(attr(tag, 'href'), baseUrl);
-    // Only the site's own links can be redirect wrappers; an outbound link's query string
-    // (e.g. ?ref=https://...) is left alone.
-    if (url) found.push({ url: hostOf(url) === pageHost ? unwrapRedirect(url) : url, source: 'link' });
-  }
-
-  const text = body.replace(/<[^>]+>/g, ' ');
-  const decodedText = decodeEntities(text);
-
-  // Full http(s) URLs in plain text
-  for (const m of decodedText.matchAll(/https?:\/\/[^\s"'<>()[\]{}]+/gi)) {
-    const url = resolveUrl(m[0].replace(/[.,;:!?]+$/, ''), baseUrl);
-    if (url) found.push({ url, source: 'text' });
-  }
-
-  // Bare known hoster URLs in plain text (e.g. gofile.io/d/..., pixeldrain.com/u/..., turbo.cr/embed/...)
-  for (const m of decodedText.matchAll(BARE_HOST_REGEX)) {
-    let rawMatch = m[1].replace(/[.,;:!?]+$/, '');
-    if (!/^https?:\/\//i.test(rawMatch)) rawMatch = `https://${rawMatch}`;
-    const url = resolveUrl(rawMatch, baseUrl);
-    if (url) found.push({ url, source: 'text' });
-  }
-
-  // Base64 decoded links
-  if (decodeBase64) {
-    const b64Urls = extractBase64Links(text);
-    for (const b64Url of b64Urls) {
-      const url = resolveUrl(b64Url, baseUrl);
-      if (url) found.push({ url: hostOf(url) === pageHost ? unwrapRedirect(url) : url, source: 'base64' });
-    }
-  }
-
-  // Passwords
-  found.passwords = extractPasswords(decodedText);
+  found.passwords = [...allPasswords];
   return found;
 }
 
@@ -478,6 +506,38 @@ function hostOf(url) {
   try { return new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch { return ''; }
 }
 
+// File hosts: what a forum thread's links are usually for, as opposed to socials, shops and
+// the like. Drives the "File hosts only" filter and thread watches' default filter.
+const KNOWN_HOSTERS = [
+  'mega.nz', 'mega.co.nz', 'pixeldrain.com', 'gofile.io', 'saint2.su', '1fichier.com', 'rapidgator.net',
+  'mediafire.com', 'drive.google.com', 'dropbox.com', 'krakenfiles.com', 'workupload.com', 'send.cm', 'qiwi.gg',
+  'terabox.com', 'teraboxapp.com', 'katfile.com', 'coomer.su', 'coomer.party', 'kemono.su', 'kemono.party',
+  'filedm.com', 'streamtape.com', 'doodstream.com', 'vidoza.net', 'turbo.cr', 'filecrypt.cc', 'filecrypt.co',
+  'buzzheavier.com', 'fastupload.io', 'catbox.moe', 'quax.is',
+];
+// Hosts that rotate through TLDs (bunkr.si, bunkr.fi, bunkr.black, ...): one file, many URLs.
+const MIRROR_FAMILY = /^(?:[a-z0-9-]+\.)*(bunkrr?|cyberdrop|filester)\.[a-z]{2,8}$/;
+
+function isKnownHoster(host) {
+  return MIRROR_FAMILY.test(host) || KNOWN_HOSTERS.some((h) => host === h || host.endsWith(`.${h}`));
+}
+
+// One key per file, for de-duplication and history: the scheme, www., a trailing slash,
+// tracking parameters and a mirror family's current TLD don't make it a different file.
+function canonicalUrl(url) {
+  let u;
+  try { u = new URL(url); } catch { return String(url); }
+  let host = u.hostname.toLowerCase().replace(/^www\./, '');
+  const family = host.match(MIRROR_FAMILY);
+  if (family) host = family[1] === 'bunkrr' ? 'bunkr' : family[1];
+  for (const key of [...u.searchParams.keys()]) {
+    if (/^(?:utm_.*|fbclid|gclid)$/i.test(key)) u.searchParams.delete(key);
+  }
+  const query = u.searchParams.toString();
+  const pathname = u.pathname.replace(/\/+$/, '') || '/';
+  return `${host}${u.port ? `:${u.port}` : ''}${pathname}${query ? `?${query}` : ''}`;
+}
+
 // Drops the page's own navigation: links back to the crawled site are only kept when they're
 // embeds or point straight at a media/archive file (e.g. an attachment the site hosts itself).
 function shouldKeep(url, source, siteHost) {
@@ -489,8 +549,24 @@ function shouldKeep(url, source, siteHost) {
 
 // --- fetching --------------------------------------------------------------------------
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+// Rejects with the signal's reason as soon as it aborts, so a cancelled crawl doesn't sit out
+// its politeness delay.
+function delay(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 async function readCapped(res, maxBytes) {
@@ -510,13 +586,55 @@ async function readCapped(res, maxBytes) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+// A Cloudflare interstitial ("Just a moment...") rather than the forum's own error page.
+function isCloudflareChallenge(res, body) {
+  if (res.headers.get('cf-mitigated') === 'challenge') return true;
+  if (!/cloudflare/i.test(res.headers.get('server') || '')) return false;
+  return /<title>\s*Just a moment|challenge-platform|cf-chl-|cf_chl_/i.test(body);
+}
+
+// Retry-After is seconds or an HTTP date; anything else falls back to backoff.
+function retryAfterMs(res) {
+  const value = res.headers.get('retry-after');
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return seconds * 1000;
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? null : Math.max(0, date - Date.now());
+}
+
+// Rate limits, server errors and network failures are retried with backoff. A Cloudflare
+// 403/503 isn't: it's a challenge, and asking again only gets the same challenge.
+async function requestWithRetry(url, init, { fetchImpl, retryBaseMs, signal }) {
+  for (let attempt = 0; ; attempt++) {
+    const last = attempt >= FETCH_RETRIES;
+    const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetchImpl(url, { ...init, signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    } catch (err) {
+      if (signal?.aborted) throw signal.reason;
+      if (last) throw new Error(`Could not fetch ${url}: ${err.message}`, { cause: err });
+      await delay(retryBaseMs * 2 ** attempt, signal);
+      continue;
+    }
+    const challenge = /cloudflare/i.test(res.headers.get('server') || '') && (res.status === 403 || res.status === 503);
+    if (last || challenge || !RETRY_STATUSES.has(res.status)) return res;
+    const wait = retryAfterMs(res) ?? retryBaseMs * 2 ** attempt;
+    await res.body?.cancel();
+    await delay(Math.min(wait, MAX_RETRY_AFTER_MS), signal);
+  }
+}
+
 // Follows redirects by hand so every hop passes the SSRF guard and gets only its own cookies.
-async function fetchPage(url, { cookies, fetchImpl = fetch, assertUrl = ytdlp.assertPublicUrlResolved }) {
+async function fetchPage(url, {
+  cookies, fetchImpl = fetch, assertUrl = ytdlp.assertPublicUrlResolved, userAgent, retryBaseMs = RETRY_BASE_MS, signal,
+}) {
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     await assertUrl(current);
     const headers = {
-      'User-Agent': USER_AGENT,
+      'User-Agent': userAgent || USER_AGENT,
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
       'Accept-Language': 'en-US,en;q=0.9',
       'Sec-Fetch-Dest': 'document',
@@ -527,12 +645,19 @@ async function fetchPage(url, { cookies, fetchImpl = fetch, assertUrl = ytdlp.as
     };
     const cookieHeader = cookieHeaderFor(cookies, current);
     if (cookieHeader) headers.Cookie = cookieHeader;
-    const res = await fetchImpl(current, { headers, redirect: 'manual', signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    const res = await requestWithRetry(current, { headers, redirect: 'manual' }, { fetchImpl, retryBaseMs, signal });
     if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
       current = new URL(res.headers.get('location'), current).toString();
       continue;
     }
     if (!res.ok) {
+      const body = await readCapped(res, ERROR_BODY_BYTES).catch(() => '');
+      if (isCloudflareChallenge(res, body)) {
+        throw new Error(
+          `Cloudflare challenge on ${new URL(current).host}. Export fresh cookies (including cf_clearance) from your browser, `
+          + 'and set the crawler User-Agent to that browser\'s exact User-Agent: Cloudflare only honours cf_clearance from the browser it was issued to.'
+        );
+      }
       if (res.status === 403) {
         throw new Error(`HTTP 403 Forbidden fetching ${current} (forum cookies may be missing or expired, or anti-bot challenge active)`);
       }
@@ -545,8 +670,12 @@ async function fetchPage(url, { cookies, fetchImpl = fetch, assertUrl = ytdlp.as
   throw new Error('Too many redirects');
 }
 
+const CANCELLED = 'Cancelled';
+
 // Crawls `url` and following pages based on mode ('follow' | 'all' | 'last' | 'range' | 'single').
-// Returns { pages, links, passwords, newCount, historyCount, maxPage, threadTitle, truncated, error, hasMorePages }.
+// Returns { pages, links, passwords, newCount, historyCount, maxPage, threadTitle, truncated, error,
+// cancelled, hasMorePages }. `onPage` hears about each page as it's read; aborting `signal` stops
+// the crawl and keeps what it found so far (error 'Cancelled'), unless it was still on the first page.
 async function crawl({
   url,
   mode = 'follow',
@@ -563,144 +692,148 @@ async function crawl({
   fetchImpl,
   assertUrl,
   delayMs = PAGE_DELAY_MS,
+  userAgent = '',
+  retryBaseMs,
+  signal,
+  onPage = () => {},
 }) {
   const startUrl = resolveUrl(ytdlp.normalizeUrl(url), undefined);
   if (!startUrl) throw new Error('A valid http(s) URL is required');
   const limit = Math.min(Math.max(parseInt(maxPages, 10) || DEFAULT_MAX_PAGES, 1), MAX_PAGES_LIMIT);
-  const cookies = loadCookies({ cookiesText, useSavedCookies });
   const siteHost = hostOf(startUrl);
+  const cookies = loadCookies({ cookiesText, useSavedCookies, siteHost });
+  const fetchOpts = { cookies, fetchImpl, assertUrl, userAgent, retryBaseMs, signal };
   const threadInfo = parseThreadUrl(startUrl);
 
   const pages = [];
-  const byUrl = new Map();
+  // Keyed by canonicalUrl, so a file linked through two mirror domains is listed once.
+  const byKey = new Map();
   const visited = new Set();
   const allPasswords = new Set();
   const pagePasswords = {};
   let truncated = false;
   let error = null;
+  let pagesPlanned = 1;
+  const failed = (err) => (signal?.aborted ? CANCELLED : err.message);
 
   // 1. Fetch initial page
-  const firstPage = await fetchPage(startUrl, { cookies, fetchImpl, assertUrl });
+  const firstPage = await fetchPage(startUrl, fetchOpts);
   visited.add(firstPage.url);
   visited.add(startUrl);
 
   const firstTitle = pageTitle(firstPage.html);
   const detectedMaxPage = detectMaxPage(firstPage.html, threadInfo.page, threadInfo.isThread ? threadInfo.baseUrl : '');
 
-  function processPageLinks(html, pageUrl, pageNumber) {
-    const extracted = extractLinks(html, pageUrl, { skipQuotes, skipBots, decodeBase64 });
+  function addPage(page, pageNumber) {
+    pages.push({ url: page.url, title: pageTitle(page.html), page: pageNumber });
+    const extracted = extractLinks(page.html, page.url, { skipQuotes, skipBots, decodeBase64 });
     for (const pw of (extracted.passwords || [])) {
       allPasswords.add(pw);
       pagePasswords[pageNumber] = [...new Set([...(pagePasswords[pageNumber] || []), pw])];
     }
 
-    for (const { url: link, source } of extracted) {
+    for (const { url: link, source, postId, author, passwords } of extracted) {
       if (!shouldKeep(link, source, siteHost)) continue;
-      const existing = byUrl.get(link);
+      const key = canonicalUrl(link);
+      const existing = byKey.get(key);
       if (existing) {
         existing.count++;
         if (source === 'embed' && existing.source !== 'embed') {
           existing.source = 'embed';
-          existing.kind = classify(link, 'embed');
+          existing.kind = classify(existing.url, 'embed');
         }
         continue;
       }
-      if (byUrl.size >= MAX_LINKS) { truncated = true; continue; }
-      byUrl.set(link, { url: link, host: hostOf(link), kind: classify(link, source), source, page: pageNumber, count: 1 });
+      if (byKey.size >= MAX_LINKS) { truncated = true; continue; }
+      const host = hostOf(link);
+      // The first post a link appears in is where it was shared; later ones are reposts.
+      byKey.set(key, {
+        url: link, host, hoster: isKnownHoster(host), kind: classify(link, source), source, page: pageNumber, count: 1, postId, author, passwords,
+      });
     }
+    onPage({ page: pageNumber, pagesDone: pages.length, pagesPlanned, links: byKey.size, title: cleanThreadTitle(firstTitle) });
   }
 
   // 2. Fetch remaining pages based on mode
-  if (threadInfo.isThread && ['all', 'last', 'range'].includes(mode)) {
-    let targetPages = [];
+  const threadMode = threadInfo.isThread && ['all', 'last', 'range'].includes(mode);
+  let hasMorePages = false;
+  if (threadMode) {
+    // Every page the mode asks for, before the per-crawl cap; whatever isn't crawled from it
+    // (cap, link limit or a failed page) is what hasMorePages reports.
+    const requested = [];
     if (mode === 'all') {
-      const maxToCrawl = Math.min(detectedMaxPage, MAX_PAGES_LIMIT);
-      for (let p = 1; p <= maxToCrawl; p++) targetPages.push(p);
+      for (let p = 1; p <= detectedMaxPage; p++) requested.push(p);
     } else if (mode === 'last') {
       const n = Math.min(Math.max(parseInt(lastN, 10) || 3, 1), MAX_PAGES_LIMIT);
-      const startP = Math.max(1, detectedMaxPage - n + 1);
-      for (let p = startP; p <= detectedMaxPage; p++) targetPages.push(p);
-    } else if (mode === 'range') {
+      for (let p = Math.max(1, detectedMaxPage - n + 1); p <= detectedMaxPage; p++) requested.push(p);
+    } else {
       const s = Math.max(1, parseInt(startPage, 10) || 1);
+      if (s > detectedMaxPage) {
+        throw new Error(`Page ${s} is past the end of the thread (it has ${detectedMaxPage} page${detectedMaxPage === 1 ? '' : 's'})`);
+      }
       const e = Math.min(detectedMaxPage, Math.max(s, parseInt(endPage, 10) || detectedMaxPage));
-      for (let p = s; p <= Math.min(e, s + MAX_PAGES_LIMIT - 1); p++) targetPages.push(p);
+      for (let p = s; p <= e; p++) requested.push(p);
     }
+    let targetPages = requested.slice(0, MAX_PAGES_LIMIT);
+    pagesPlanned = targetPages.length;
 
     // The first page was only fetched to find the page count; its links count only when it
     // is one of the requested pages.
-    if (targetPages.length === 0 || targetPages.includes(threadInfo.page)) {
-      pages.push({ url: firstPage.url, title: firstTitle, page: threadInfo.page });
-      processPageLinks(firstPage.html, firstPage.url, threadInfo.page);
-    }
+    if (targetPages.includes(threadInfo.page)) addPage(firstPage, threadInfo.page);
     targetPages = targetPages.filter((p) => p !== threadInfo.page);
 
     for (const pNum of targetPages) {
-      if (pages.length >= MAX_PAGES_LIMIT || byUrl.size >= MAX_LINKS) break;
+      if (pages.length >= MAX_PAGES_LIMIT || byKey.size >= MAX_LINKS) break;
       const pageUrl = getThreadPageUrl(threadInfo.baseUrl, pNum);
       if (visited.has(pageUrl)) continue;
       visited.add(pageUrl);
-      if (delayMs > 0) await delay(delayMs);
       try {
-        const page = await fetchPage(pageUrl, { cookies, fetchImpl, assertUrl });
-        pages.push({ url: page.url, title: pageTitle(page.html), page: pNum });
-        processPageLinks(page.html, page.url, pNum);
+        if (delayMs > 0) await delay(delayMs, signal);
+        addPage(await fetchPage(pageUrl, fetchOpts), pNum);
       } catch (err) {
-        error = err.message;
+        error = failed(err);
         break;
       }
     }
+    const crawledPages = new Set(pages.map((p) => p.page));
+    hasMorePages = requested.some((p) => !crawledPages.has(p));
   } else {
-    pages.push({ url: firstPage.url, title: firstTitle, page: threadInfo.page });
-    processPageLinks(firstPage.html, firstPage.url, threadInfo.page);
-  }
+    pagesPlanned = mode === 'single' ? 1 : limit;
+    addPage(firstPage, threadInfo.page);
 
-  if (!(threadInfo.isThread && ['all', 'last', 'range'].includes(mode)) && mode !== 'single') {
-    let candidate = findNextPage(firstPage.html, firstPage.url);
-    let next = candidate && hostOf(candidate) === siteHost ? candidate : null;
-
-    while (next && pages.length < limit && !visited.has(next)) {
+    const sameSiteNext = (html, pageUrl) => {
+      const candidate = findNextPage(html, pageUrl);
+      return candidate && hostOf(candidate) === siteHost ? candidate : null;
+    };
+    let next = sameSiteNext(firstPage.html, firstPage.url);
+    let lastPage = threadInfo.page;
+    while (mode !== 'single' && next && pages.length < limit && !visited.has(next)) {
       visited.add(next);
-      if (delayMs > 0) await delay(delayMs);
       let page;
       try {
-        page = await fetchPage(next, { cookies, fetchImpl, assertUrl });
+        if (delayMs > 0) await delay(delayMs, signal);
+        page = await fetchPage(next, fetchOpts);
       } catch (err) {
-        error = err.message;
+        error = failed(err);
         break;
       }
-      const pageNumber = pages.length + 1;
-      pages.push({ url: page.url, title: pageTitle(page.html), page: pageNumber });
-      processPageLinks(page.html, page.url, pageNumber);
-
-      const nextCand = findNextPage(page.html, page.url);
-      next = nextCand && hostOf(nextCand) === siteHost ? nextCand : null;
+      // A thread's own page numbers, so a crawl started on page 27 labels the next one 28.
+      const pageNumber = threadInfo.isThread ? parseThreadUrl(page.url).page : pages.length + 1;
+      addPage(page, pageNumber);
+      lastPage = pageNumber;
+      next = sameSiteNext(page.html, page.url);
     }
+    hasMorePages = Boolean(next && !visited.has(next)) || (threadInfo.isThread && detectedMaxPage > lastPage);
   }
 
-  // 3. SQLite History check
-  const historySet = new Set();
-  if (!ignoreHistory) {
-    try {
-      const urls = [...byUrl.keys()];
-      const chunkSize = 500;
-      for (let i = 0; i < urls.length; i += chunkSize) {
-        const slice = urls.slice(i, i + chunkSize);
-        const placeholders = slice.map(() => '?').join(',');
-        const rows = db.prepare(`SELECT url FROM linkgrabber_history WHERE url IN (${placeholders})`).all(...slice);
-        for (const r of rows) historySet.add(r.url);
-      }
-    } catch {
-      // Non-fatal if history query fails
-    }
+  // 3. History check
+  const allLinks = [...byKey.values()];
+  if (ignoreHistory) {
+    for (const item of allLinks) item.isNew = true;
+  } else {
+    markHistory(allLinks);
   }
-
-  for (const item of byUrl.values()) {
-    item.isNew = !historySet.has(item.url);
-  }
-
-  const allLinks = [...byUrl.values()];
   const newCount = allLinks.filter((l) => l.isNew).length;
-  const historyCount = allLinks.length - newCount;
 
   return {
     pages,
@@ -708,17 +841,49 @@ async function crawl({
     passwords: [...allPasswords],
     pagePasswords,
     newCount,
-    historyCount,
+    historyCount: allLinks.length - newCount,
     maxPage: detectedMaxPage,
     threadUrl: threadInfo.isThread ? threadInfo.baseUrl : firstPage.url,
     threadTitle: cleanThreadTitle(firstTitle),
     truncated,
     error,
-    hasMorePages: Boolean(threadInfo.isThread ? detectedMaxPage > pages.length : (findNextPage(firstPage.html, firstPage.url) && !visited.has(findNextPage(firstPage.html, firstPage.url)))),
+    cancelled: error === CANCELLED,
+    hasMorePages,
   };
 }
 
 // --- history ---------------------------------------------------------------------------
+
+// Rows from before the canonical column (and the Python crawler's imported history) get their
+// key computed once, in JS, since SQL can't apply canonicalUrl.
+let historyKeysReady = false;
+function ensureHistoryKeys() {
+  if (historyKeysReady) return;
+  const rows = db.prepare('SELECT url FROM linkgrabber_history WHERE canonical IS NULL').all();
+  if (rows.length) {
+    const update = db.prepare('UPDATE linkgrabber_history SET canonical = ? WHERE url = ?');
+    db.transaction(() => { for (const r of rows) update.run(canonicalUrl(r.url), r.url); })();
+  }
+  historyKeysReady = true;
+}
+
+// Sets isNew on each link: false when the same file (by canonicalUrl) was sent or copied before.
+function markHistory(links) {
+  const seen = new Set();
+  try {
+    ensureHistoryKeys();
+    const keys = [...new Set(links.map((l) => canonicalUrl(l.url)))];
+    for (let i = 0; i < keys.length; i += 500) {
+      const slice = keys.slice(i, i + 500);
+      const rows = db.prepare(`SELECT canonical FROM linkgrabber_history WHERE canonical IN (${slice.map(() => '?').join(',')})`).all(...slice);
+      for (const r of rows) seen.add(r.canonical);
+    }
+  } catch (err) {
+    console.error(`[linkgrabber] History lookup failed: ${err.message}`);
+  }
+  for (const l of links) l.isNew = !seen.has(canonicalUrl(l.url));
+  return links;
+}
 
 function recordCrawledLinks(urls, threadTitle = '', threadUrl = '') {
   const list = cleanUrls(urls);
@@ -727,17 +892,17 @@ function recordCrawledLinks(urls, threadTitle = '', threadUrl = '') {
   let count = 0;
   try {
     const insert = db.prepare(`
-      INSERT OR IGNORE INTO linkgrabber_history (url, thread_title, thread_url, discovered_at)
-      VALUES (?, ?, ?, ?)
+      INSERT OR IGNORE INTO linkgrabber_history (url, canonical, thread_title, thread_url, discovered_at)
+      VALUES (?, ?, ?, ?, ?)
     `);
     db.transaction(() => {
       for (const u of list) {
-        const res = insert.run(u, threadTitle || '', threadUrl || '', now);
+        const res = insert.run(u, canonicalUrl(u), threadTitle || '', threadUrl || '', now);
         if (res.changes > 0) count++;
       }
     })();
-  } catch {
-    // Non-fatal
+  } catch (err) {
+    console.error(`[linkgrabber] Could not record history: ${err.message}`);
   }
   return count;
 }
@@ -919,9 +1084,11 @@ async function sendToAria2(urls, { rpcUrl, secret, dir, fetchImpl = fetch }) {
   const data = await res.json().catch(() => null);
   if (!res.ok || !data) throw new Error(`aria2 responded with HTTP ${res.status}`);
   if (data.error) throw new Error(`aria2: ${data.error.message}`);
+  // multicall answers in call order: each entry is [gid] or a fault.
   const results = Array.isArray(data.result) ? data.result : [];
   const failed = results.filter((r) => r && r.faultString).map((r) => r.faultString);
-  return { sent: results.length - failed.length, failed };
+  const accepted = urls.filter((u, i) => results[i] && !results[i].faultString);
+  return { sent: results.length - failed.length, failed, accepted };
 }
 
 function resolveDirectDownloadUrl(url) {
@@ -936,6 +1103,7 @@ function resolveDirectDownloadUrl(url) {
 module.exports = {
   DEFAULT_MAX_PAGES,
   MAX_PAGES_LIMIT,
+  MAX_LINKS,
   parseNetscapeCookies,
   parseCookiesContent,
   cookieHeaderFor,
@@ -953,8 +1121,12 @@ module.exports = {
   findNextPage,
   unwrapRedirect,
   classify,
+  hostOf,
+  isKnownHoster,
+  canonicalUrl,
   crawl,
   cleanUrls,
+  markHistory,
   recordCrawledLinks,
   getHistoryStats,
   clearHistory,

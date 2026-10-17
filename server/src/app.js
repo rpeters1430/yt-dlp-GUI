@@ -130,6 +130,9 @@ function createApp({ watchRepository, watchService, checkAllWatches }) {
 
   // JSON only: a cross-site <form> can't send it (see sameSite above). The Lidarr routes,
   // called by Lidarr with form bodies and an API key rather than a cookie, parse their own.
+  // Link grabber sends carry every crawled URL plus per-URL metadata, which easily passes the
+  // 100kb default on large threads; mounted first so the global parser sees the body as parsed.
+  app.use('/api/linkgrabber', express.json({ limit: '10mb' }));
   app.use(express.json());
   app.use(sessionMiddleware);
 

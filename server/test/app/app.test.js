@@ -56,7 +56,7 @@ const READ_ENDPOINTS = [
   '/api/settings', '/api/settings/output-template', '/api/twitch/settings', '/api/twitch/jobs',
   '/api/cleanup/settings', '/api/jellyfin/settings', '/api/plex/settings', '/api/music/settings',
   '/api/music/watches', '/api/sites/guide', '/api/library', '/api/notifications/settings',
-  '/api/lidarr/settings', '/api/linkgrabber/settings',
+  '/api/lidarr/settings', '/api/linkgrabber/settings', '/api/linkgrabber/crawls', '/api/linkgrabber/watches',
 ];
 
 test('health answers without a session and is not cached', async (t) => {
@@ -123,4 +123,97 @@ test('linkgrabber test-jd only contacts the saved JDownloader address', async (t
   const saved = await call('POST', '/api/linkgrabber/test-jd', { jdUrl: 'http://10.0.0.1:9666' });
   assert.equal(saved.body.ok, true);
   assert.deepEqual(hits, ['/jdcheck.js']);
+});
+
+test('linkgrabber send accepts bodies over the 100kb JSON default', async (t) => {
+  const http = require('http');
+  const fake = http.createServer((req, res) => { req.resume(); req.on('end', () => res.end('success')); });
+  await new Promise((resolve) => fake.listen(0, '127.0.0.1', resolve));
+  t.after(() => fake.close());
+
+  const { call } = await startApp(t);
+  await call('POST', '/api/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
+  assert.equal((await call('PUT', '/api/linkgrabber/settings', { jdUrl: `http://127.0.0.1:${fake.address().port}` })).status, 200);
+
+  const urls = Array.from({ length: 400 }, (_, i) => `https://example.com/file/${i}/${'x'.repeat(100)}`);
+  const urlMetadata = urls.map((url, i) => ({ url, page: Math.floor(i / 50) + 1, title: 'y'.repeat(200) }));
+  const body = { target: 'jdownloader', urls, urlMetadata, packageName: 'big thread' };
+  assert.ok(JSON.stringify(body).length > 102400, 'payload exceeds the default limit');
+
+  const res = await call('POST', '/api/linkgrabber/send', body);
+  assert.notEqual(res.status, 413);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+});
+
+test('linkgrabber marks sent and copied links as seen in history', async (t) => {
+  const http = require('http');
+  const fake = http.createServer((req, res) => { req.resume(); req.on('end', () => res.end('success')); });
+  await new Promise((resolve) => fake.listen(0, '127.0.0.1', resolve));
+  t.after(() => fake.close());
+
+  const { db, call } = await startApp(t);
+  await call('POST', '/api/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
+  await call('PUT', '/api/linkgrabber/settings', { jdUrl: `http://127.0.0.1:${fake.address().port}` });
+
+  const sent = await call('POST', '/api/linkgrabber/send', { target: 'jdownloader', urls: ['https://files.example.net/f/1'], packageName: 'T' });
+  assert.deepEqual(sent.body.seen, ['https://files.example.net/f/1']);
+
+  const copied = await call('POST', '/api/linkgrabber/history', { urls: ['https://files.example.net/f/2', 'nope'], threadTitle: 'T', threadUrl: 'https://forum.example.com/threads/t.1/' });
+  assert.deepEqual(copied.body, { recorded: 1 });
+
+  // Only these URLs: db.js also imports the Python crawler's history file when one exists.
+  const urls = db.prepare("SELECT url FROM linkgrabber_history WHERE url LIKE 'https://files.example.net/%' ORDER BY url").all().map((r) => r.url);
+  assert.deepEqual(urls, ['https://files.example.net/f/1', 'https://files.example.net/f/2']);
+});
+
+test('linkgrabber saves a single-line crawler User-Agent', async (t) => {
+  const { call } = await startApp(t);
+  await call('POST', '/api/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
+  assert.equal((await call('PUT', '/api/linkgrabber/settings', { userAgent: 'Mozilla/5.0 Test' })).status, 200);
+  assert.equal((await call('GET', '/api/linkgrabber/settings')).body.userAgent, 'Mozilla/5.0 Test');
+  assert.equal((await call('PUT', '/api/linkgrabber/settings', { userAgent: 'a\r\nX-Injected: 1' })).status, 400);
+});
+
+test('linkgrabber crawls run in the background and are listed with their outcome', async (t) => {
+  const { call } = await startApp(t);
+  await call('POST', '/api/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
+  assert.equal((await call('POST', '/api/linkgrabber/crawl', { url: 'ftp://x' })).status, 400);
+
+  // .invalid never resolves, so the crawl fails on its first page.
+  const started = await call('POST', '/api/linkgrabber/crawl', { url: 'https://forum.invalid/threads/t.1/', mode: 'single' });
+  assert.equal(started.status, 202);
+  let crawl;
+  for (let i = 0; i < 100; i++) {
+    crawl = (await call('GET', `/api/linkgrabber/crawls/${started.body.id}`)).body;
+    if (crawl.status !== 'running') break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.equal(crawl.status, 'failed');
+  assert.ok(crawl.error);
+  assert.equal((await call('GET', '/api/linkgrabber/crawls')).body[0].id, started.body.id);
+  assert.equal((await call('DELETE', `/api/linkgrabber/crawls/${started.body.id}`)).status, 200);
+  assert.equal((await call('GET', `/api/linkgrabber/crawls/${started.body.id}`)).status, 404);
+});
+
+test('linkgrabber send and check validate their input', async (t) => {
+  const { call } = await startApp(t);
+  await call('POST', '/api/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
+  assert.equal((await call('POST', '/api/linkgrabber/send', { target: 'queue', urls: ['https://a.example/x'], crawlId: 'nope' })).status, 404);
+  assert.equal((await call('POST', '/api/linkgrabber/send', { target: 'ftp', urls: ['https://a.example/x'] })).status, 400);
+  assert.equal((await call('POST', '/api/linkgrabber/send', { target: 'queue', urls: [] })).status, 400);
+  assert.equal((await call('POST', '/api/linkgrabber/check', { urls: [] })).status, 400);
+});
+
+test('linkgrabber thread watches can be created, edited and deleted', async (t) => {
+  const { call } = await startApp(t);
+  await call('POST', '/api/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
+  assert.equal((await call('POST', '/api/linkgrabber/watches', { url: 'nope' })).status, 400);
+  const created = await call('POST', '/api/linkgrabber/watches', { url: 'https://forum.example.com/threads/t.1/', target: 'jdownloader', lastN: 2 });
+  assert.equal(created.status, 201);
+  const updated = await call('PUT', `/api/linkgrabber/watches/${created.body.id}`, { intervalMins: 60 });
+  assert.equal(updated.body.intervalMins, 60);
+  assert.equal((await call('PUT', `/api/linkgrabber/watches/${created.body.id}`, { intervalMins: 1 })).status, 400);
+  assert.equal((await call('GET', '/api/linkgrabber/watches')).body.length, 1);
+  assert.equal((await call('DELETE', `/api/linkgrabber/watches/${created.body.id}`)).status, 200);
+  assert.equal((await call('DELETE', `/api/linkgrabber/watches/${created.body.id}`)).status, 404);
 });

@@ -97,6 +97,43 @@ CREATE TABLE IF NOT EXISTS linkgrabber_history (
   discovered_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_linkgrabber_history_thread ON linkgrabber_history(thread_url);
+
+-- Link grabber crawls run as background jobs; the newest few are kept so a result survives a
+-- page reload. status: running | done | failed | cancelled.
+CREATE TABLE IF NOT EXISTS linkgrabber_crawls (
+  id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  watch_id INTEGER,
+  status TEXT NOT NULL,
+  thread_title TEXT,
+  options_json TEXT,
+  progress_json TEXT,
+  result_json TEXT,
+  error TEXT,
+  link_count INTEGER NOT NULL DEFAULT 0,
+  new_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_linkgrabber_crawls_created ON linkgrabber_crawls(created_at);
+
+-- Forum threads re-crawled on a schedule. target: none (just report) | queue | jdownloader | aria2.
+CREATE TABLE IF NOT EXISTS linkgrabber_watches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  url TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  last_n INTEGER NOT NULL DEFAULT 2,
+  interval_mins INTEGER NOT NULL DEFAULT 360,
+  target TEXT NOT NULL DEFAULT 'none',
+  package_per_page INTEGER NOT NULL DEFAULT 1,
+  hosters_only INTEGER NOT NULL DEFAULT 1,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_checked_at TEXT,
+  last_crawl_id TEXT,
+  last_new_count INTEGER,
+  last_error TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 // Lookups compare hashes as stored (lowercase) so they can use the index.
 // A mixed-case duplicate of an existing row is the same grab; drop it rather than fail.
@@ -138,6 +175,10 @@ function ensureColumn(table, column, definition) {
   }
 }
 
+// Link grabber history matches on a normalised URL (see linkGrabber.canonicalUrl), which the
+// service fills in for older rows.
+ensureColumn('linkgrabber_history', 'canonical', 'TEXT');
+db.exec('CREATE INDEX IF NOT EXISTS idx_linkgrabber_history_canonical ON linkgrabber_history(canonical)');
 ensureColumn('downloads', 'quality', 'TEXT');
 ensureColumn('downloads', 'container', "TEXT DEFAULT 'mp4'");
 ensureColumn('downloads', 'sub_langs', 'TEXT');

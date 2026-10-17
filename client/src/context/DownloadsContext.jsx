@@ -63,6 +63,16 @@ export function DownloadsProvider({ children, isAuthenticated }) {
     };
   }, []);
 
+  // Link grabber events (linkgrabber:progress, linkgrabber:crawl, linkgrabber:watch) go to
+  // every listener as (event, payload).
+  const linkGrabberListenersRef = useRef(new Set());
+  const subscribeLinkGrabber = useCallback((listener) => {
+    linkGrabberListenersRef.current.add(listener);
+    return () => {
+      linkGrabberListenersRef.current.delete(listener);
+    };
+  }, []);
+
   const subscribeWatchUpdates = useCallback((listener) => {
     watchListenersRef.current.add(listener);
     return () => {
@@ -114,6 +124,15 @@ export function DownloadsProvider({ children, isAuthenticated }) {
     socket.on('job:removed', ({ id } = {}) => {
       if (id) setJobs((prev) => prev.filter((j) => j.id !== id));
     });
+    for (const event of ['linkgrabber:progress', 'linkgrabber:crawl', 'linkgrabber:watch']) {
+      socket.on(event, (payload) => {
+        for (const fn of linkGrabberListenersRef.current) {
+          try {
+            fn(event, payload);
+          } catch (_) {}
+        }
+      });
+    }
     socket.on('watch:update', (updated) => {
       if (!updated) return;
       for (const fn of watchListenersRef.current) {
@@ -178,6 +197,8 @@ export function DownloadsProvider({ children, isAuthenticated }) {
     refreshJobs: () => api.listDownloads().then((list) => setJobs((prev) => mergeList(prev, list))).catch(() => {}),
     subscribeWatchUpdates,
     subscribeAnalyzeProgress,
+    subscribeLinkGrabber,
+    connected,
   };
 
   return (

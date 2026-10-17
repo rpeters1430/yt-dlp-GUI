@@ -1294,8 +1294,47 @@ button.more-by-item:hover:not(:disabled) { background: none; filter: brightness(
 .lg-url { overflow-wrap: anywhere; font-size: 12.5px; }
 .lg-meta { flex: 0 0 auto; white-space: nowrap; }
 .lg-send { position: sticky; bottom: 0; background: var(--bg-elevated); padding: 12px 0 0; }
+/* Rows off screen skip layout and paint, so a 2,000-link list scrolls smoothly. */
+.lg-row:not(.lg-row-head) { content-visibility: auto; contain-intrinsic-size: auto 40px; }
+.lg-meta { display: flex; gap: 6px; align-items: center; }
+.lg-meta a { color: var(--accent-text); }
+.lg-badge { font-size: 10.5px; line-height: 1.5; padding: 0 6px; border-radius: var(--radius-sm, 4px); background: var(--surface-active); color: var(--text-secondary); white-space: nowrap; }
+.lg-badge-b64 { background: var(--accent-music-soft); color: var(--accent-music); }
+.lg-badge-online { background: var(--success-soft); color: var(--success); }
+.lg-badge-offline { background: var(--danger-soft); color: var(--danger); }
+.lg-badge-reachable { background: var(--info-soft); color: var(--info); }
+.lg-row-offline .lg-url { text-decoration: line-through; color: var(--text-tertiary); }
+.lg-post-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--surface); font-size: 12.5px; }
+.lg-post-head .lg-pw { font-family: var(--font-mono); }
+.lg-progress { display: grid; gap: 6px; margin-top: 4px; }
+.lg-progress-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lg-password-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin: 8px 0 16px; }
+.lg-password-bar code { padding: 2px 8px; background: var(--surface-active); border-radius: var(--radius-sm, 4px); font-weight: 600; }
+.lg-inline { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lg-history-box { padding: 12px; background: var(--bg-elevated); border-radius: var(--radius-md, 8px); margin: 8px 0; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.lg-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.lg-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md, 8px); }
+.lg-card-main { min-width: 0; flex: 1 1 260px; display: grid; gap: 2px; }
+.lg-card-title { font-weight: 600; overflow-wrap: anywhere; }
+.lg-card-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.lg-card button.lg-card-open { all: unset; cursor: pointer; display: grid; gap: 2px; min-width: 0; }
+.lg-card button.lg-card-open:focus-visible { outline: 2px solid var(--focus-ring, var(--accent)); outline-offset: 2px; }
+.lg-error { color: var(--danger); }
+.lg-watch-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; align-items: end; margin-bottom: 12px; }
+.lg-watch-form .lg-watch-url { grid-column: 1 / -1; }
+.lg-options { margin-top: 0; gap: 12px 16px; flex-wrap: wrap; align-items: center; }
+.lg-mode { max-width: 200px; }
+.lg-range { display: flex; gap: 8px; }
+.lg-range .field-label { width: 80px; }
+.lg-file-btn { cursor: pointer; margin: 0; display: inline-flex; align-items: center; gap: 4px; }
+.lg-prewrap { white-space: pre-wrap; }
+.lg-panel-accent { border: 1px solid var(--accent); margin-bottom: 16px; }
+.lg-input-row { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.lg-input-row input { flex: 1; min-width: 0; }
+.lg-card[aria-current="true"] { border-color: var(--accent); }
 @media (max-width: 640px) {
   .lg-row { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .lg-meta { flex-wrap: wrap; white-space: normal; }
 }
 
 /* Analyze animation (staging tray) */
