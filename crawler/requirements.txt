@@ -1,5 +1,2 @@
 requests
-beautifulsoup4
 rich
-# Optional: Chrome TLS fingerprinting, helps with Cloudflare-protected forums
-curl_cffi

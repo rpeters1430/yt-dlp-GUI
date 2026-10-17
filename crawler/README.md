@@ -1,8 +1,8 @@
-# Forum Link Crawler (SimpCity / XenForo)
+# Forum Link Crawler (command line)
 
-Crawls forum threads and lists the file-hoster links found in the posts as a plain list, one URL per line, ready to copy. It strips quoted replies and mirror-bot reposts, decodes Base64-hidden links, picks up archive passwords and remembers which links it has already shown you.
+A command-line front end to the web app's link grabber. Give it a forum thread and it prints the new file-host links, one URL per line, ready to copy. The app does the work: it reads each post, skips quoted replies and mirror-bot reposts, decodes Base64-hidden links, picks up archive passwords and keeps the link history. That history is shared, so a link listed here shows as already sent in the app, and the other way round.
 
-**Nothing is sent anywhere by default.** Links are only printed. Sending to JDownloader is opt-in (`--jd`), and so is copying to the clipboard (`--copy`).
+**Nothing is sent anywhere by default.** Links are only printed. Sending to JDownloader (or the app's own queue, or aria2) is opt-in with `--jd` / `--send`, and so is copying to the clipboard (`--copy`).
 
 ---
 
@@ -12,7 +12,15 @@ Crawls forum threads and lists the file-hoster links found in the posts as a pla
 pip install -r requirements.txt
 ```
 
-Export your forum cookies while logged in (e.g. with the Cookie-Editor extension) to `cookies.json` or `cookies.txt` next to where you run the crawler. See `cookies.example.json`. Both names are git-ignored.
+The app has to be running. Tell the crawler where it is and how to sign in:
+
+| Setting | Default |
+| :--- | :--- |
+| `YTDLP_GUI_URL` or `--app-url` | `http://localhost:3000` |
+| `YTDLP_GUI_USER` or `--user` | `admin` |
+| `YTDLP_GUI_PASSWORD` | asked for when run in a terminal |
+
+Forum cookies are the ones saved in the app under **Crawler cookies**. To use different ones for a run, pass `--cookies cookies.txt` (Netscape or Cookie-Editor JSON, see `cookies.example.json`, or a raw `name=value; ...` string). They're used for that run only and aren't stored.
 
 ---
 
@@ -28,9 +36,11 @@ python crawler.py "https://simpcity.cr/threads/thread-name.12345/" --pages 20-27
 python crawler.py "https://simpcity.cr/threads/thread-name.12345/" --pages 20-
 python crawler.py "https://simpcity.cr/threads/thread-name.12345/" --last 3
 
-# A watchlist: one thread URL per line in threads.txt (git-ignored)
+# A list of threads: one URL per line in threads.txt (git-ignored)
 python crawler.py threads.txt --last 3
 ```
+
+One crawl reads at most 25 pages; the summary says when there were more. For threads you check regularly, a **thread watch** in the app does the same on a schedule, without this script.
 
 The link list goes to **stdout** and everything else (progress, tables, passwords) to **stderr**, so you can:
 
@@ -40,11 +50,11 @@ python crawler.py URL --copy             # also put them on the clipboard
 python crawler.py URL --by-page          # group by page, with passwords as '# ...' lines
 ```
 
-If one thread in a watchlist fails, the rest still run and the failures are listed at the end (exit code 1).
+Ctrl+C cancels the crawl in the app too. If one thread in a list fails, the rest still run and the failures are listed at the end (exit code 1).
 
 ### History
 
-Every link listed is recorded in `crawled_history.db` (and in the web app's history when `../config/app.db` exists), so the next run only lists **new** links. Use `--ignore-history` to list everything again, or `--no-record` to leave the history untouched for a run.
+Every link listed is recorded in the app's history, so the next run (and the app) only shows **new** links. `--ignore-history` lists everything again; `--no-record` leaves the history untouched for a run. Links sent with `--jd` / `--send` are recorded by the send itself.
 
 ---
 
@@ -52,34 +62,33 @@ Every link listed is recorded in `crawled_history.db` (and in the web app's hist
 
 | Flag | Description |
 | :--- | :--- |
-| `--all-pages` / `-a` | Crawl every page of the thread |
+| `--all-pages` / `-a` | Crawl every page of the thread (up to 25) |
 | `--pages RANGE` / `-p` | `10-15`, `20-` (to the last page) or `7` |
 | `--last N` / `-l N` | Crawl only the last N pages |
-| `--delay SECONDS` | Wait between page requests (default 0.5) |
 | `--by-page` | Group the list by page with `# title - page N` and `# password:` lines |
 | `--copy` | Copy the list to the clipboard (`clip`, `pbcopy`, `wl-copy`, `xclip` or `xsel`). If JDownloader's clipboard monitor is on, it will pick these up |
 | `--output FILE` / `-o` | Write the list to FILE |
 | `--save` | Write each thread's list to `links_<title>.txt` |
-| `--ignore-history` | List links even if a previous run already found them |
+| `--ignore-history` | List links even if they were sent or listed before |
 | `--no-record` | Don't add this run's links to the history |
 | `--history-stats` | Show how many links and threads the history holds |
 | `--include-bots` | Include mirror bots like SussyBOT |
 | `--include-quotes` | Include links inside quoted replies |
 | `--all-external` | Keep all external links, not just known file hosts |
-| `--cookies FILE` / `-c` | Cookie file to use instead of auto-detecting `cookies.json` / `cookies.txt` |
+| `--cookies FILE` / `-c` | Cookies for this run instead of the app's saved crawler cookies |
+| `--app-url URL`, `--user NAME` | Where the app is and who to sign in as |
 
-### Sending to JDownloader (optional)
+### Sending links (optional)
 
 | Flag / setting | Description |
 | :--- | :--- |
-| `--jd` | Send the new links to JDownloader via Click'n'Load |
-| `CRAWLER_SEND_TO_JD=1` | Environment setting: send every run without passing `--jd` |
+| `--jd` | Send the new links to JDownloader (same as `--send jdownloader`) |
+| `--send queue\|jdownloader\|aria2` | Send them to that downloader, at the address saved in the app under **Downloaders** |
+| `CRAWLER_SEND_TO_JD=1` | Environment setting: send every run to JDownloader without passing `--jd` |
 | `--no-jd` | Never send, even when `CRAWLER_SEND_TO_JD` is set |
-| `--single-package` | One package per thread instead of one per page |
-| `--jd-url URL` / `JD_URL` | Click'n'Load URL, e.g. `http://192.168.1.10:9666` |
-| `--jd-host` / `JD_HOST`, `--jd-port` / `JD_PORT` | Host and port instead of a URL (defaults `127.0.0.1`, `9666`) |
+| `--single-package` | One JDownloader package per thread instead of one per page |
 
-Links are sent with their archive passwords. If JDownloader isn't reachable, the links are still listed.
+Links go to JDownloader with their archive passwords. The old `--jd-url`, `--jd-host`, `--jd-port` and `--delay` options are still accepted but do nothing: the JDownloader address now lives in the app, and so does the pause between pages.
 
 ---
 
@@ -87,14 +96,14 @@ Links are sent with their archive passwords. If JDownloader isn't reachable, the
 
 If running JDownloader 2 in Docker on a NAS (e.g. `jlesage/docker-jdownloader-2`):
 - **Port 5800** is the noVNC **Web UI** for your browser.
-- **Port 9666** is the **Click'n'Load HTTP API** used by this crawler and the web app to push links.
+- **Port 9666** is the **Click'n'Load HTTP API** the app uses to push links.
 
 To allow link pushing from other computers on your network:
 1. Ensure port `9666:9666` is mapped in your Docker compose / container settings.
 2. In the JDownloader GUI (accessed via port 5800), go to **Settings** -> **Advanced Settings**.
 3. Search for: `RemoteAPI: Extern Interface Localhost Only` and uncheck it (set to `false`).
 4. Search for: `RemoteAPIConfig: Extern Interface Auth` and add your local network or IP.
-5. In the web app or with `--jd-url`, use `http://<nas-ip>:9666` as the JDownloader address.
+5. In the app, under **Link grabber** -> **Downloaders**, use `http://<nas-ip>:9666` as the JDownloader address.
 
 ---
 

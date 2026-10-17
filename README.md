@@ -189,10 +189,13 @@
 ### Link Grabber & Forum Crawler
 - **Links page**: Crawl a forum thread or any page and list every download link it contains, grouped by host, with filters and search.
 - **Thread-aware**: XenForo threads (SimpCity and similar) can be crawled whole, by page range, or just the last N pages; quoted replies and mirror-bot reposts are skipped and Base64-hidden links decoded.
-- **Archive passwords**: `Password: …` lines are picked up per page and shown for copying.
-- **Your choice of hand-off**: Copy the selected links, queue them here with yt-dlp, or send them to JDownloader (Click'n'Load) or aria2. Nothing is sent until you click **Send links**.
-- **History**: Links you've already sent are marked so re-crawling an active thread highlights only what's new.
-- **Command-line crawler** (`crawler/`): The same crawl from a terminal, printing a plain list of links to copy (see [below](#link-grabber-and-forum-crawler)).
+- **Post by post**: Each link shows who posted it and links back to the post; group the list by post, and see the archive password given in that post.
+- **Background crawls**: A crawl runs on the server with live progress and a Cancel button, and the last 50 are kept under **Recent crawls** to reopen.
+- **Link checks**: See whether links still work before sending them, with file name and size from Pixeldrain, MEGA and direct file links.
+- **Thread watches**: Re-crawl a thread's newest pages on a schedule and send the links you haven't had yet to JDownloader, the queue or aria2, with a notification.
+- **Your choice of hand-off**: Copy the selected links, queue them here with yt-dlp, or send them to JDownloader (Click'n'Load) or aria2. Nothing is sent until you click **Send**.
+- **History**: Links you've already sent or copied are marked, even through a host's mirror domains (bunkr.si and bunkr.fi count as one), so re-crawling an active thread highlights only what's new.
+- **Command-line crawler** (`crawler/`): The same crawl from a terminal through the app, printing a plain list of links to copy (see [below](#link-grabber-and-forum-crawler)).
 
 ### Notifications
 - Dispatches webhook payloads to **Discord**, **Slack**, **Mattermost**, **Rocket.Chat**, **ntfy**, **Gotify**, or generic JSON webhooks (Home Assistant, n8n, Node-RED).
@@ -469,18 +472,28 @@ Open **Links** in the sidebar, paste a thread or page URL and pick how many page
 | Mode | Crawls |
 |---|---|
 | Follow "Next" links | Any site: the page plus the pages its *Next* links lead to |
-| Whole Thread | Every page of a forum thread |
+| Whole Thread | Every page of a forum thread (up to 25 per crawl) |
 | Last N Pages | Only the newest pages, handy for checking an active thread |
 | Page Range | The pages you list, e.g. 20–27 |
 | Single Page | Just the URL you pasted |
 
-Forums that need a login use your site cookies: tick **Use saved cookies.txt** (the one from Settings) or use **Paste custom cookies** for that one crawl.
+On XenForo forums the crawler reads each post on its own: links in quotes, signatures, the sidebar and the footer are skipped, and each link shows who posted it, a link back to that post, and a key icon when the post gave an archive password. Other pages are read whole, minus their navigation and footer.
 
-Select the links you want, then **Copy selected links** or choose a target and **Send links**. For JDownloader, click **Downloaders**, enter its Click'n'Load address (`http://<host>:9666`, not the `5800` web UI port), and press **Test connection** to check it can be reached. In package-per-page mode each JDownloader package is named `[Page N] Thread title` and carries the passwords found on that page. **Clear history** in the same panel makes previously sent links show as new again.
+Forums that need a login use your cookies: save them under **Crawler cookies** (or fall back to the cookies.txt from Settings) and tick **Use saved cookies**, or paste temporary cookies to use instead of the saved ones for one crawl. For a Cloudflare-protected forum, export cookies that include `cf_clearance` and set **Crawler User-Agent** under **Downloaders** to that browser's exact User-Agent; Cloudflare rejects the cookie from any other. Pages that answer with a rate limit or server error are retried twice before the crawl stops.
+
+A crawl runs on the server: the page shows its progress with a **Cancel** button, and you can leave and come back. The last 50 crawls are listed under **Recent crawls**; opening one shows its links again, with anything sent since marked as such.
+
+Select the links you want (shift-click selects a run of them), then **Copy** or choose a target and **Send**. For JDownloader, click **Downloaders**, enter its Click'n'Load address (`http://<host>:9666`, not the `5800` web UI port), and press **Test connection** to check it can be reached. In package-per-page mode each JDownloader package is named `[Page N] Thread title` and carries the passwords found on that page. Links you send anywhere or copy are remembered and show as sent before next time; **Clear history** in the same panel makes them show as new again.
+
+**Check links** asks whether the links shown (or the selected ones, up to 300) still work. Pixeldrain and MEGA links are checked through their APIs and direct file links by their headers, which also gives a name and size; those come back **Online** or **Offline**. Any other link is only fetched: a 404 means **Offline**, a normal answer only **Reachable**, since many hosts show "file not found" on an ordinary page. **Deselect offline** drops the dead ones from the selection.
+
+#### Thread watches
+
+**Watch this thread** (or **Add watch**) re-crawls a thread's newest pages on a schedule, from every 30 minutes to daily, with your saved crawler cookies. Links that aren't in the history yet go to JDownloader, the download queue or aria2, or with **Just tell me** only trigger a notification (the *Thread watch found new links* event under Notifications). By default only file host links count. The first check sends every such link on those pages that you haven't sent before; after that, only new ones. Clicking a watch shows its latest check's links.
 
 ### From the command line
 
-`crawler/crawler.py` does the same crawl from a terminal and prints the links as a plain list, one URL per line. It runs from a checkout of this repo (it isn't part of the Docker image) and needs Python 3.9+:
+`crawler/crawler.py` runs the same crawl from a terminal, through the app, and prints the new links as a plain list, one URL per line. The app has to be running; the crawler signs in to it (`YTDLP_GUI_URL`, `YTDLP_GUI_USER`, `YTDLP_GUI_PASSWORD`) and uses its saved crawler cookies, downloader addresses and link history. It runs from a checkout of this repo (it isn't part of the Docker image) and needs Python 3.9+:
 
 ```bash
 cd crawler
@@ -496,9 +509,9 @@ python crawler.py URL --copy        # also copy them to the clipboard
 python crawler.py URL --by-page     # '# title - page N' and '# password:' lines between groups
 ```
 
-- **Cookies**: export your forum cookies while logged in to `cookies.json` or `cookies.txt` in the folder you run from (see `cookies.example.json`). Both names are git-ignored, as are `threads.txt` and `*_cookies.*`.
-- **History**: listed links are remembered in `crawler/crawled_history.db`, and in the web app's history when `config/app.db` is present, so the next run shows only new links. `--ignore-history` lists everything again; `--no-record` leaves the history untouched.
-- **JDownloader is off by default.** Add `--jd` (with `--jd-url http://<host>:9666` or `JD_URL`) to send the links, or set `CRAWLER_SEND_TO_JD=1` to send every run; `--no-jd` overrides that setting.
+- **Cookies**: the ones saved in the app under **Crawler cookies**; `--cookies cookies.txt` uses others for one run. `cookies.json`, `cookies.txt`, `threads.txt` and `*_cookies.*` are git-ignored.
+- **History**: listed links go into the app's history, so the next run (and the Links page) shows only new links. `--ignore-history` lists everything again; `--no-record` leaves the history untouched. A `crawler/crawled_history.db` from the old standalone crawler is still imported into the app's history when the server starts.
+- **Sending is off by default.** `--jd` sends the links to JDownloader at the address saved in the app (`--send queue` or `--send aria2` for the others), or set `CRAWLER_SEND_TO_JD=1` to send every run; `--no-jd` overrides that setting.
 - A thread that fails in a watchlist is skipped and reported at the end; the rest still run.
 
 All flags are listed in [`crawler/README.md`](crawler/README.md) and with `python crawler.py --help`.
@@ -510,6 +523,7 @@ All times are server-local (set `TZ`).
 | Task | When |
 |---|---|
 | Watch checks | Evaluated every 5 minutes; each Watch runs once its own interval (default 30 min) has elapsed |
+| Thread watch checks | Evaluated every 5 minutes; each thread watch runs once its own interval (default 6 hours) has elapsed, one at a time |
 | Jellyfin playlist sync | Every 15 minutes, plus right after each Watch download |
 | Plex playlist sync | Every 15 minutes, plus right after each Watch download |
 | Auto-delete | Nightly at 03:00 |

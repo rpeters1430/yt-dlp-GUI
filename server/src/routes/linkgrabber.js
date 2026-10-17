@@ -1,32 +1,16 @@
 const express = require('express');
-const db = require('../db');
-const queue = require('../services/queue');
-const ytdlp = require('../services/ytdlp');
 const linkGrabber = require('../services/linkGrabber');
+const crawls = require('../services/linkGrabberCrawls');
+const watches = require('../services/linkGrabberWatches');
+const linkCheck = require('../services/linkCheck');
+const { getSetting, saveSetting, sendLinks } = require('../services/linkGrabberSend');
 const { requireAuth } = require('../auth');
 
 const router = express.Router();
 router.use(requireAuth);
 
-const MAX_SEND = 500;
-const KEYS = {
-  jdUrl: 'linkgrabber_jd_url',
-  aria2Url: 'linkgrabber_aria2_url',
-  aria2Secret: 'linkgrabber_aria2_secret',
-  aria2Dir: 'linkgrabber_aria2_dir',
-};
-
-function getSetting(key) {
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
-  return row ? row.value : '';
-}
-
-function saveSetting(key, value) {
-  db.prepare(`
-    INSERT INTO settings (key, value) VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-  `).run(key, String(value));
-}
+// As many as one crawl can list, so a full selection always goes out in one request.
+const MAX_SEND = linkGrabber.MAX_LINKS;
 
 function validHttpUrl(value) {
   try {
@@ -40,10 +24,11 @@ function validHttpUrl(value) {
 // The aria2 secret is write-only: the client only learns whether one is set.
 router.get('/settings', (req, res) => {
   res.json({
-    jdUrl: getSetting(KEYS.jdUrl),
-    aria2Url: getSetting(KEYS.aria2Url),
-    aria2Dir: getSetting(KEYS.aria2Dir),
-    hasAria2Secret: Boolean(getSetting(KEYS.aria2Secret)),
+    jdUrl: getSetting('jdUrl'),
+    aria2Url: getSetting('aria2Url'),
+    aria2Dir: getSetting('aria2Dir'),
+    hasAria2Secret: Boolean(getSetting('aria2Secret')),
+    userAgent: getSetting('userAgent'),
   });
 });
 
@@ -56,19 +41,25 @@ router.put('/settings', (req, res) => {
       body[field] = value;
     }
   }
-  for (const field of ['jdUrl', 'aria2Url', 'aria2Dir']) {
-    if (body[field] !== undefined) saveSetting(KEYS[field], String(body[field] || '').trim());
+  if (body.userAgent !== undefined) {
+    const value = String(body.userAgent || '').trim();
+    // It goes out as a header line, so no control characters.
+    if (value.length > 500 || /[\u0000-\u001f\u007f]/.test(value)) return res.status(400).json({ error: 'userAgent must be a single line of at most 500 characters' });
+    body.userAgent = value;
+  }
+  for (const field of ['jdUrl', 'aria2Url', 'aria2Dir', 'userAgent']) {
+    if (body[field] !== undefined) saveSetting(field, String(body[field] || '').trim());
   }
   // Blank leaves the stored secret alone; clearAria2Secret removes it.
-  if (body.clearAria2Secret) saveSetting(KEYS.aria2Secret, '');
-  else if (body.aria2Secret) saveSetting(KEYS.aria2Secret, String(body.aria2Secret));
+  if (body.clearAria2Secret) saveSetting('aria2Secret', '');
+  else if (body.aria2Secret) saveSetting('aria2Secret', String(body.aria2Secret));
   res.json({ ok: true });
 });
 
 // Tests only the saved address. Taking a URL from the request would let any signed-in
 // client probe arbitrary hosts on the server's network and read back the result.
 router.post('/test-jd', async (req, res) => {
-  const jdUrl = getSetting(KEYS.jdUrl).trim();
+  const jdUrl = getSetting('jdUrl').trim();
   if (!jdUrl) return res.status(400).json({ ok: false, message: 'JDownloader URL is not configured' });
   try {
     const result = await linkGrabber.testJDownloaderConnection(jdUrl);
@@ -80,6 +71,19 @@ router.post('/test-jd', async (req, res) => {
 
 router.get('/history/stats', (req, res) => {
   res.json(linkGrabber.getHistoryStats());
+});
+
+// Links handed off outside the server (copied to the clipboard) are marked seen the same way
+// sent ones are.
+router.post('/history', (req, res) => {
+  const { urls, threadTitle, threadUrl } = req.body || {};
+  const list = linkGrabber.cleanUrls(urls).slice(0, MAX_SEND);
+  const recorded = linkGrabber.recordCrawledLinks(
+    list,
+    typeof threadTitle === 'string' ? threadTitle.slice(0, 200) : '',
+    typeof threadUrl === 'string' ? threadUrl.slice(0, 2000) : '',
+  );
+  res.json({ recorded });
 });
 
 router.delete('/history', (req, res) => {
@@ -111,91 +115,123 @@ router.delete('/cookies', (req, res) => {
   }
 });
 
-router.post('/crawl', async (req, res) => {
+// --- crawls ------------------------------------------------------------------------------
+
+// Starts a crawl in the background and answers with its id at once. Progress arrives over
+// Socket.IO (linkgrabber:progress, then linkgrabber:crawl when it ends); GET /crawls/:id has
+// the result.
+router.post('/crawl', (req, res) => {
   const {
-    url,
+    url, mode, maxPages, startPage, endPage, lastN, skipQuotes, skipBots, decodeBase64, ignoreHistory, cookies, useSavedCookies,
+  } = req.body || {};
+  if (!url || typeof url !== 'string' || !validHttpUrl(url.trim())) return res.status(400).json({ error: 'A valid http(s) url is required' });
+  if (cookies !== undefined && typeof cookies !== 'string') return res.status(400).json({ error: 'cookies must be cookies.txt text' });
+
+  const { id } = crawls.startCrawl({
+    url: url.trim(),
     mode,
     maxPages,
     startPage,
     endPage,
     lastN,
-    skipQuotes,
-    skipBots,
-    decodeBase64,
-    ignoreHistory,
-    cookies,
-    useSavedCookies,
-  } = req.body || {};
+    skipQuotes: skipQuotes !== false,
+    skipBots: skipBots !== false,
+    decodeBase64: decodeBase64 !== false,
+    ignoreHistory: !!ignoreHistory,
+    cookiesText: cookies || '',
+    useSavedCookies: !!useSavedCookies,
+  });
+  res.status(202).json({ id });
+});
 
-  if (!url || typeof url !== 'string') return res.status(400).json({ error: 'url is required' });
-  if (cookies !== undefined && typeof cookies !== 'string') return res.status(400).json({ error: 'cookies must be cookies.txt text' });
+router.get('/crawls', (req, res) => {
+  res.json(crawls.listCrawls());
+});
 
+router.get('/crawls/:id', (req, res) => {
+  const crawl = crawls.getCrawl(req.params.id);
+  if (!crawl) return res.status(404).json({ error: 'Crawl not found' });
+  res.json(crawl);
+});
+
+router.post('/crawls/:id/cancel', (req, res) => {
+  res.json({ cancelled: crawls.cancelCrawl(req.params.id) });
+});
+
+router.delete('/crawls/:id', (req, res) => {
+  if (!crawls.deleteCrawl(req.params.id)) return res.status(409).json({ error: 'Crawl not found or still running' });
+  res.json({ ok: true });
+});
+
+// --- sending and checking ----------------------------------------------------------------
+
+// With a crawlId the package name, pages and passwords come from the stored crawl and only the
+// chosen urls are needed; without one, the caller supplies them.
+router.post('/send', async (req, res) => {
+  const { crawlId, ...body } = req.body || {};
+  let crawl = null;
+  if (crawlId) {
+    crawl = crawls.getStoredResult(String(crawlId));
+    if (!crawl) return res.status(404).json({ error: 'Crawl not found (it may have been cleared); crawl again' });
+  }
   try {
-    res.json(await linkGrabber.crawl({
-      url,
-      mode,
-      maxPages,
-      startPage,
-      endPage,
-      lastN,
-      skipQuotes: skipQuotes !== false,
-      skipBots: skipBots !== false,
-      decodeBase64: decodeBase64 !== false,
-      ignoreHistory: !!ignoreHistory,
-      cookiesText: cookies || '',
-      useSavedCookies: !!useSavedCookies,
-    }));
+    res.json(await sendLinks({ ...body, crawl }));
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(err.status || 502).json({ error: err.message });
   }
 });
 
-router.post('/send', async (req, res) => {
-  const { target, urls, packageName, passwords, pagePasswords, packagePerPage, urlMetadata, threadUrl } = req.body || {};
+router.post('/check', async (req, res) => {
+  const { urls, crawlId } = req.body || {};
   const list = linkGrabber.cleanUrls(urls);
   if (list.length === 0) return res.status(400).json({ error: 'At least one URL is required' });
-  if (list.length > MAX_SEND) return res.status(400).json({ error: `Too many URLs in one request (max ${MAX_SEND})` });
+  if (list.length > linkCheck.MAX_CHECK) return res.status(400).json({ error: `Check at most ${linkCheck.MAX_CHECK} links at a time` });
+  const results = await linkCheck.checkLinks(list);
+  if (crawlId) crawls.saveCheckResults(String(crawlId), results);
+  res.json({ results });
+});
 
+// --- thread watches ----------------------------------------------------------------------
+
+function watchError(res, err) {
+  if (err instanceof watches.WatchInputError) return res.status(400).json({ error: err.message });
+  return res.status(500).json({ error: err.message });
+}
+
+router.get('/watches', (req, res) => {
+  res.json(watches.listWatches());
+});
+
+router.post('/watches', (req, res) => {
   try {
-    if (target === 'queue') {
-      const ids = [];
-      const failed = [];
-      for (const rawUrl of list) {
-        const u = linkGrabber.resolveDirectDownloadUrl(rawUrl);
-        try {
-          await ytdlp.assertPublicUrlResolved(u);
-          ids.push(queue.enqueue(u, {}));
-        } catch (err) {
-          failed.push(`${rawUrl}: ${err.message}`);
-        }
-      }
-      return res.json({ sent: ids.length, ids, failed });
-    }
-    if (target === 'jdownloader') {
-      const result = await linkGrabber.sendToJDownloader(list, {
-        baseUrl: getSetting(KEYS.jdUrl),
-        packageName: typeof packageName === 'string' ? packageName.slice(0, 200) : '',
-        passwords,
-        pagePasswords: pagePasswords && typeof pagePasswords === 'object' && !Array.isArray(pagePasswords) ? pagePasswords : undefined,
-        packagePerPage: !!packagePerPage,
-        urlMetadata: Array.isArray(urlMetadata) ? urlMetadata : [],
-        threadUrl: typeof threadUrl === 'string' ? threadUrl.slice(0, 2000) : '',
-      });
-      return res.json({ ...result, failed: [] });
-    }
-    if (target === 'aria2') {
-      const aria2Urls = list.map(linkGrabber.resolveDirectDownloadUrl);
-      const result = await linkGrabber.sendToAria2(aria2Urls, {
-        rpcUrl: getSetting(KEYS.aria2Url),
-        secret: getSetting(KEYS.aria2Secret),
-        dir: getSetting(KEYS.aria2Dir),
-      });
-      return res.json(result);
-    }
-    return res.status(400).json({ error: 'target must be queue, jdownloader or aria2' });
+    res.status(201).json(watches.createWatch(req.body));
   } catch (err) {
-    res.status(502).json({ error: err.message });
+    watchError(res, err);
   }
+});
+
+router.put('/watches/:id', (req, res) => {
+  try {
+    const watch = watches.updateWatch(Number(req.params.id), req.body);
+    if (!watch) return res.status(404).json({ error: 'Watch not found' });
+    res.json(watch);
+  } catch (err) {
+    watchError(res, err);
+  }
+});
+
+router.delete('/watches/:id', (req, res) => {
+  if (!watches.deleteWatch(Number(req.params.id))) return res.status(404).json({ error: 'Watch not found' });
+  res.json({ ok: true });
+});
+
+// Runs in the background; the outcome arrives as linkgrabber:watch over Socket.IO.
+router.post('/watches/:id/check', (req, res) => {
+  const watch = watches.getWatch(Number(req.params.id));
+  if (!watch) return res.status(404).json({ error: 'Watch not found' });
+  if (watch.checking) return res.status(409).json({ error: 'This watch is already being checked' });
+  watches.checkWatch(watch.id).catch((err) => console.error(`[linkgrabber] watch #${watch.id} check failed: ${err.message}`));
+  res.status(202).json({ ok: true });
 });
 
 module.exports = router;

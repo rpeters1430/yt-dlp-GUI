@@ -501,3 +501,164 @@ test('extractLinks discovers bare known host URLs and URL-safe base64', () => {
   const b64Links = extractBase64Links(`Here is the encoded link: ${urlSafeB64}`);
   assert.ok(b64Links.includes(rawUrl));
 });
+
+test('saved cookies are used only when asked, and pasted cookies replace them', async () => {
+  const { CRAWLER_COOKIES_FILE } = require('./ytdlpPaths');
+  const backup = fs.existsSync(CRAWLER_COOKIES_FILE) ? fs.readFileSync(CRAWLER_COOKIES_FILE, 'utf8') : null;
+  try {
+    saveCrawlerCookies('forum.example.com\tFALSE\t/\tFALSE\t0\tsaved\t1');
+    const cookieSent = async (opts) => {
+      const { fetchImpl, calls } = fakeSite({ 'https://forum.example.com/t': '<p>x</p>' });
+      await crawl({ url: 'https://forum.example.com/t', mode: 'single', fetchImpl, assertUrl: async () => {}, delayMs: 0, ...opts });
+      return calls[0].cookie;
+    };
+    assert.equal(await cookieSent({ useSavedCookies: true }), 'saved=1');
+    assert.equal(await cookieSent({ useSavedCookies: false }), undefined);
+    assert.equal(await cookieSent({ useSavedCookies: true, cookiesText: 'temp=2' }), 'temp=2');
+  } finally {
+    if (backup !== null) saveCrawlerCookies(backup);
+    else deleteCrawlerCookies();
+  }
+});
+
+test('cookies pasted without a domain stay on the crawled site across redirects', async () => {
+  const { fetchImpl, calls } = fakeSite({
+    'https://forum.example.com/go': { redirect: 'https://other.org/page' },
+    'https://other.org/page': '<p>x</p>',
+  });
+  await crawl({ url: 'https://forum.example.com/go', cookiesText: 'xf_session=SECRET', fetchImpl, assertUrl: async () => {}, delayMs: 0 });
+  assert.equal(calls[0].cookie, 'xf_session=SECRET');
+  assert.equal(calls[1].cookie, undefined);
+});
+
+test('hasMorePages reflects requested pages, not the whole thread', async () => {
+  const thread = 'https://forum.example.com/threads/t.1/';
+  const pages = {};
+  for (let n = 1; n <= 30; n++) {
+    pages[n === 1 ? thread : `${thread}page-${n}`] = `<a class="pageNav-page" href="/threads/t.1/page-30">30</a><a href="https://files.example.net/f/${n}">f</a>`;
+  }
+  const { fetchImpl } = fakeSite(pages);
+  const opts = { url: thread, ignoreHistory: true, fetchImpl, assertUrl: async () => {}, delayMs: 0 };
+
+  assert.equal((await crawl({ ...opts, mode: 'last', lastN: 3 })).hasMorePages, false, 'last N got everything it asked for');
+  assert.equal((await crawl({ ...opts, mode: 'range', startPage: 5, endPage: 8 })).hasMorePages, false);
+  const all = await crawl({ ...opts, mode: 'all' });
+  assert.equal(all.pages.length, 25);
+  assert.equal(all.hasMorePages, true, 'the 25-page cap left pages out');
+  await assert.rejects(crawl({ ...opts, mode: 'range', startPage: 40, endPage: 45 }), /Page 40 is past the end of the thread \(it has 30 pages\)/);
+});
+
+test('following next links from a later thread page keeps the thread\'s page numbers', async () => {
+  const thread = 'https://forum.example.com/threads/t.1/';
+  const { fetchImpl } = fakeSite({
+    [`${thread}page-27`]: `<a class="pageNav-page" href="/threads/t.1/page-29">29</a><link rel="next" href="${thread}page-28">`,
+    [`${thread}page-28`]: `<link rel="next" href="${thread}page-29">`,
+  });
+  const result = await crawl({ url: `${thread}page-27`, mode: 'follow', maxPages: 2, ignoreHistory: true, fetchImpl, assertUrl: async () => {}, delayMs: 0 });
+  assert.deepEqual(result.pages.map((p) => p.page), [27, 28]);
+  assert.equal(result.hasMorePages, true);
+});
+
+test('sendToAria2 reports which URLs aria2 accepted', async () => {
+  const fetchImpl = async () => Response.json({ result: [['gid1'], { faultCode: 1, faultString: 'bad uri' }, ['gid3']] });
+  const result = await sendToAria2(['https://a.com/1', 'https://a.com/2', 'https://a.com/3'], { rpcUrl: 'http://nas:6800/jsonrpc', fetchImpl });
+  assert.deepEqual(result.accepted, ['https://a.com/1', 'https://a.com/3']);
+});
+
+const xfPost = (id, author, body) => `<article class="message message--post" data-author="${author}" data-content="post-${id}">
+  <header class="message-attribution"><a href="https://forum.example.com/threads/t.1/post-${id}">#</a></header>
+  <div class="bbWrapper">${body}</div>
+  <aside class="message-signature"><a href="https://sig.example.org/shop">my shop</a></aside>
+</article>`;
+
+test('nested quotes are removed whole, including the outer quote\'s own links', () => {
+  const html = `<div class="bbCodeBlock bbCodeBlock--quote"><div class="q">
+      <div class="bbCodeBlock bbCodeBlock--quote"><div>inner <a href="https://gofile.io/d/INNER">x</a></div></div>
+      outer <a href="https://gofile.io/d/OUTER">y</a></div></div>
+    <a href="https://pixeldrain.com/u/REAL">r</a>`;
+  assert.deepEqual(extractLinks(html, 'https://forum.example.com/threads/a.1/').map((l) => l.url), ['https://pixeldrain.com/u/REAL']);
+});
+
+test('forum pages are read post by post, skipping page chrome and signatures', () => {
+  const html = `<nav><a href="https://twitter.com/forum">tw</a></nav>
+    ${xfPost(11, 'alice', 'Password: alpha <a href="https://gofile.io/d/A">a</a>')}
+    ${xfPost(12, 'bob', 'pw: beta<br>https://pixeldrain.com/u/B')}
+    <aside><a href="https://ads.example/promo">ad</a></aside>
+    <footer><a href="https://discord.gg/x">discord</a></footer>`;
+  const links = extractLinks(html, 'https://forum.example.com/threads/t.1/');
+  assert.deepEqual(links.map((l) => [l.url, l.postId, l.author, l.passwords]), [
+    ['https://gofile.io/d/A', '11', 'alice', ['alpha']],
+    ['https://pixeldrain.com/u/B', '12', 'bob', ['beta']],
+  ]);
+  assert.deepEqual(links.passwords.sort(), ['alpha', 'beta']);
+});
+
+test('pages without posts are read whole, minus navigation and footers', () => {
+  const html = `<header><a href="https://social.example/me">me</a></header>
+    <main><a href="https://files.example.net/f/1">f</a> <iframe src="https://player.example.org/e/1"></iframe></main>
+    <footer><a href="https://ads.example/x">ad</a></footer>`;
+  const links = extractLinks(html, 'https://blog.example.com/post');
+  assert.deepEqual(links.map((l) => [l.url, l.source, l.postId]), [
+    ['https://player.example.org/e/1', 'embed', ''],
+    ['https://files.example.net/f/1', 'link', ''],
+  ]);
+});
+
+test('password labels need a word boundary', () => {
+  assert.deepEqual(extractPasswords('Use a VPN to bypass: regionlock. Password: hunter2'), ['hunter2']);
+});
+
+test('crawl keeps the post each link was first shared in', async () => {
+  const thread = 'https://forum.example.com/threads/t.1/';
+  const { fetchImpl } = fakeSite({
+    [thread]: xfPost(1, 'alice', 'pass: one <a href="https://gofile.io/d/A">a</a>') + xfPost(2, 'bob', '<a href="https://gofile.io/d/A">again</a>'),
+  });
+  const result = await crawl({ url: thread, mode: 'single', ignoreHistory: true, fetchImpl, assertUrl: async () => {}, delayMs: 0 });
+  assert.equal(result.links.length, 1);
+  assert.deepEqual([result.links[0].postId, result.links[0].author, result.links[0].passwords, result.links[0].count], ['1', 'alice', ['one'], 2]);
+});
+
+function flakySite(responses) {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    const next = responses.shift();
+    if (next instanceof Error) throw next;
+    return next;
+  };
+  return { fetchImpl, calls };
+}
+const htmlOk = (body = '<a href="https://files.example.net/f/1">f</a>') => new Response(body, { status: 200, headers: { 'content-type': 'text/html' } });
+
+test('rate limits, server errors and network failures are retried', async () => {
+  const opts = { url: 'https://forum.example.com/t', mode: 'single', ignoreHistory: true, assertUrl: async () => {}, delayMs: 0, retryBaseMs: 0 };
+  let site = flakySite([new Response('', { status: 429, headers: { 'retry-after': '0' } }), new Response('', { status: 502 }), htmlOk()]);
+  assert.equal((await crawl({ ...opts, fetchImpl: site.fetchImpl })).links.length, 1);
+  assert.equal(site.calls.length, 3);
+
+  site = flakySite([new TypeError('fetch failed'), htmlOk()]);
+  assert.equal((await crawl({ ...opts, fetchImpl: site.fetchImpl })).links.length, 1);
+
+  site = flakySite([new Response('', { status: 503 }), new Response('', { status: 503 }), new Response('', { status: 503 })]);
+  await assert.rejects(crawl({ ...opts, fetchImpl: site.fetchImpl }), /HTTP 503/);
+  assert.equal(site.calls.length, 3, 'gives up after two retries');
+});
+
+test('a Cloudflare challenge is reported as one and not retried', async () => {
+  const challenge = () => new Response('<html><title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/x.js"></script></html>', {
+    status: 403, headers: { 'content-type': 'text/html', server: 'cloudflare' },
+  });
+  const site = flakySite([challenge(), challenge()]);
+  await assert.rejects(
+    crawl({ url: 'https://forum.example.com/t', mode: 'single', fetchImpl: site.fetchImpl, assertUrl: async () => {}, delayMs: 0, retryBaseMs: 0 }),
+    /Cloudflare challenge on forum\.example\.com.*User-Agent/,
+  );
+  assert.equal(site.calls.length, 1);
+});
+
+test('crawl sends the configured User-Agent', async () => {
+  let ua;
+  const fetchImpl = async (url, opts) => { ua = opts.headers['User-Agent']; return htmlOk(); };
+  await crawl({ url: 'https://forum.example.com/t', mode: 'single', userAgent: 'MyBrowser/1.0', fetchImpl, assertUrl: async () => {}, delayMs: 0 });
+  assert.equal(ua, 'MyBrowser/1.0');
+});

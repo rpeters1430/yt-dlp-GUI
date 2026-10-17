@@ -12,6 +12,7 @@ const EVENTS = {
   download_failed: { label: 'Download failed', setting: 'notify_on_failed', default: '1' },
   watch_new_videos: { label: 'Watch found new videos', setting: 'notify_on_watch_new', default: '0' },
   watch_error: { label: 'Watch check started failing', setting: 'notify_on_watch_error', default: '1' },
+  thread_watch_new_links: { label: 'Thread watch found new links', setting: 'notify_on_thread_watch_new', default: '1' },
 };
 
 const REQUEST_TIMEOUT_MS = 10000;
@@ -207,8 +208,20 @@ function watchError(watch, error) {
   }, { watchId: watch.id });
 }
 
+// A link grabber thread watch. `sentTo` is the downloader's name, or null when the watch only reports.
+function threadWatchNewLinks(watch, links, sentTo) {
+  const name = watch.title || watch.url;
+  const hosts = [...new Set(links.map((l) => l.host))].slice(0, 5).join(', ');
+  send('thread_watch_new_links', {
+    title: `${name}: ${links.length} new link${links.length === 1 ? '' : 's'}${sentTo ? ` sent to ${sentTo}` : ''}`,
+    body: hosts ? `From ${hosts}` : '',
+    link: watch.url,
+  });
+}
+
 module.exports = {
   FORMATS,
+  threadWatchNewLinks,
   EVENTS,
   getConfig,
   validateUrl,
