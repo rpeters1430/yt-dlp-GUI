@@ -44,7 +44,8 @@ router.put('/settings', (req, res) => {
   if (body.userAgent !== undefined) {
     const value = String(body.userAgent || '').trim();
     // It goes out as a header line, so no control characters.
-    if (value.length > 500 || /[\u0000-\u001f\u007f]/.test(value)) return res.status(400).json({ error: 'userAgent must be a single line of at most 500 characters' });
+    const hasControlChars = [...value].some((ch) => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f);
+    if (value.length > 500 || hasControlChars) return res.status(400).json({ error: 'userAgent must be a single line of at most 500 characters' });
     body.userAgent = value;
   }
   for (const field of ['jdUrl', 'aria2Url', 'aria2Dir', 'userAgent']) {

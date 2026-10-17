@@ -756,7 +756,7 @@ async function crawl({
 
   // 2. Fetch remaining pages based on mode
   const threadMode = threadInfo.isThread && ['all', 'last', 'range'].includes(mode);
-  let hasMorePages = false;
+  let hasMorePages;
   if (threadMode) {
     // Every page the mode asks for, before the per-crawl cap; whatever isn't crawled from it
     // (cap, link limit or a failed page) is what hasMorePages reports.
