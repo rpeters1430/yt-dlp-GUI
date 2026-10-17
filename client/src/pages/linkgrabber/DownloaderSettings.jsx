@@ -10,6 +10,8 @@ export default function DownloaderSettings({ onClose }) {
   const [error, setError] = useState('');
   const [testingJd, setTestingJd] = useState(false);
   const [jdTestStatus, setJdTestStatus] = useState(null);
+  const [testingSolver, setTestingSolver] = useState(false);
+  const [solverTestStatus, setSolverTestStatus] = useState(null);
   const [historyStats, setHistoryStats] = useState(null);
   const [clearingHistory, setClearingHistory] = useState(false);
 
@@ -47,6 +49,25 @@ export default function DownloaderSettings({ onClose }) {
     }
   }
 
+  async function handleTestSolver() {
+    const solverUrl = settings?.solverUrl || '';
+    if (!solverUrl.trim()) {
+      setSolverTestStatus({ ok: false, message: 'Please enter a Challenge Solver address first' });
+      return;
+    }
+    setTestingSolver(true);
+    setSolverTestStatus(null);
+    try {
+      await api.updateLinkGrabberSettings({ solverUrl: solverUrl.trim() });
+      const res = await api.testSolver(solverUrl.trim());
+      setSolverTestStatus(res);
+    } catch (err) {
+      setSolverTestStatus({ ok: false, message: err.message });
+    } finally {
+      setTestingSolver(false);
+    }
+  }
+
   async function handleClearHistory() {
     if (!window.confirm('Clear all recorded crawl history? Previously discovered links will be marked as new on next crawl.')) return;
     setClearingHistory(true);
@@ -68,7 +89,11 @@ export default function DownloaderSettings({ onClose }) {
     setError('');
     try {
       const payload = {
-        jdUrl: settings.jdUrl || '', aria2Url: settings.aria2Url || '', aria2Dir: settings.aria2Dir || '', userAgent: settings.userAgent || '',
+        jdUrl: settings.jdUrl || '',
+        aria2Url: settings.aria2Url || '',
+        aria2Dir: settings.aria2Dir || '',
+        userAgent: settings.userAgent || '',
+        solverUrl: settings.solverUrl || '',
       };
       if (secret) payload.aria2Secret = secret;
       await api.updateLinkGrabberSettings(payload);
@@ -153,6 +178,37 @@ export default function DownloaderSettings({ onClose }) {
               (search &quot;my user agent&quot; in it). Cloudflare only accepts its <code>cf_clearance</code> cookie from that browser.
             </span>
           </label>
+
+          <div className="field-group">
+            <label className="field-label">
+              Challenge Solver (Solverr / FlareSolverr) address (optional)
+              <div className="lg-input-row">
+                <input
+                  type="text"
+                  placeholder="http://192.168.50.114:8191"
+                  value={settings.solverUrl || ''}
+                  onChange={update('solverUrl')}
+                />
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleTestSolver}
+                  disabled={testingSolver || !settings.solverUrl}
+                >
+                  {testingSolver ? 'Testing…' : 'Test connection'}
+                </button>
+              </div>
+            </label>
+            {solverTestStatus && (
+              <div className={`alert ${solverTestStatus.ok ? 'alert-success' : 'alert-error'}`}>
+                {solverTestStatus.ok ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
+                {solverTestStatus.message}
+              </div>
+            )}
+            <span className="muted small">
+              Optional local Solverr or FlareSolverr service (e.g. on your NAS or Docker). Automatically bypasses Cloudflare and DDoS-Guard challenges and shares solved clearance cookies with the crawler.
+            </span>
+          </div>
 
           {historyStats && (
             <div className="lg-history-box">

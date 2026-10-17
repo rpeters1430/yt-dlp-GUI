@@ -8,7 +8,8 @@ const path = require('path');
 const cheerio = require('cheerio');
 const db = require('../db');
 const ytdlp = require('./ytdlp');
-const { COOKIES_FILE, CRAWLER_COOKIES_FILE } = require('./ytdlpPaths');
+const { COOKIES_FILE, CRAWLER_COOKIES_FILE, CONFIG_DIR } = require('./ytdlpPaths');
+const { solveWithFlareSolverr, fetchWithCurlCffi, testSolverConnection } = require('./stealthFetch');
 
 const DEFAULT_MAX_PAGES = 5;
 const MAX_PAGES_LIMIT = 25;
@@ -24,7 +25,9 @@ const MAX_RETRY_AFTER_MS = 30000;
 const RETRY_STATUSES = new Set([429, 500, 502, 503, 504, 520, 521, 522, 524]);
 // Enough of an error page to recognise a Cloudflare challenge.
 const ERROR_BODY_BYTES = 256 * 1024;
-const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
+const USER_AGENT = process.platform === 'win32'
+  ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+  : 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 
 const VIDEO_EXT = /\.(?:mp4|m4v|webm|mkv|mov|avi|wmv|flv|ts|m3u8|mpd)(?:$|[?#])/i;
 const AUDIO_EXT = /\.(?:mp3|m4a|aac|flac|opus|ogg|wav)(?:$|[?#])/i;
@@ -134,7 +137,8 @@ function cookieHeaderFor(cookies, url, now = Date.now()) {
     const domain = (c.domain || '').replace(/^\./, '');
     if (domain && host !== domain && !host.endsWith(`.${domain}`)) continue;
     if (c.secure && parsed.protocol !== 'https:') continue;
-    if (c.expiry && c.expiry < nowSec) continue;
+    if (c.expiry === 1) continue;
+    if (c.expiry && c.expiry < nowSec && !/^(__ddg|cf_|yMzi|xf_)/i.test(c.name)) continue;
     const cookiePath = c.path || '/';
     if (!(parsed.pathname === cookiePath || parsed.pathname.startsWith(cookiePath.endsWith('/') ? cookiePath : `${cookiePath}/`))) continue;
     pairs.push(`${c.name}=${c.value}`);
@@ -208,7 +212,12 @@ function deleteCrawlerCookies() {
 function loadCookies({ cookiesText, useSavedCookies, siteHost }) {
   let cookies = cookiesText ? parseCookiesContent(cookiesText) : [];
   if (cookies.length === 0 && useSavedCookies) {
-    const file = [CRAWLER_COOKIES_FILE, COOKIES_FILE].find((f) => fs.existsSync(f));
+    const candidateFiles = [
+      CRAWLER_COOKIES_FILE,
+      COOKIES_FILE,
+      path.resolve(path.dirname(CONFIG_DIR), 'crawler', 'cookies.txt'),
+    ];
+    const file = candidateFiles.find((f) => fs.existsSync(f));
     if (file) cookies = parseCookiesContent(fs.readFileSync(file, 'utf8'));
   }
   return cookies.map((c) => (c.domain ? c : { ...c, domain: siteHost }));
@@ -642,6 +651,25 @@ function rememberSetCookies(cookies, res, url) {
   }
 }
 
+function rememberSolverCookies(cookies, newCookies) {
+  if (!Array.isArray(newCookies)) return;
+  for (const nc of newCookies) {
+    if (!nc || !nc.name) continue;
+    const domain = (nc.domain || '').replace(/^\./, '').toLowerCase();
+    const cookie = {
+      name: nc.name,
+      value: String(nc.value ?? ''),
+      domain,
+      path: nc.path || '/',
+      secure: Boolean(nc.secure),
+      expiry: typeof nc.expiry === 'number' ? nc.expiry : 0,
+    };
+    const i = cookies.findIndex((c) => c.name === cookie.name && (!cookie.domain || (c.domain || '').replace(/^\./, '') === cookie.domain));
+    if (i >= 0) cookies[i] = cookie;
+    else cookies.push(cookie);
+  }
+}
+
 // What a 403 most likely means, from the cookies that went with the request.
 function forbiddenMessage(url, cookieHeader) {
   const host = new URL(url).host;
@@ -694,7 +722,7 @@ async function requestWithRetry(url, init, { fetchImpl, retryBaseMs, signal }) {
 
 // Follows redirects by hand so every hop passes the SSRF guard and gets only its own cookies.
 async function fetchPage(url, {
-  cookies, fetchImpl = fetch, assertUrl = ytdlp.assertPublicUrlResolved, userAgent, retryBaseMs = RETRY_BASE_MS, signal,
+  cookies, fetchImpl = fetch, assertUrl = ytdlp.assertPublicUrlResolved, userAgent, retryBaseMs = RETRY_BASE_MS, signal, solverUrl, referer,
 }) {
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -705,10 +733,11 @@ async function fetchPage(url, {
       'Accept-Language': 'en-US,en;q=0.9',
       'Sec-Fetch-Dest': 'document',
       'Sec-Fetch-Mode': 'navigate',
-      'Sec-Fetch-Site': 'same-origin',
+      'Sec-Fetch-Site': referer ? 'same-origin' : 'none',
       'Sec-Fetch-User': '?1',
       'Upgrade-Insecure-Requests': '1',
     };
+    if (referer) headers.Referer = referer;
     const cookieHeader = cookieHeaderFor(cookies, current);
     if (cookieHeader) headers.Cookie = cookieHeader;
     const res = await requestWithRetry(current, { headers, redirect: 'manual' }, { fetchImpl, retryBaseMs, signal });
@@ -719,16 +748,43 @@ async function fetchPage(url, {
     }
     if (!res.ok) {
       const body = await readCapped(res, ERROR_BODY_BYTES).catch(() => '');
-      if (isCloudflareChallenge(res, body)) {
+      const cfChallenge = isCloudflareChallenge(res, body);
+      const ddgChallenge = isDdosGuardChallenge(res, body);
+
+      // Attempt challenge solving via Solverr or stealth curl_cffi fallback
+      if (cfChallenge || ddgChallenge || res.status === 403 || res.status === 503) {
+        if (solverUrl) {
+          try {
+            const solved = await solveWithFlareSolverr(solverUrl, current, cookies, { signal });
+            if (solved && solved.html) {
+              rememberSolverCookies(cookies, solved.cookies);
+              return { url: solved.url, html: solved.html };
+            }
+          } catch (solverErr) {
+            console.warn(`[linkgrabber] solver at ${solverUrl} failed: ${solverErr.message}`);
+          }
+        }
+        try {
+          const stealth = await fetchWithCurlCffi(current, { headers, cookies, signal });
+          if (stealth && stealth.status >= 200 && stealth.status < 300 && stealth.html) {
+            rememberSolverCookies(cookies, stealth.cookies);
+            return { url: current, html: stealth.html };
+          }
+        } catch { /* curl_cffi not available or failed */ }
+      }
+
+      if (cfChallenge) {
         throw new Error(
           `Cloudflare challenge on ${new URL(current).host}. Export fresh cookies (including cf_clearance) from your browser, `
           + 'and set the crawler User-Agent to that browser\'s exact User-Agent: Cloudflare only honours cf_clearance from the browser it was issued to.'
+          + (solverUrl ? '' : ' Or configure a Challenge Solver (FlareSolverr/Solverr) URL in Settings.')
         );
       }
-      if (isDdosGuardChallenge(res, body)) {
+      if (ddgChallenge) {
         throw new Error(
           `DDoS-Guard check on ${new URL(current).host}. Export fresh cookies (including the __ddg ones) from your browser, `
           + 'and set the crawler User-Agent to that browser\'s exact User-Agent.'
+          + (solverUrl ? '' : ' Or configure a Challenge Solver (FlareSolverr/Solverr) URL in Settings.')
         );
       }
       if (res.status === 403) throw new Error(forbiddenMessage(current, cookieHeader));
@@ -767,13 +823,14 @@ async function crawl({
   retryBaseMs,
   signal,
   onPage = () => {},
+  solverUrl = '',
 }) {
   const startUrl = resolveUrl(ytdlp.normalizeUrl(url), undefined);
   if (!startUrl) throw new Error('A valid http(s) URL is required');
   const limit = Math.min(Math.max(parseInt(maxPages, 10) || DEFAULT_MAX_PAGES, 1), MAX_PAGES_LIMIT);
   const siteHost = hostOf(startUrl);
   const cookies = loadCookies({ cookiesText, useSavedCookies, siteHost });
-  const fetchOpts = { cookies, fetchImpl, assertUrl, userAgent, retryBaseMs, signal };
+  const fetchOpts = { cookies, fetchImpl, assertUrl, userAgent, retryBaseMs, signal, solverUrl };
   const threadInfo = parseThreadUrl(startUrl);
 
   const pages = [];
@@ -860,7 +917,7 @@ async function crawl({
       visited.add(pageUrl);
       try {
         if (delayMs > 0) await delay(delayMs, signal);
-        addPage(await fetchPage(pageUrl, fetchOpts), pNum);
+        addPage(await fetchPage(pageUrl, { ...fetchOpts, referer: firstPage.url }), pNum);
       } catch (err) {
         error = failed(err);
         break;
@@ -883,7 +940,7 @@ async function crawl({
       let page;
       try {
         if (delayMs > 0) await delay(delayMs, signal);
-        page = await fetchPage(next, fetchOpts);
+        page = await fetchPage(next, { ...fetchOpts, referer: page ? page.url : firstPage.url });
       } catch (err) {
         error = failed(err);
         break;
@@ -1203,6 +1260,7 @@ module.exports = {
   clearHistory,
   sendToJDownloader,
   testJDownloaderConnection,
+  testSolverConnection,
   sendToAria2,
   resolveDirectDownloadUrl,
 };

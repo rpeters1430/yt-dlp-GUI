@@ -29,12 +29,13 @@ router.get('/settings', (req, res) => {
     aria2Dir: getSetting('aria2Dir'),
     hasAria2Secret: Boolean(getSetting('aria2Secret')),
     userAgent: getSetting('userAgent'),
+    solverUrl: getSetting('solverUrl') || process.env.SOLVERR_URL || process.env.SOLVER_URL || process.env.FLARESOLVERR_URL || '',
   });
 });
 
 router.put('/settings', (req, res) => {
   const body = req.body || {};
-  for (const field of ['jdUrl', 'aria2Url']) {
+  for (const field of ['jdUrl', 'aria2Url', 'solverUrl']) {
     if (body[field] !== undefined) {
       const value = String(body[field] || '').trim();
       if (value && !validHttpUrl(value)) return res.status(400).json({ error: `${field} must be an http(s) URL` });
@@ -48,13 +49,24 @@ router.put('/settings', (req, res) => {
     if (value.length > 500 || hasControlChars) return res.status(400).json({ error: 'userAgent must be a single line of at most 500 characters' });
     body.userAgent = value;
   }
-  for (const field of ['jdUrl', 'aria2Url', 'aria2Dir', 'userAgent']) {
+  for (const field of ['jdUrl', 'aria2Url', 'aria2Dir', 'userAgent', 'solverUrl']) {
     if (body[field] !== undefined) saveSetting(field, String(body[field] || '').trim());
   }
   // Blank leaves the stored secret alone; clearAria2Secret removes it.
   if (body.clearAria2Secret) saveSetting('aria2Secret', '');
   else if (body.aria2Secret) saveSetting('aria2Secret', String(body.aria2Secret));
   res.json({ ok: true });
+});
+
+router.post('/test-solver', async (req, res) => {
+  const rawUrl = (req.body?.solverUrl || getSetting('solverUrl') || process.env.SOLVERR_URL || process.env.SOLVER_URL || process.env.FLARESOLVERR_URL || '').trim();
+  if (!rawUrl) return res.status(400).json({ ok: false, message: 'Solver URL is not configured' });
+  try {
+    const result = await linkGrabber.testSolverConnection(rawUrl);
+    res.json(result);
+  } catch (err) {
+    res.json({ ok: false, message: err.message });
+  }
 });
 
 // Tests only the saved address. Taking a URL from the request would let any signed-in
@@ -123,7 +135,7 @@ router.delete('/cookies', (req, res) => {
 // the result.
 router.post('/crawl', (req, res) => {
   const {
-    url, mode, maxPages, startPage, endPage, lastN, skipQuotes, skipBots, decodeBase64, ignoreHistory, cookies, useSavedCookies,
+    url, mode, maxPages, startPage, endPage, lastN, skipQuotes, skipBots, decodeBase64, ignoreHistory, cookies, useSavedCookies, userAgent, solverUrl,
   } = req.body || {};
   if (!url || typeof url !== 'string' || !validHttpUrl(url.trim())) return res.status(400).json({ error: 'A valid http(s) url is required' });
   if (cookies !== undefined && typeof cookies !== 'string') return res.status(400).json({ error: 'cookies must be cookies.txt text' });
@@ -141,6 +153,8 @@ router.post('/crawl', (req, res) => {
     ignoreHistory: !!ignoreHistory,
     cookiesText: cookies || '',
     useSavedCookies: !!useSavedCookies,
+    userAgent: typeof userAgent === 'string' ? userAgent.trim() : undefined,
+    solverUrl: typeof solverUrl === 'string' ? solverUrl.trim() : undefined,
   });
   res.status(202).json({ id });
 });

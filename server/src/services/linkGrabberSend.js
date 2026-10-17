@@ -13,6 +13,7 @@ const SETTING_KEYS = {
   aria2Secret: 'linkgrabber_aria2_secret',
   aria2Dir: 'linkgrabber_aria2_dir',
   userAgent: 'linkgrabber_user_agent',
+  solverUrl: 'linkgrabber_solver_url',
 };
 
 function getSetting(name) {

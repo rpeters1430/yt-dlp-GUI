@@ -3,12 +3,12 @@ const fs = require('fs');
 const path = require('path');
 
 const YTDLP_BIN = process.env.YTDLP_BIN || 'yt-dlp';
-const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(__dirname, '..', '..', 'downloads');
+const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.resolve(__dirname, '..', '..', '..', 'downloads');
 // Optional separate mounts for video and music. Unset, videos go straight into DOWNLOAD_DIR
 // and music into DOWNLOAD_DIR/Music, as before. Folders saved in Settings take precedence.
 const VIDEO_DIR = process.env.VIDEO_DIR || DOWNLOAD_DIR;
 const MUSIC_DIR = process.env.MUSIC_DIR || '';
-const CONFIG_DIR = process.env.CONFIG_DIR || path.join(__dirname, '..', '..', 'config');
+const CONFIG_DIR = process.env.CONFIG_DIR || path.resolve(__dirname, '..', '..', '..', 'config');
 const COOKIES_FILE = path.join(CONFIG_DIR, 'cookies.txt');
 const CRAWLER_COOKIES_FILE = path.join(CONFIG_DIR, 'crawler_cookies.txt');
 const YTDLP_CACHE_DIR = path.join(CONFIG_DIR, 'yt-dlp-cache');

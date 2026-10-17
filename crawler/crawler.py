@@ -106,6 +106,10 @@ def crawl_options(url: str, args: argparse.Namespace, page_range, cookies_text: 
     }
     if cookies_text:
         options["cookies"] = cookies_text
+    if getattr(args, "user_agent", None):
+        options["userAgent"] = args.user_agent
+    if getattr(args, "solver_url", None):
+        options["solverUrl"] = args.solver_url
     if args.all_pages:
         options["mode"] = "all"
     elif args.last:
@@ -199,13 +203,30 @@ def safe_filename(title: str) -> str:
 
 
 def read_cookies(value: Optional[str]) -> str:
-    """--cookies takes a cookies.txt / cookies.json file, or a raw 'name=value; ...' string."""
-    if not value:
-        return ""
-    if os.path.isfile(value):
-        with open(value, "r", encoding="utf-8") as f:
-            return f.read()
-    return value
+    """--cookies takes a cookies.txt / cookies.json file, or a raw 'name=value; ...' string.
+    If omitted, checks common crawler and config locations for a cookies.txt file."""
+    if value:
+        if os.path.isfile(value):
+            with open(value, "r", encoding="utf-8") as f:
+                return f.read()
+        return value
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(here, "cookies.txt"),
+        os.path.join(here, "..", "config", "crawler_cookies.txt"),
+        os.path.join(here, "..", "config", "cookies.txt"),
+    ]
+    for c in candidates:
+        if os.path.isfile(c) and os.path.getsize(c) > 0:
+            try:
+                with open(c, "r", encoding="utf-8") as f:
+                    content = f.read()
+                if content.strip():
+                    console.print(f"[dim]Using local cookies from {os.path.relpath(c, here)}[/dim]")
+                    return content
+            except Exception:
+                pass
+    return ""
 
 
 def env_flag(name: str) -> bool:
@@ -262,6 +283,8 @@ def main() -> None:
         send.add_argument(old, default=None, help=argparse.SUPPRESS)
 
     parser.add_argument("--cookies", "-c", default=None, help="Cookie file or string for these crawls, instead of the app's saved crawler cookies")
+    parser.add_argument("--user-agent", default=None, help="Custom User-Agent to send when crawling")
+    parser.add_argument("--solver-url", default=None, help="Challenge Solver (Solverr/FlareSolverr) URL (e.g. http://192.168.50.114:8191)")
     parser.add_argument("--history-stats", action="store_true", help="Show the app's link history stats and exit")
 
     args = parser.parse_args()

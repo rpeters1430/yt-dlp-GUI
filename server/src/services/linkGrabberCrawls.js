@@ -103,6 +103,7 @@ function startCrawl(options, { watchId = null } = {}) {
 
   const promise = linkGrabber.crawl({
     userAgent: getSetting('userAgent'),
+    solverUrl: getSetting('solverUrl') || process.env.SOLVERR_URL || process.env.SOLVER_URL || process.env.FLARESOLVERR_URL || '',
     ...options,
     signal: controller.signal,
     onPage(progress) {
