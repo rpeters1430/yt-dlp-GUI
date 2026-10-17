@@ -593,6 +593,72 @@ function isCloudflareChallenge(res, body) {
   return /<title>\s*Just a moment|challenge-platform|cf-chl-|cf_chl_/i.test(body);
 }
 
+// DDoS-Guard's own check page, as opposed to a site behind it answering 403 itself.
+function isDdosGuardChallenge(res, body) {
+  if (!/ddos-guard/i.test(res.headers.get('server') || '')) return false;
+  return /<title>\s*DDoS-Guard|check\.ddos-guard|ddos-guard\.net\/(?:js|static)/i.test(body);
+}
+
+// Cookies a site sets during a crawl (DDoS-Guard's __ddg*, a refreshed XenForo session) are
+// kept for the rest of that crawl, as a browser would. They're never written to the saved file.
+function rememberSetCookies(cookies, res, url) {
+  const headers = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
+  if (!headers.length) return;
+  const host = new URL(url).hostname.toLowerCase();
+  const nowSec = Math.floor(Date.now() / 1000);
+  for (const header of headers) {
+    const [pair, ...attrs] = header.split(';');
+    const eq = pair.indexOf('=');
+    if (eq <= 0) continue;
+    const cookie = { domain: host, path: '/', secure: false, expiry: 0, name: pair.slice(0, eq).trim(), value: pair.slice(eq + 1).trim() };
+    let foreign = false;
+    let maxAge = null;
+    for (const attr of attrs) {
+      const [rawKey, ...rest] = attr.split('=');
+      const key = rawKey.trim().toLowerCase();
+      const val = rest.join('=').trim();
+      if (key === 'domain' && val) {
+        const d = val.replace(/^\./, '').toLowerCase();
+        // A host may set cookies for itself or a parent domain, never for another site.
+        if (d.includes('.') && (host === d || host.endsWith(`.${d}`))) cookie.domain = d;
+        else foreign = true;
+      } else if (key === 'path' && val.startsWith('/')) {
+        cookie.path = val;
+      } else if (key === 'secure') {
+        cookie.secure = true;
+      } else if (key === 'max-age' && Number.isFinite(Number(val))) {
+        maxAge = Number(val);
+      } else if (key === 'expires') {
+        const t = Date.parse(val);
+        if (!Number.isNaN(t)) cookie.expiry = Math.max(1, Math.floor(t / 1000));
+      }
+    }
+    if (foreign) continue;
+    // Max-Age wins over Expires; zero or less deletes the cookie (an expiry in the past does too).
+    if (maxAge !== null) cookie.expiry = maxAge > 0 ? nowSec + maxAge : 1;
+    const i = cookies.findIndex((c) => c.name === cookie.name && (c.domain || '').replace(/^\./, '') === cookie.domain && (c.path || '/') === cookie.path);
+    if (i >= 0) cookies[i] = cookie;
+    else cookies.push(cookie);
+  }
+}
+
+// What a 403 most likely means, from the cookies that went with the request.
+function forbiddenMessage(url, cookieHeader) {
+  const host = new URL(url).host;
+  const names = cookieHeader ? cookieHeader.split('; ').map((p) => p.split('=')[0]) : [];
+  if (!names.length) {
+    return `HTTP 403 from ${host}: no cookies for ${host} were sent, so it treated the crawler as a guest. `
+      + `Save cookies exported from ${host} while logged in under Crawler cookies, and keep "Use saved cookies" ticked `
+      + '(cookies exported from an old domain of the site don\'t count).';
+  }
+  const xenforo = names.some((n) => n.startsWith('xf_'));
+  const login = names.includes('xf_user');
+  return `HTTP 403 from ${host} with ${names.length} cookie${names.length === 1 ? '' : 's'} sent (${names.slice(0, 8).join(', ')}${names.length > 8 ? ', ...' : ''}). `
+    + (xenforo && !login
+      ? 'There is no xf_user among them, the cookie that keeps you logged in: sign in with "Stay logged in" ticked, then export again.'
+      : 'They have probably expired or been signed out: sign in again in your browser and export fresh ones.');
+}
+
 // Retry-After is seconds or an HTTP date; anything else falls back to backoff.
 function retryAfterMs(res) {
   const value = res.headers.get('retry-after');
@@ -646,6 +712,7 @@ async function fetchPage(url, {
     const cookieHeader = cookieHeaderFor(cookies, current);
     if (cookieHeader) headers.Cookie = cookieHeader;
     const res = await requestWithRetry(current, { headers, redirect: 'manual' }, { fetchImpl, retryBaseMs, signal });
+    rememberSetCookies(cookies, res, current);
     if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
       current = new URL(res.headers.get('location'), current).toString();
       continue;
@@ -658,9 +725,13 @@ async function fetchPage(url, {
           + 'and set the crawler User-Agent to that browser\'s exact User-Agent: Cloudflare only honours cf_clearance from the browser it was issued to.'
         );
       }
-      if (res.status === 403) {
-        throw new Error(`HTTP 403 Forbidden fetching ${current} (forum cookies may be missing or expired, or anti-bot challenge active)`);
+      if (isDdosGuardChallenge(res, body)) {
+        throw new Error(
+          `DDoS-Guard check on ${new URL(current).host}. Export fresh cookies (including the __ddg ones) from your browser, `
+          + 'and set the crawler User-Agent to that browser\'s exact User-Agent.'
+        );
       }
+      if (res.status === 403) throw new Error(forbiddenMessage(current, cookieHeader));
       throw new Error(`HTTP ${res.status} fetching ${current}`);
     }
     const type = res.headers.get('content-type') || '';
