@@ -662,3 +662,42 @@ test('crawl sends the configured User-Agent', async () => {
   await crawl({ url: 'https://forum.example.com/t', mode: 'single', userAgent: 'MyBrowser/1.0', fetchImpl, assertUrl: async () => {}, delayMs: 0 });
   assert.equal(ua, 'MyBrowser/1.0');
 });
+
+test('cookies a site sets are sent on the rest of the crawl', async () => {
+  const thread = 'https://forum.example.com/threads/t.1/';
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push({ url, cookie: opts.headers.Cookie });
+    const headers = new Headers({ 'content-type': 'text/html' });
+    if (url === thread) {
+      headers.append('set-cookie', '__ddg8_=abc; Domain=.forum.example.com; Path=/');
+      headers.append('set-cookie', 'evil=1; Domain=other.org; Path=/');
+      headers.append('set-cookie', 'old=gone; Max-Age=0');
+      return new Response('<a class="pageNav-page" href="/threads/t.1/page-2">2</a>', { status: 200, headers });
+    }
+    return new Response('<p>2</p>', { status: 200, headers });
+  };
+  await crawl({
+    url: thread, mode: 'all', cookiesText: 'old=1; xf_user=9', ignoreHistory: true, fetchImpl, assertUrl: async () => {}, delayMs: 0,
+  });
+  assert.equal(calls[0].cookie, 'old=1; xf_user=9');
+  assert.equal(calls[1].cookie, 'xf_user=9; __ddg8_=abc', 'kept the new cookie, dropped the deleted one, ignored the foreign one');
+});
+
+test('a 403 says which cookies were sent', async () => {
+  const forbidden = async () => new Response('<title>Forbidden</title>', { status: 403, headers: { 'content-type': 'text/html', server: 'ddos-guard' } });
+  const opts = { url: 'https://forum.example.com/threads/t.1/', mode: 'single', fetchImpl: forbidden, assertUrl: async () => {}, delayMs: 0 };
+  await assert.rejects(crawl(opts), /no cookies for forum\.example\.com were sent/);
+  await assert.rejects(crawl({ ...opts, cookiesText: 'xf_session=1; xf_csrf=2' }), /2 cookies sent \(xf_session, xf_csrf\)\. There is no xf_user/);
+  await assert.rejects(crawl({ ...opts, cookiesText: 'xf_user=1' }), /probably expired or been signed out/);
+});
+
+test('a DDoS-Guard check page is reported as one', async () => {
+  const fetchImpl = async () => new Response('<html><title>DDoS-Guard</title><script src="https://check.ddos-guard.net/check.js"></script>', {
+    status: 403, headers: { 'content-type': 'text/html', server: 'ddos-guard' },
+  });
+  await assert.rejects(
+    crawl({ url: 'https://forum.example.com/t', mode: 'single', fetchImpl, assertUrl: async () => {}, delayMs: 0 }),
+    /DDoS-Guard check on forum\.example\.com/,
+  );
+});
