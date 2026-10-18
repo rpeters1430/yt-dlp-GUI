@@ -170,7 +170,8 @@ def format_links(crawled: List[Tuple[Dict[str, Any], List[Dict[str, Any]]]], by_
             if lines:
                 lines.append("")
             lines.append(f"# {result.get('threadTitle') or 'thread'} - page {page}")
-            passwords = (result.get("pagePasswords") or {}).get(str(page))
+            pws_map = result.get("pagePasswords") or {}
+            passwords = pws_map.get(str(page)) or pws_map.get(page)
             if passwords:
                 lines.append(f"# password: {', '.join(passwords)}")
             lines.extend(urls)
@@ -236,7 +237,7 @@ def env_flag(name: str) -> bool:
 def connect(args: argparse.Namespace) -> App:
     app = App(args.app_url)
     user = args.user or os.environ.get("YTDLP_GUI_USER") or "admin"
-    password = os.environ.get("YTDLP_GUI_PASSWORD")
+    password = getattr(args, "password", None) or os.environ.get("YTDLP_GUI_PASSWORD")
     if not password:
         if not sys.stdin.isatty():
             raise AppError("set YTDLP_GUI_PASSWORD (no terminal to ask for it)")
@@ -253,7 +254,8 @@ def main() -> None:
     parser.add_argument("target", nargs="?", help="Thread URL, or a text file with one thread URL per line")
     parser.add_argument("--app-url", default=os.environ.get("YTDLP_GUI_URL", "http://localhost:3000"),
                         help="The app's address (or YTDLP_GUI_URL; default http://localhost:3000)")
-    parser.add_argument("--user", default=None, help="App username (or YTDLP_GUI_USER; default admin). The password comes from YTDLP_GUI_PASSWORD or a prompt")
+    parser.add_argument("--user", default=None, help="App username (or YTDLP_GUI_USER; default admin). The password comes from --password, YTDLP_GUI_PASSWORD or a prompt")
+    parser.add_argument("--password", "-P", default=None, help="App password (or YTDLP_GUI_PASSWORD)")
 
     pages = parser.add_argument_group("pages (one page by default; at most 25 per crawl)")
     pages.add_argument("--all-pages", "-a", action="store_true", help="Crawl every page of the thread")
@@ -345,6 +347,10 @@ def main() -> None:
                 failed.append(url)
                 continue
             result = crawl["result"]
+            if not result.get("pages") and result.get("error"):
+                console.print(f"[bold red]Failed {url}: {result['error']}[/bold red]")
+                failed.append(url)
+                continue
             links = new_links(result, args.all_external)
             print_summary(result, links)
             crawled.append((result, links))
@@ -372,7 +378,9 @@ def main() -> None:
             elif urls_new and not args.no_record:
                 # Listed links count as handed off, like copying them in the app does.
                 app.request("POST", "/linkgrabber/history", json={
-                    "urls": urls_new, "threadTitle": result.get("threadTitle") or "", "threadUrl": result.get("threadUrl") or "",
+                    "urls": urls_new,
+                    "threadTitle": result.get("threadTitle") or "",
+                    "threadUrl": result.get("threadUrl") or crawl.get("url") or url,
                 })
     except KeyboardInterrupt:
         sys.exit(130)

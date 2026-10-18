@@ -147,35 +147,32 @@ function cookieHeaderFor(cookies, url, now = Date.now()) {
 }
 
 function getCrawlerCookiesStatus() {
-  if (fs.existsSync(CRAWLER_COOKIES_FILE)) {
-    try {
-      const content = fs.readFileSync(CRAWLER_COOKIES_FILE, 'utf8');
-      const cookies = parseCookiesContent(content);
-      const domains = [...new Set(cookies.map((c) => c.domain).filter(Boolean))];
-      return {
-        configured: true,
-        cookieCount: cookies.length,
-        domains,
-        hasFile: true,
-      };
-    } catch {
-      return { configured: false, cookieCount: 0, domains: [] };
-    }
-  }
-  // Check if global COOKIES_FILE exists as fallback
-  if (fs.existsSync(COOKIES_FILE)) {
-    try {
-      const content = fs.readFileSync(COOKIES_FILE, 'utf8');
-      const cookies = parseCookiesContent(content);
-      const domains = [...new Set(cookies.map((c) => c.domain).filter(Boolean))];
-      return {
-        configured: false,
-        fallbackAvailable: true,
-        cookieCount: cookies.length,
-        domains,
-      };
-    } catch {
-      // ignore
+  const candidateFiles = [
+    { file: CRAWLER_COOKIES_FILE, configured: true, hasFile: true },
+    { file: COOKIES_FILE, configured: false, fallbackAvailable: true },
+    { file: path.resolve(path.dirname(CONFIG_DIR), 'crawler', 'cookies.txt'), configured: false, fallbackAvailable: true },
+  ];
+  for (const { file: filePath, configured, fallbackAvailable, hasFile } of candidateFiles) {
+    if (fs.existsSync(filePath)) {
+      try {
+        const stat = fs.statSync(filePath);
+        if (stat.size > 0) {
+          const content = fs.readFileSync(filePath, 'utf8');
+          const cookies = parseCookiesContent(content);
+          if (cookies.length > 0) {
+            const domains = [...new Set(cookies.map((c) => c.domain).filter(Boolean))];
+            return {
+              configured: Boolean(configured),
+              fallbackAvailable: Boolean(fallbackAvailable),
+              cookieCount: cookies.length,
+              domains,
+              hasFile: Boolean(hasFile),
+            };
+          }
+        }
+      } catch {
+        // Continue checking other candidates
+      }
     }
   }
   return { configured: false, cookieCount: 0, domains: [] };
@@ -217,7 +214,9 @@ function loadCookies({ cookiesText, useSavedCookies, siteHost }) {
       COOKIES_FILE,
       path.resolve(path.dirname(CONFIG_DIR), 'crawler', 'cookies.txt'),
     ];
-    const file = candidateFiles.find((f) => fs.existsSync(f));
+    const file = candidateFiles.find((f) => {
+      try { return fs.statSync(f).size > 0; } catch { return false; }
+    });
     if (file) cookies = parseCookiesContent(fs.readFileSync(file, 'utf8'));
   }
   return cookies.map((c) => (c.domain ? c : { ...c, domain: siteHost }));
@@ -611,7 +610,10 @@ function isDdosGuardChallenge(res, body) {
 // Cookies a site sets during a crawl (DDoS-Guard's __ddg*, a refreshed XenForo session) are
 // kept for the rest of that crawl, as a browser would. They're never written to the saved file.
 function rememberSetCookies(cookies, res, url) {
-  const headers = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
+  let headers = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
+  if (!headers.length && res.headers.get('set-cookie')) {
+    headers = [res.headers.get('set-cookie')];
+  }
   if (!headers.length) return;
   const host = new URL(url).hostname.toLowerCase();
   const nowSec = Math.floor(Date.now() / 1000);
@@ -656,13 +658,14 @@ function rememberSolverCookies(cookies, newCookies) {
   for (const nc of newCookies) {
     if (!nc || !nc.name) continue;
     const domain = (nc.domain || '').replace(/^\./, '').toLowerCase();
+    const expiryVal = nc.expiry ?? nc.expires ?? nc.expirationDate ?? 0;
     const cookie = {
       name: nc.name,
       value: String(nc.value ?? ''),
       domain,
       path: nc.path || '/',
       secure: Boolean(nc.secure),
-      expiry: typeof nc.expiry === 'number' ? nc.expiry : 0,
+      expiry: typeof expiryVal === 'number' ? expiryVal : 0,
     };
     const i = cookies.findIndex((c) => c.name === cookie.name && (!cookie.domain || (c.domain || '').replace(/^\./, '') === cookie.domain));
     if (i >= 0) cookies[i] = cookie;
@@ -697,8 +700,8 @@ function retryAfterMs(res) {
   return Number.isNaN(date) ? null : Math.max(0, date - Date.now());
 }
 
-// Rate limits, server errors and network failures are retried with backoff. A Cloudflare
-// 403/503 isn't: it's a challenge, and asking again only gets the same challenge.
+// Rate limits, server errors and network failures are retried with backoff. A Cloudflare or
+// DDoS-Guard 403/503 isn't: it's a challenge, and asking again only gets the same challenge.
 async function requestWithRetry(url, init, { fetchImpl, retryBaseMs, signal }) {
   for (let attempt = 0; ; attempt++) {
     const last = attempt >= FETCH_RETRIES;
@@ -712,7 +715,8 @@ async function requestWithRetry(url, init, { fetchImpl, retryBaseMs, signal }) {
       await delay(retryBaseMs * 2 ** attempt, signal);
       continue;
     }
-    const challenge = /cloudflare/i.test(res.headers.get('server') || '') && (res.status === 403 || res.status === 503);
+    const serverHeader = res.headers.get('server') || '';
+    const challenge = (/cloudflare|ddos-guard/i.test(serverHeader)) && (res.status === 403 || res.status === 503);
     if (last || challenge || !RETRY_STATUSES.has(res.status)) return res;
     const wait = retryAfterMs(res) ?? retryBaseMs * 2 ** attempt;
     await res.body?.cancel();

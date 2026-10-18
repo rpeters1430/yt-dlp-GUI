@@ -74,9 +74,10 @@ Every link listed is recorded in the app's history, so the next run (and the app
 | `--history-stats` | Show how many links and threads the history holds |
 | `--include-bots` | Include mirror bots like SussyBOT |
 | `--include-quotes` | Include links inside quoted replies |
-| `--all-external` | Keep all external links, not just known file hosts |
-| `--cookies FILE` / `-c` | Cookies for this run instead of the app's saved crawler cookies |
-| `--app-url URL`, `--user NAME` | Where the app is and who to sign in as |
+| `--cookies FILE` / `-c` | Cookies for this run instead of the app's saved crawler cookies (auto-detects local `cookies.txt`) |
+| `--solver-url URL` | Challenge Solver (Solverr/FlareSolverr) URL for bypassing Cloudflare & DDoS-Guard |
+| `--user-agent UA` | Custom User-Agent to send when crawling |
+| `--app-url URL`, `--user NAME`, `--password PASS` / `-P` | Where the app is and credentials to sign in |
 
 ### Sending links (optional)
 

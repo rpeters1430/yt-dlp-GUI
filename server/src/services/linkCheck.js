@@ -10,7 +10,9 @@ const MAX_CHECK = 300;
 const CONCURRENCY = 4;
 const TIMEOUT_MS = 15000;
 const MAX_REDIRECTS = 5;
-const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
+const USER_AGENT = process.platform === 'win32'
+  ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+  : 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 const DIRECT_FILE = /\.(?:mp4|m4v|webm|mkv|mov|avi|wmv|flv|mp3|m4a|aac|flac|opus|ogg|wav|zip|rar|7z|tar|gz|iso)(?:$|[?#])/i;
 
 // Follows redirects by hand so every hop passes the SSRF guard, like the crawler does.

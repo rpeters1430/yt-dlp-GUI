@@ -352,7 +352,7 @@ export default function LinkResults({ crawl, onLinksChange, onWatch }) {
                 </label>
                 <span className="muted">p.{row.link.page}</span>
                 {row.link.postId && result.threadUrl && (
-                  <a href={`${result.threadUrl}post-${row.link.postId}`} target="_blank" rel="noreferrer noopener">post #{row.link.postId}</a>
+                  <a href={new URL(`/posts/${row.link.postId}/`, result.threadUrl).toString()} target="_blank" rel="noreferrer noopener">post #{row.link.postId}</a>
                 )}
                 {row.link.passwords?.length > 0 && (
                   <span className="lg-inline"><Key size={12} aria-label="Password" /><span className="lg-pw">{row.link.passwords.join(', ')}</span></span>

@@ -162,7 +162,12 @@ function getCrawl(id) {
 // The raw stored result, as crawled (for sending, and for watches comparing checks).
 function getStoredResult(id) {
   const row = id ? getRow(id) : null;
-  return row ? parse(row.result_json) : null;
+  if (!row) return null;
+  const result = parse(row.result_json);
+  if (result) {
+    result.threadUrl = result.threadUrl || row.url;
+  }
+  return result;
 }
 
 function deleteCrawl(id) {

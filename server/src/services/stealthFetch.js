@@ -7,16 +7,22 @@ async function solveWithFlareSolverr(solverUrl, targetUrl, cookies, { signal, ti
   const base = String(solverUrl || '').trim().replace(/\/+$/, '');
   if (!base) throw new Error('Solver URL is empty');
   const endpoint = base.endsWith('/v1') ? base : `${base}/v1`;
+  let targetHost = '';
+  try { targetHost = new URL(targetUrl).hostname.replace(/^www\./, ''); } catch { /* ignore */ }
   const payload = {
     cmd: 'request.get',
     url: targetUrl,
     maxTimeout: timeoutMs,
-    cookies: (cookies || []).map((c) => ({
-      name: c.name,
-      value: c.value,
-      domain: c.domain ? (c.domain.startsWith('.') ? c.domain : `.${c.domain}`) : undefined,
-      path: c.path || '/',
-    })),
+    cookies: (cookies || []).map((c) => {
+      let domain = c.domain ? (c.domain.startsWith('.') ? c.domain : `.${c.domain}`) : undefined;
+      if (!domain && targetHost) domain = `.${targetHost}`;
+      return {
+        name: c.name,
+        value: c.value,
+        domain,
+        path: c.path || '/',
+      };
+    }),
   };
   const timeoutSignal = AbortSignal.timeout(timeoutMs + 5000);
   const res = await fetch(endpoint, {
