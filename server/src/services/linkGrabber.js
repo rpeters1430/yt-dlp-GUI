@@ -751,6 +751,7 @@ async function fetchPage(url, {
       const cfChallenge = isCloudflareChallenge(res, body);
       const ddgChallenge = isDdosGuardChallenge(res, body);
 
+      let solverFailure = null;
       // Attempt challenge solving via Solverr or stealth curl_cffi fallback
       if (cfChallenge || ddgChallenge || res.status === 403 || res.status === 503) {
         if (solverUrl) {
@@ -761,6 +762,7 @@ async function fetchPage(url, {
               return { url: solved.url, html: solved.html };
             }
           } catch (solverErr) {
+            solverFailure = solverErr.message;
             console.warn(`[linkgrabber] solver at ${solverUrl} failed: ${solverErr.message}`);
           }
         }
@@ -775,14 +777,18 @@ async function fetchPage(url, {
 
       if (cfChallenge) {
         throw new Error(
-          `Cloudflare challenge on ${new URL(current).host}. Export fresh cookies (including cf_clearance) from your browser, `
+          `Cloudflare challenge on ${new URL(current).host}. `
+          + (solverFailure ? `Challenge solver failed: ${solverFailure}. ` : '')
+          + 'Export fresh cookies (including cf_clearance) from your browser, '
           + 'and set the crawler User-Agent to that browser\'s exact User-Agent: Cloudflare only honours cf_clearance from the browser it was issued to.'
           + (solverUrl ? '' : ' Or configure a Challenge Solver (FlareSolverr/Solverr) URL in Settings.')
         );
       }
       if (ddgChallenge) {
         throw new Error(
-          `DDoS-Guard check on ${new URL(current).host}. Export fresh cookies (including the __ddg ones) from your browser, `
+          `DDoS-Guard check on ${new URL(current).host}. `
+          + (solverFailure ? `Challenge solver failed: ${solverFailure}. ` : '')
+          + 'Export fresh cookies (including the __ddg ones) from your browser, '
           + 'and set the crawler User-Agent to that browser\'s exact User-Agent.'
           + (solverUrl ? '' : ' Or configure a Challenge Solver (FlareSolverr/Solverr) URL in Settings.')
         );
@@ -830,7 +836,21 @@ async function crawl({
   const limit = Math.min(Math.max(parseInt(maxPages, 10) || DEFAULT_MAX_PAGES, 1), MAX_PAGES_LIMIT);
   const siteHost = hostOf(startUrl);
   const cookies = loadCookies({ cookiesText, useSavedCookies, siteHost });
-  const fetchOpts = { cookies, fetchImpl, assertUrl, userAgent, retryBaseMs, signal, solverUrl };
+  let savedSolverUrl = '';
+  let savedUserAgent = '';
+  try {
+    savedSolverUrl = db.prepare('SELECT value FROM settings WHERE key = ?').get('linkgrabber_solver_url')?.value || '';
+    savedUserAgent = db.prepare('SELECT value FROM settings WHERE key = ?').get('linkgrabber_user_agent')?.value || '';
+  } catch {
+    // Non-fatal if DB not ready
+  }
+  const activeSolverUrl = (typeof solverUrl === 'string' && solverUrl.trim())
+    ? solverUrl.trim()
+    : (savedSolverUrl || process.env.SOLVERR_URL || process.env.SOLVER_URL || process.env.FLARESOLVERR_URL || '');
+  const activeUserAgent = (typeof userAgent === 'string' && userAgent.trim())
+    ? userAgent.trim()
+    : (savedUserAgent || USER_AGENT);
+  const fetchOpts = { cookies, fetchImpl, assertUrl, userAgent: activeUserAgent, retryBaseMs, signal, solverUrl: activeSolverUrl };
   const threadInfo = parseThreadUrl(startUrl);
 
   const pages = [];

@@ -101,10 +101,17 @@ function startCrawl(options, { watchId = null } = {}) {
   running.set(id, controller);
   emitSummary(id);
 
+  const solverUrl = (typeof options.solverUrl === 'string' && options.solverUrl.trim())
+    ? options.solverUrl.trim()
+    : (getSetting('solverUrl') || process.env.SOLVERR_URL || process.env.SOLVER_URL || process.env.FLARESOLVERR_URL || '');
+  const userAgent = (typeof options.userAgent === 'string' && options.userAgent.trim())
+    ? options.userAgent.trim()
+    : getSetting('userAgent');
+
   const promise = linkGrabber.crawl({
-    userAgent: getSetting('userAgent'),
-    solverUrl: getSetting('solverUrl') || process.env.SOLVERR_URL || process.env.SOLVER_URL || process.env.FLARESOLVERR_URL || '',
     ...options,
+    userAgent,
+    solverUrl,
     signal: controller.signal,
     onPage(progress) {
       db.prepare('UPDATE linkgrabber_crawls SET progress_json = ?, thread_title = ? WHERE id = ?')

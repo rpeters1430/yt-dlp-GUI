@@ -140,7 +140,7 @@ router.post('/crawl', (req, res) => {
   if (!url || typeof url !== 'string' || !validHttpUrl(url.trim())) return res.status(400).json({ error: 'A valid http(s) url is required' });
   if (cookies !== undefined && typeof cookies !== 'string') return res.status(400).json({ error: 'cookies must be cookies.txt text' });
 
-  const { id } = crawls.startCrawl({
+  const crawlOptions = {
     url: url.trim(),
     mode,
     maxPages,
@@ -153,9 +153,11 @@ router.post('/crawl', (req, res) => {
     ignoreHistory: !!ignoreHistory,
     cookiesText: cookies || '',
     useSavedCookies: !!useSavedCookies,
-    userAgent: typeof userAgent === 'string' ? userAgent.trim() : undefined,
-    solverUrl: typeof solverUrl === 'string' ? solverUrl.trim() : undefined,
-  });
+  };
+  if (typeof userAgent === 'string' && userAgent.trim()) crawlOptions.userAgent = userAgent.trim();
+  if (typeof solverUrl === 'string' && solverUrl.trim()) crawlOptions.solverUrl = solverUrl.trim();
+
+  const { id } = crawls.startCrawl(crawlOptions);
   res.status(202).json({ id });
 });
 
