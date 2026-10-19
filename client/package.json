@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint . --max-warnings 0",
-    "test": "node --test src/outputTemplatePreview.test.js src/pages/linkgrabber/sites.test.js"
+    "test": "node --test src/outputTemplatePreview.test.js src/playlistLinks.test.js src/pages/linkgrabber/sites.test.js"
   },
   "dependencies": {
     "lucide-react": "^1.0.0",

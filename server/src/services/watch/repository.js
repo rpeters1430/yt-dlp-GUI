@@ -269,6 +269,50 @@ function createRepository(db, { now = () => new Date() } = {}) {
     return stmts.manualRetry.run(time, time, itemId).changes === 1;
   }
 
+  // What this watch, and the rest of the download history, knows about each of these
+  // videos: { [videoId]: { item, download } }. `download` is the item's current job, or for a
+  // video downloaded some other way (pasted on Home, another Watch) its latest completed job.
+  function videoStatuses(watchId, videoIds) {
+    const itemStmt = db.prepare('SELECT * FROM watch_items WHERE watch_id = ? AND video_id = ?');
+    const byId = db.prepare('SELECT id, status, filepath, error, percent, title, updated_at FROM downloads WHERE id = ?');
+    const elsewhere = db.prepare(`
+      SELECT id, status, filepath, error, percent, title, updated_at FROM downloads
+      WHERE status = 'completed' AND (video_id = ? OR url = ?) ORDER BY updated_at DESC LIMIT 1
+    `);
+    const result = {};
+    for (const videoId of videoIds) {
+      const item = itemStmt.get(watchId, videoId) || null;
+      let download = item && item.download_id ? byId.get(item.download_id) || null : null;
+      if (!download || download.status !== 'completed') {
+        download = elsewhere.get(videoId, `https://www.youtube.com/watch?v=${videoId}`) || download;
+      }
+      result[videoId] = { item, download };
+    }
+    return result;
+  }
+
+  // Makes these videos queueable by hand: records ones the watch hasn't cataloged yet and
+  // resets failed or finished ones (a finished one whose file was deleted) back to 'none',
+  // keeping their attempt history. Items already queued or downloading are left out.
+  // Returns the items ready for queueItems.
+  function prepareManualItems(watchId, entries) {
+    const time = nowSql();
+    const ready = [];
+    for (const e of entries) {
+      stmts.insertItem.run(
+        watchId, e.id, e.url || null, e.title || null, typeof e.duration === 'number' ? e.duration : null,
+        e.thumbnail || null, e.publishedAt || null, 'backfill', 'eligible', null, time, time
+      );
+      const item = db.prepare('SELECT * FROM watch_items WHERE watch_id = ? AND video_id = ?').get(watchId, e.id);
+      if (item.download_status === 'queued' || item.download_status === 'downloading') continue;
+      if (item.download_status !== 'none') {
+        db.prepare("UPDATE watch_items SET download_status = 'none', next_retry_at = NULL, updated_at = ? WHERE id = ?").run(time, item.id);
+      }
+      ready.push(stmts.getItem.get(item.id));
+    }
+    return ready;
+  }
+
   function getItem(itemId, watchId) {
     return watchId === undefined ? stmts.getItem.get(itemId) : stmts.getWatchItem.get(watchId, itemId);
   }
@@ -353,6 +397,8 @@ function createRepository(db, { now = () => new Date() } = {}) {
     applyDownloadState,
     reconcileOrphans,
     resetForManualRetry,
+    videoStatuses,
+    prepareManualItems,
     getItem,
     getWatch,
     listWatches,

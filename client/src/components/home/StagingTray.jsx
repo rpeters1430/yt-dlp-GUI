@@ -27,7 +27,7 @@ function formatLine(item, opts) {
 }
 
 function StagedCard({ item, defaults, onOptions }) {
-  const { remove, update } = useStaging();
+  const { remove, update, analyze } = useStaging();
   const { info, loading, error } = item;
   const opts = item.opts || defaults;
   const site = info?.capabilities?.site?.name || siteName(info?.extractor);
@@ -63,6 +63,12 @@ function StagedCard({ item, defaults, onOptions }) {
                 <button type="button" className="btn-link" onClick={() => update(item.id, { forceDuplicate: true })}>Download anyway</button>
               </>
             )}
+          </div>
+        )}
+        {item.playlistUrl && (
+          <div className="notice notice-info">
+            Opened from a playlist · downloading just this video{' '}
+            <button type="button" className="btn-link" onClick={() => { remove(item.id); analyze(item.playlistUrl); }}>Get the whole playlist instead</button>
           </div>
         )}
         {item.watch && (

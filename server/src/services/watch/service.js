@@ -1,7 +1,38 @@
+const fs = require('fs');
 const { resolveMusicDir } = require('../ytdlpPaths');
 const { evaluateEntry, watchConfigError } = require('./filters');
-const { scanToBoundary, HARD_SCAN_LIMIT, FULL_BACKFILL_LIMIT } = require('./discovery');
-const { CONTENT_TYPES, scanSources, mergeNewestFirst, isMissingTabError, parseContentTypes, watchContentTypes } = require('./tabs');
+const { scanToBoundary, normalizeEntries, HARD_SCAN_LIMIT, FULL_BACKFILL_LIMIT } = require('./discovery');
+const {
+  CONTENT_TYPES, scanSources, mergeNewestFirst, isMissingTabError, parseContentTypes, watchContentTypes, channelRoot,
+} = require('./tabs');
+
+const VIDEO_ID_RE = /^[\w-]{11}$/;
+// How long a playlist listing is kept for the "Download" buttons, so queueing a video from it
+// doesn't list the whole playlist again just to get the video's title and thumbnail.
+const LISTING_TTL_MS = 30 * 60 * 1000;
+// Manual picks from the playlist view go ahead of Watch backfills, like downloads from Home.
+const MANUAL_PRIORITY = 10;
+
+// Where a playlist video stands: 'downloaded' (on disk), 'missing' (finished but the file is
+// gone), 'deleted', 'queued', 'downloading', 'failed', or 'not_downloaded'.
+function videoState({ item, download }, fileExists) {
+  if (download) {
+    if (download.status === 'queued' || download.status === 'downloading') return download.status;
+    if (download.status === 'completed') return download.filepath && fileExists(download.filepath) ? 'downloaded' : 'missing';
+    if (download.status === 'deleted') return 'deleted';
+    if (download.status === 'failed') return 'failed';
+  }
+  if (item && item.download_status === 'failed') return 'failed';
+  return 'not_downloaded';
+}
+
+function fileExistsSync(filepath) {
+  try {
+    return fs.statSync(filepath).isFile();
+  } catch (_) {
+    return false;
+  }
+}
 
 function extractThumbnail(info) {
   if (info.thumbnails && Array.isArray(info.thumbnails)) {
@@ -133,8 +164,8 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
   }
 
   // Creates and links download jobs for these items in one transaction, then starts them.
-  function queueItems(watch, items, runId) {
-    const options = buildDownloadOptions(watch);
+  function queueItems(watch, items, runId, { priority } = {}) {
+    const options = { ...buildDownloadOptions(watch), ...(priority !== undefined ? { priority } : {}) };
     const created = repository.transaction(() => items.map((item) => {
       const url = item.url || `https://www.youtube.com/watch?v=${item.video_id}`;
       const { id } = queue.createQueuedJob(url, { ...options, watchItemId: item.id });
@@ -326,12 +357,65 @@ function createWatchService({ repository, ytdlp, queue, notify = null, emitWatch
     return { item: repository.getItem(item.id), downloadId: created.downloadId };
   }
 
+  const listings = new Map(); // watchId -> { entries, expires }
+
+  // Every video in a playlist watch, in playlist order, with its download state. Lists the
+  // playlist from YouTube each time, so it shows videos the watch skipped or hasn't seen yet.
+  async function listPlaylistVideos(watch, { fileExists = fileExistsSync } = {}) {
+    if (channelRoot(watch.url)) return { error: 'Only playlist watches can list their videos', status: 400 };
+    const info = await ytdlp.getInfo(watch.url, { flatPlaylist: true, playlistEnd: FULL_BACKFILL_LIMIT });
+    const entries = normalizeEntries(info).filter((e) => VIDEO_ID_RE.test(e.id));
+    listings.set(watch.id, { entries, expires: Date.now() + LISTING_TTL_MS });
+    const statuses = repository.videoStatuses(watch.id, entries.map((e) => e.id));
+    const videos = entries.map((e, i) => {
+      const status = statuses[e.id];
+      const { download } = status;
+      return {
+        ...e,
+        index: i + 1,
+        state: videoState(status, fileExists),
+        downloadId: download ? download.id : null,
+        filepath: download && download.status === 'completed' ? download.filepath : null,
+        percent: download ? download.percent : null,
+        error: (download && download.status === 'failed' && download.error) || (status.item && status.item.last_error) || null,
+      };
+    });
+    return {
+      title: info.title || watch.name || null,
+      truncated: entries.length >= FULL_BACKFILL_LIMIT,
+      videos,
+    };
+  }
+
+  // Queues the chosen playlist videos now, with this watch's settings, skipping ones already
+  // on disk or on their way. Returns { queued: [{ videoId, downloadId }], skipped: [videoId] }.
+  function downloadPlaylistVideos(watch, videoIds, { fileExists = fileExistsSync } = {}) {
+    const ids = [...new Set((videoIds || []).map(String))].filter((id) => VIDEO_ID_RE.test(id));
+    if (!ids.length) return { error: 'No valid video IDs', status: 400 };
+    const cached = listings.get(watch.id);
+    const known = new Map(cached && cached.expires > Date.now() ? cached.entries.map((e) => [e.id, e]) : []);
+    const statuses = repository.videoStatuses(watch.id, ids);
+    const wanted = ids.filter((id) => !['downloaded', 'queued', 'downloading'].includes(videoState(statuses[id], fileExists)));
+    const entries = wanted.map((id) => known.get(id) || { id, url: `https://www.youtube.com/watch?v=${id}` });
+    const items = repository.transaction(() => {
+      repository.reconcileOrphans(watch.id);
+      return repository.prepareManualItems(watch.id, entries);
+    })();
+    const created = queueItems(watch, items, 'manual-pick', { priority: MANUAL_PRIORITY });
+    emitWatchUpdate(watch.id);
+    const queued = created.map(({ item, downloadId }) => ({ videoId: item.video_id, downloadId }));
+    const queuedIds = new Set(queued.map((q) => q.videoId));
+    return { queued, skipped: ids.filter((id) => !queuedIds.has(id)) };
+  }
+
   return {
     checkWatch,
     startCheck,
     retryItem,
+    listPlaylistVideos,
+    downloadPlaylistVideos,
     isRunning: (watchId) => running.has(watchId),
   };
 }
 
-module.exports = { createWatchService, buildDownloadOptions, extractThumbnail, normalizeBackfill };
+module.exports = { createWatchService, buildDownloadOptions, extractThumbnail, normalizeBackfill, videoState };

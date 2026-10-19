@@ -10,7 +10,7 @@ function setupWatchService(t, { clock } = {}) {
   const tmp = openTempDb();
   t.after(() => tmp.cleanup());
   const db = tmp.db;
-  const state = { entries: [], byUrl: null, urls: [], failInfo: null, started: [], calls: 0, delayMs: 0 };
+  const state = { entries: [], byUrl: null, urls: [], failInfo: null, started: [], jobOptions: [], calls: 0, delayMs: 0 };
   const now = () => (clock ? clock.now : new Date());
   const repository = createRepository(db, { now });
 
@@ -34,6 +34,7 @@ function setupWatchService(t, { clock } = {}) {
   const queue = {
     createQueuedJob(url, options) {
       const id = `job-${++seq}`;
+      state.jobOptions.push(options);
       db.prepare("INSERT INTO downloads (id, url, status, watch_id, watch_item_id) VALUES (?, ?, 'queued', ?, ?)")
         .run(id, url, options.watchId, options.watchItemId);
       return { id };
