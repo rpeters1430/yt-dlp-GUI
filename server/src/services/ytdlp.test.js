@@ -488,6 +488,40 @@ test('WebM video downloads prefer WebM/Opus streams and merge to webm', () => {
   assert.equal(args[mergeIdx + 1], 'webm');
 });
 
+test('cleanupPartialFiles from a format file also removes the other format and merge temp files', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { cleanupPartialFiles } = require('./ytdlp');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-partial-'));
+  try {
+    const video = path.join(dir, 'My Video [abc123].f137.mp4');
+    const audio = path.join(dir, 'My Video [abc123].f251.webm');
+    const mergeTemp = path.join(dir, 'My Video [abc123].temp.mp4');
+    const unrelated = path.join(dir, 'My Video [abc123].nfo');
+    for (const f of [video, audio, mergeTemp, unrelated]) fs.writeFileSync(f, 'x');
+
+    cleanupPartialFiles(video);
+
+    assert.equal(fs.existsSync(video), false);
+    assert.equal(fs.existsSync(audio), false);
+    assert.equal(fs.existsSync(mergeTemp), false);
+    assert.equal(fs.existsSync(unrelated), true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('looksLikeDiskFull matches disk-full errors and near-empty output folders', () => {
+  const { looksLikeDiskFull } = require('./ytdlp');
+  const roomy = () => ({ bavail: 10 * 1024 * 1024, bsize: 4096 });
+  const full = () => ({ bavail: 10, bsize: 4096 });
+  assert.equal(looksLikeDiskFull('ERROR: unable to write data: [Errno 28] No space left on device', '/x', { statfs: roomy }), true);
+  assert.equal(looksLikeDiskFull('ERROR: Postprocessing: Conversion failed!', '/x', { statfs: full }), true);
+  assert.equal(looksLikeDiskFull('ERROR: Postprocessing: Conversion failed!', '/x', { statfs: roomy }), false);
+  assert.equal(looksLikeDiskFull('ERROR: Video unavailable', '/x', { statfs: () => { throw new Error('ENOENT'); } }), false);
+});
+
 test('cleanupPartialFiles removes .part, .ytdl, and stream fragment files next to destFile', () => {
   const fs = require('fs');
   const os = require('os');

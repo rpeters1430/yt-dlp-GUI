@@ -118,6 +118,19 @@ test('auto-captions are requested whenever the probe found them, on any site', (
   assert.ok(args.includes('--write-auto-subs'));
 });
 
+test('a bare language code matches uploaded regional and script variants', () => {
+  const url = 'https://www.youtube.com/watch?v=abc123';
+  const regional = getCapabilities({ extractor_key: 'Youtube', formats: [{ vcodec: 'avc1' }], subtitles: { 'en-GB': [{}], 'zh-Hant': [{}], de: [{}] }, automatic_captions: { 'en-orig': [{}], 'en-de': [{}] } });
+  const en = resolveDownloadOptions(url, { subtitles: true, subLangs: 'en', caps: regional }).options;
+  assert.equal(en.subLangs, 'en-GB');
+  assert.equal(en.useAutoSubs, false);
+  assert.equal(resolveDownloadOptions(url, { subtitles: true, subLangs: 'en,zh', caps: regional }).options.subLangs, 'en-GB,zh-Hant');
+
+  // Auto-captions stay an exact match, so "en" doesn't pull in a machine translation.
+  const autoOnly = getCapabilities({ extractor_key: 'Youtube', formats: [{ vcodec: 'avc1' }], automatic_captions: { 'en-de': [{}], fr: [{}] } });
+  assert.equal(resolveDownloadOptions(url, { subtitles: true, subLangs: 'en', caps: autoOnly }).options.subtitles, false);
+});
+
 test('subtitle language patterns resolve to exact probed tracks', () => {
   const url = 'https://www.youtube.com/watch?v=abc123';
   const withManual = getCapabilities({ extractor_key: 'Youtube', formats: [{ vcodec: 'avc1' }], subtitles: { en: [{}], de: [{}] }, automatic_captions: { en: [{}], 'en-de': [{}] } });

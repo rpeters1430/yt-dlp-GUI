@@ -582,6 +582,8 @@ function normalizeCategories(value) {
   return String(value).trim();
 }
 
+const BARE_LANG_CODE = /^[a-z]{2,3}$/i;
+
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -592,17 +594,23 @@ function escapeRegex(s) {
 // Manual tracks win; auto-captions are only used when no manual track matches, preferring
 // the original-language caption over machine translations. Returns null to leave the
 // pattern alone ("all", or a pattern that isn't a valid regex).
+//
+// A bare language code ("en", "zh") also matches uploaded regional and script variants
+// ("en-GB", "zh-Hans"), which is what someone typing "en" means. Auto-captions keep the exact
+// match: their dashed names are machine translations, the requests that draw the 429s.
 function pickSubtitleTracks(pattern, { manual = [], auto = [] }) {
   const parts = String(pattern).split(',').map((p) => p.trim()).filter(Boolean);
   if (parts.length === 0 || parts.includes('all')) return null;
   let regexes;
+  let manualRegexes;
   try {
     regexes = parts.map((p) => new RegExp(`^(?:${p})$`));
+    manualRegexes = parts.map((p) => (BARE_LANG_CODE.test(p) ? new RegExp(`^${p}(?:-[A-Za-z0-9]+)*$`, 'i') : new RegExp(`^(?:${p})$`)));
   } catch (_) {
     return null;
   }
   const matches = (lang) => regexes.some((r) => r.test(lang));
-  const manualHits = manual.filter(matches);
+  const manualHits = manual.filter((lang) => manualRegexes.some((r) => r.test(lang)));
   if (manualHits.length) return { langs: manualHits, auto: false };
   const autoHits = auto.filter(matches);
   let originals = autoHits.filter((l) => !l.includes('-') || l.endsWith('-orig'));
@@ -976,7 +984,9 @@ function cleanupPartialFiles(filepath) {
   if (!filepath) return;
   const dir = path.dirname(filepath);
   const ext = path.extname(filepath);
-  const base = path.basename(filepath, ext);
+  // A merged download's destination is first one of its format files ("name.f137.mp4"); strip
+  // the format id so the other format's file ("name.f251.webm") is found too.
+  const base = path.basename(filepath, ext).replace(/\.f\d+(?:-\w+)?$/, '');
   for (const candidate of [filepath, `${filepath}.part`, `${filepath}.ytdl`]) {
     try {
       if (fs.existsSync(candidate)) fs.unlinkSync(candidate);
@@ -985,11 +995,28 @@ function cleanupPartialFiles(filepath) {
   try {
     for (const name of fs.readdirSync(dir)) {
       if (!name.startsWith(`${base}.`)) continue;
-      if (/\.(part|ytdl|temp)$/i.test(name) || /^\.f\d+\./i.test(name.slice(base.length))) {
+      if (/\.(part|ytdl|temp)$/i.test(name) || /\.temp\.[^.]+$/i.test(name) || /^\.f\d+\./i.test(name.slice(base.length))) {
         try { fs.unlinkSync(path.join(dir, name)); } catch (_) {}
       }
     }
   } catch (_) {}
+}
+
+const DISK_FULL_PATTERN = /No space left on device|Errno 28|ENOSPC|Disk quota exceeded|There is not enough space on the disk/i;
+const DISK_FULL_FREE_BYTES = 200 * 1024 * 1024;
+
+// A download that fills the disk usually fails with a vague error ("Conversion failed!" when
+// the ffmpeg merge runs out of room), so besides matching the error text, treat a failure
+// with almost no free space left in the output folder as the disk filling up.
+function looksLikeDiskFull(errorText, dir, { statfs = fs.statfsSync } = {}) {
+  if (DISK_FULL_PATTERN.test(String(errorText || ''))) return true;
+  if (!dir || typeof statfs !== 'function') return false;
+  try {
+    const st = statfs(dir);
+    return Number(st.bavail) * Number(st.bsize) < DISK_FULL_FREE_BYTES;
+  } catch (_) {
+    return false;
+  }
 }
 
 function stopDownload(jobId, { abort = false } = {}) {
@@ -1488,7 +1515,13 @@ async function download(url, options = {}, onProgress, onLog) {
       const completedWithErrors = code !== 0 && !stoppedByUser
         && !!finalFilepath && fs.existsSync(finalFilepath);
       if (code !== 0 && !stoppedByUser && !completedWithErrors) {
-        const errMsg = errSummary || `yt-dlp exited with code ${code}`;
+        let errMsg = errSummary || `yt-dlp exited with code ${code}`;
+        // The leftover fragments would keep the disk full and fail every download after this
+        // one, so a disk-full failure removes them instead of keeping them for a resume.
+        if (filepath && looksLikeDiskFull(stderr, path.dirname(filepath))) {
+          cleanupPartialFiles(filepath);
+          errMsg = `Out of disk space: removed the partial files for this download. ${errMsg}`;
+        }
         console.error(`[${jobId}] Failed with exit code ${code}: ${errMsg}`);
         onLog && onLog(`[failed] Exit code ${code}: ${errMsg}`);
         return reject(new Error(errMsg));
@@ -1580,6 +1613,7 @@ module.exports = {
   COOKIES_FILE,
   stopDownload,
   cleanupPartialFiles,
+  looksLikeDiskFull,
   assertPublicUrl,
   assertPublicUrlResolved,
   isPrivateOrLoopbackIp,

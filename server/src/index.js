@@ -17,6 +17,12 @@ const { createWatchService } = require('./services/watch/service');
 
 const PORT = process.env.PORT || 3000;
 
+// Node exits on an unhandled rejection by default, which would take every running download
+// down with it over one stray promise (a media-server or network call during an outage).
+process.on('unhandledRejection', (reason) => {
+  console.error('[server] Unhandled promise rejection:', reason instanceof Error ? reason.stack : reason);
+});
+
 auth.ensureBootstrapAdmin();
 
 // Socket.IO is created further down; watch updates are dropped until it exists.

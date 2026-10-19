@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { defaultDownloadOptions, isWatchableUrl, normalizeUrl } from '../components/DownloadOptionsFields.jsx';
 import { getStoredDownloadDefaults, storeDownloadDefaults } from '../prefs.js';
 import { useDownloads } from './DownloadsContext.jsx';
+import { splitPlaylistVideoUrl } from '../playlistLinks.js';
 
 // Links pasted on Home wait here ("Ready to download") until they're queued. It lives above
 // the routes so the tray survives a trip to another page and back.
@@ -112,12 +113,16 @@ export function StagingProvider({ children }) {
   const analyze = useCallback((text) => {
     const known = new Set(stagedRef.current.map((it) => it.url));
     const fresh = [];
-    for (const url of parseLinks(text)) {
+    for (const link of parseLinks(text)) {
+      // A video opened from a playlist downloads just that video; the tray offers the playlist.
+      const fromPlaylist = splitPlaylistVideoUrl(link);
+      const url = fromPlaylist ? fromPlaylist.videoUrl : link;
       if (known.has(url)) continue;
       known.add(url);
       fresh.push({
         id: nextId++,
         url,
+        playlistUrl: fromPlaylist ? fromPlaylist.playlistUrl : null,
         loading: true,
         analyzeId: newAnalyzeId(),
         steps: [],
