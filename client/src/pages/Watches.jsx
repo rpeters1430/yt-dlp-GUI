@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import WatchModal from '../components/WatchModal.jsx';
 import WatchActivityModal from '../components/WatchActivityModal.jsx';
+import PlaylistVideosModal from '../components/PlaylistVideosModal.jsx';
 import AddWatchDrawer from '../components/AddWatchDrawer.jsx';
 import Art from '../components/Art.jsx';
 import { Switch } from '../components/DownloadOptionsFields.jsx';
@@ -48,6 +49,7 @@ export default function Watches() {
   const { subscribeWatchUpdates } = useDownloads();
   const [editingWatch, setEditingWatch] = useState(null);
   const [activityWatch, setActivityWatch] = useState(null); // { watch, tab }
+  const [playlistWatch, setPlaylistWatch] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
   const [pendingReset, setPendingReset] = useState(null); // { id, label }
 
@@ -313,6 +315,7 @@ export default function Watches() {
                       watch={w}
                       plexConfigured={plexConfigured}
                       onActivity={() => openActivity('items')}
+                      onVideos={isPlaylistUrl(w.url) ? () => setPlaylistWatch(w) : null}
                       onEdit={() => { setEditingWatch(w); setModalOpen(true); }}
                       onSyncJellyfin={() => handleSyncJellyfin(w)}
                       onSyncPlex={() => handleSyncPlex(w)}
@@ -361,9 +364,16 @@ export default function Watches() {
                       <Switch checked={!isPaused} onChange={() => handleToggle(w)} label={isPaused ? 'Resume watch' : 'Pause watch'} size="lg" />
                       <span>{isPaused ? 'Paused' : 'Active'}</span>
                     </label>
-                    <button type="button" className="btn-ghost btn-sm" onClick={() => handleCheckNow(w)} disabled={isChecking}>
-                      {isChecking ? 'Checking…' : 'Check now'}
-                    </button>
+                    <div className="watch-foot-actions">
+                      {isPlaylistUrl(w.url) && (
+                        <button type="button" className="btn-ghost btn-sm" onClick={() => setPlaylistWatch(w)} title="Every video in this playlist, downloaded or not">
+                          Videos
+                        </button>
+                      )}
+                      <button type="button" className="btn-ghost btn-sm" onClick={() => handleCheckNow(w)} disabled={isChecking}>
+                        {isChecking ? 'Checking…' : 'Check now'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </article>
@@ -406,6 +416,13 @@ export default function Watches() {
         watch={activityWatch?.watch}
         initialTab={activityWatch?.tab}
         onClose={() => setActivityWatch(null)}
+        onChanged={refresh}
+      />
+
+      <PlaylistVideosModal
+        open={!!playlistWatch}
+        watch={playlistWatch}
+        onClose={() => setPlaylistWatch(null)}
         onChanged={refresh}
       />
 
@@ -460,7 +477,7 @@ function rulesLine(w) {
   return parts.join(' · ');
 }
 
-function WatchMenu({ watch, plexConfigured, onActivity, onEdit, onSyncJellyfin, onSyncPlex, onToggleCleanup, onReset, onDelete, busy }) {
+function WatchMenu({ watch, plexConfigured, onActivity, onVideos, onEdit, onSyncJellyfin, onSyncPlex, onToggleCleanup, onReset, onDelete, busy }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -491,6 +508,7 @@ function WatchMenu({ watch, plexConfigured, onActivity, onEdit, onSyncJellyfin, 
       </button>
       {open && (
         <div className="menu-pop" role="menu">
+          {onVideos && <button type="button" role="menuitem" onClick={() => run(onVideos)}>Playlist videos</button>}
           <button type="button" role="menuitem" onClick={() => run(onActivity)}>Activity</button>
           <button type="button" role="menuitem" onClick={() => run(onEdit)}>Edit settings</button>
           <a role="menuitem" href={watch.url} target="_blank" rel="noopener noreferrer" onClick={() => setOpen(false)}>Open on YouTube</a>

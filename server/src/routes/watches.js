@@ -512,6 +512,31 @@ function createWatchesRouter({
     }));
   });
 
+  // Every video in a playlist watch, with whether it's downloaded, on its way, or not yet.
+  router.get('/:id/playlist', async (req, res) => {
+    const watch = database.prepare('SELECT * FROM watches WHERE id = ?').get(req.params.id);
+    if (!watch) return res.status(404).json({ error: 'Watch not found' });
+    try {
+      const result = await watchService.listPlaylistVideos(watch);
+      if (result.error) return res.status(result.status).json({ error: result.error });
+      res.json(result);
+    } catch (err) {
+      res.status(502).json({ error: `Couldn't list this playlist: ${err.message}` });
+    }
+  });
+
+  // Download chosen playlist videos now, with this watch's settings.
+  router.post('/:id/playlist/download', (req, res) => {
+    const watch = database.prepare('SELECT * FROM watches WHERE id = ?').get(req.params.id);
+    if (!watch) return res.status(404).json({ error: 'Watch not found' });
+    const { videoIds } = req.body || {};
+    if (!Array.isArray(videoIds)) return res.status(400).json({ error: 'videoIds must be an array' });
+    if (videoIds.length > 500) return res.status(400).json({ error: 'Too many videos at once (max 500)' });
+    const result = watchService.downloadPlaylistVideos(watch, videoIds);
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  });
+
   // Retry a failed item now
   router.post('/:id/items/:itemId/retry', (req, res) => {
     const watch = database.prepare('SELECT * FROM watches WHERE id = ?').get(req.params.id);

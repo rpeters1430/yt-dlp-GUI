@@ -86,6 +86,8 @@ export const api = {
   getWatchRuns: (id) => request(`/watches/${id}/runs`),
   getWatchItems: (id, query = '') => request(`/watches/${id}/items${query}`),
   retryWatchItem: (watchId, itemId) => request(`/watches/${watchId}/items/${itemId}/retry`, { method: 'POST' }),
+  getWatchPlaylist: (id) => request(`/watches/${id}/playlist`),
+  downloadWatchPlaylistVideos: (id, videoIds) => request(`/watches/${id}/playlist/download`, { method: 'POST', body: JSON.stringify({ videoIds }) }),
   resetWatchSeen: (id) => request(`/watches/${id}/reset-seen`, { method: 'POST' }),
   syncWatchJellyfin: (id) => request(`/watches/${id}/sync-jellyfin`, { method: 'POST' }),
   syncWatchPlex: (id) => request(`/watches/${id}/sync-plex`, { method: 'POST' }),
