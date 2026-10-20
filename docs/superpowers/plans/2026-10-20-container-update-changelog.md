@@ -107,8 +107,8 @@
 - [ ] Write workflow tests/checks for main and version-tag image tags, candidate startup, and no publish on failed validation.
 - [ ] Add a dashboard GHCR workflow that builds from `dashboard/`, includes `build-info.json`, publishes `latest`, short-SHA, and version tags, and uses push-range or tag-range notes.
 - [ ] Update the example Compose file to use the published image by default and add a local-build override; document both paths.
-- [ ] Feed Release Changelog Builder output to the existing GoReleaser `--release-notes` input for stable tags; do not create a second GitHub Release for the same tag.
-- [ ] Run `cd dashboard && go test ./... && go build ./...`, `actionlint .github/workflows/publish-dashboard.yml .github/workflows/release-stable.yaml .github/workflows/build.yaml`, and a local dashboard image smoke test.
+- [ ] Feed Release Changelog Builder output to GoReleaser's `--release-notes` input for stable tags, remove `changelog.disable: true` from the stable config so GoReleaser honors the custom file, and keep GoReleaser as the only publisher for that tag.
+- [ ] Run `cd dashboard && go test ./... && go build ./...`, `goreleaser check --config build/goreleaser/stable.yaml`, `actionlint .github/workflows/publish-dashboard.yml .github/workflows/release-stable.yaml .github/workflows/build.yaml`, and a local dashboard image smoke test.
 - [ ] Commit `feat: publish Watchtower dashboard with release notes`.
 
 ---
