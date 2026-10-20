@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload, Trash2, ListMusic, } from 'lucide-react';
+import SiteCookiesPanel from '../components/SiteCookiesPanel.jsx';
 import { api } from '../api.js';
 import FileNamingSettings from '../components/FileNamingSettings.jsx';
 import NotificationSettings from '../components/NotificationSettings.jsx';
@@ -36,6 +37,7 @@ export default function Settings({ username, onLogout }) {
   const [cookiesBusy, setCookiesBusy] = useState(false);
   const [cookiesFileName, setCookiesFileName] = useState('');
 
+  const [siteCookies, setSiteCookies] = useState(null);
   const [crawlerCookiesStatus, setCrawlerCookiesStatus] = useState(null);
   const [crawlerCookiesText, setCrawlerCookiesText] = useState('');
   const [crawlerCookiesFileName, setCrawlerCookiesFileName] = useState('');
@@ -85,6 +87,7 @@ export default function Settings({ username, onLogout }) {
 
   function refreshCookiesStatus() {
     api.getCookiesStatus().then((s) => setCookiesConfigured(s.configured)).catch(() => {});
+    api.getSiteCookies().then(setSiteCookies).catch(() => {});
     api.getLinkGrabberCookies().then(setCrawlerCookiesStatus).catch(() => {});
   }
 
@@ -546,6 +549,19 @@ export default function Settings({ username, onLogout }) {
           {cookiesError && <div className="alert alert-error"><AlertCircle size={15} />{cookiesError}</div>}
         </form>
       </section>
+
+      <SiteCookiesPanel
+        site="reddit"
+        status={siteCookies?.reddit}
+        onChange={refreshCookiesStatus}
+        description="Lets yt-dlp download NSFW, quarantined, or otherwise login-gated Reddit posts."
+      />
+      <SiteCookiesPanel
+        site="twitter"
+        status={siteCookies?.twitter}
+        onChange={refreshCookiesStatus}
+        description="Lets yt-dlp download sensitive, protected, or rate-limited posts, Spaces, and live broadcasts on X."
+      />
 
       <section className="panel" style={{ marginTop: '24px' }}>
         <div className="panel-header">
