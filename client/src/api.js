@@ -25,6 +25,7 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  getReleaseNotes: () => request('/release-notes'),
   me: () => request('/auth/me'),
   login: (username, password) => request('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
   logout: () => request('/auth/logout', { method: 'POST' }),

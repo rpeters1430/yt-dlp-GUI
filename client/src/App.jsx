@@ -7,6 +7,7 @@ import AppNav, { TabBar } from './components/AppNav.jsx';
 import { DownloadsProvider } from './context/DownloadsContext.jsx';
 import { StagingProvider } from './context/StagingContext.jsx';
 import { ToastProvider } from './context/ToastContext.jsx';
+import ReleaseNotesDialog from './components/ReleaseNotesDialog.jsx';
 
 // Home ships in the main bundle; every other page loads when first opened.
 const History = lazy(() => import('./pages/History.jsx'));
@@ -44,6 +45,7 @@ function Shell({ user }) {
   useGlobalPaste();
   return (
     <div className="app-shell">
+      <ReleaseNotesDialog />
       <AppNav username={user.username} />
       <div className="main-area">
         <div className="main-scroll" id="main-scroll">

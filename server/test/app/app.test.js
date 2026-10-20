@@ -2,6 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { openFreshDb } = require('../helpers/queueHarness');
 
@@ -9,7 +11,7 @@ const SRC = path.join(__dirname, '..', '..', 'src');
 // Generated per run rather than written out, so no credential-looking literals live in the repo.
 const ADMIN_PASSWORD = crypto.randomBytes(12).toString('hex');
 
-async function startApp(t) {
+async function startApp(t, appOptions = {}) {
   const { db } = openFreshDb(t);
   const auth = require(path.join(SRC, 'auth'));
   const savedPassword = process.env.ADMIN_PASSWORD;
@@ -29,6 +31,7 @@ async function startApp(t) {
     watchRepository: createRepository(db),
     watchService: {},
     checkAllWatches: async () => {},
+    ...appOptions,
   });
   const server = await new Promise((resolve) => { const srv = app.listen(0, () => resolve(srv)); });
   t.after(() => server.close());
@@ -57,6 +60,7 @@ const READ_ENDPOINTS = [
   '/api/cleanup/settings', '/api/jellyfin/settings', '/api/plex/settings', '/api/music/settings',
   '/api/music/watches', '/api/sites/guide', '/api/library', '/api/notifications/settings',
   '/api/lidarr/settings', '/api/linkgrabber/settings', '/api/linkgrabber/crawls', '/api/linkgrabber/watches',
+  '/api/release-notes',
 ];
 
 test('health answers without a session and is not cached', async (t) => {
@@ -65,6 +69,32 @@ test('health answers without a session and is not cached', async (t) => {
   assert.deepEqual(res.body, { status: 'ok' });
   assert.equal(res.headers.get('cache-control'), 'no-store');
   assert.equal(res.headers.get('set-cookie'), null, 'no session is created');
+});
+
+test('release notes return build metadata without caching it', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-build-info-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const buildInfoPath = path.join(directory, 'build-info.json');
+  fs.writeFileSync(buildInfoPath, JSON.stringify({ version: '2.4.0', revision: 'abc1234567890', notes: '## Fixes\n- Fixed queue handling' }));
+  const { call } = await startApp(t, { buildInfoPath });
+  await call('POST', '/api/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
+  const res = await call('GET', '/api/release-notes');
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(Object.keys(res.body).sort(), ['notes', 'revision', 'version']);
+  assert.deepEqual(res.body, { version: '2.4.0', revision: 'abc1234567890', notes: '## Fixes\n- Fixed queue handling' });
+});
+
+test('release notes return empty defaults when build metadata is missing or invalid', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-build-info-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const buildInfoPath = path.join(directory, 'build-info.json');
+  const { call } = await startApp(t, { buildInfoPath });
+  await call('POST', '/api/auth/login', { username: 'admin', password: ADMIN_PASSWORD });
+
+  assert.deepEqual((await call('GET', '/api/release-notes')).body, { version: '', revision: '', notes: '' });
+  fs.writeFileSync(buildInfoPath, '{invalid json');
+  assert.deepEqual((await call('GET', '/api/release-notes')).body, { version: '', revision: '', notes: '' });
 });
 
 test('every API router refuses requests without a session', async (t) => {

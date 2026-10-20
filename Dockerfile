@@ -78,6 +78,7 @@ COPY --from=quickjs-build /out/qjs /usr/local/bin/qjs
 RUN qjs --version
 
 WORKDIR /app
+COPY build-info.json /app/build-info.json
 
 # build-essential above lets native deps (better-sqlite3) compile from source when no
 # prebuilt binary exists yet for the current Node version.
