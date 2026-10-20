@@ -318,6 +318,42 @@ test('withPrivateCookies leaves args alone when no cookies are configured', () =
   assert.equal(withPrivateCookies(args).args, args);
 });
 
+test('site cookies keep only their own domains and are merged into the private copy', () => {
+  const { withPrivateCookies, COOKIES_FILE } = require('./ytdlp');
+  const { cookieArgs, writeSiteCookies, clearSiteCookies, siteCookiesStatus, filterSiteCookies } = require('./ytdlpCookies');
+  const exported = [
+    '# Netscape HTTP Cookie File',
+    '.reddit.com\tTRUE\t/\tTRUE\t0\treddit_session\tr1',
+    '#HttpOnly_.x.com\tTRUE\t/\tTRUE\t0\tauth_token\tx1',
+    '.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tyt-from-export',
+  ].join('\r\n');
+  fs.rmSync(COOKIES_FILE, { force: true });
+  try {
+    assert.deepEqual(writeSiteCookies('reddit', exported), { cookieCount: 1 });
+    assert.deepEqual(writeSiteCookies('twitter', exported), { cookieCount: 1 });
+    assert.deepEqual(siteCookiesStatus('reddit'), { configured: true, cookieCount: 1 });
+    assert.throws(() => filterSiteCookies('reddit', '.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tabc'), /No Reddit cookies/);
+
+    // Site files alone still enable --cookies, even with no shared cookies.txt saved.
+    assert.deepEqual(cookieArgs(), ['--cookies', COOKIES_FILE]);
+    fs.writeFileSync(COOKIES_FILE, '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tyt\n');
+    const { args: out, cleanup } = withPrivateCookies(['-J', '--cookies', COOKIES_FILE, 'https://x.com/a/status/1']);
+    const merged = fs.readFileSync(out[2], 'utf8');
+    cleanup();
+    assert.match(merged, /SID\tyt\n/);
+    assert.match(merged, /reddit_session\tr1/);
+    assert.match(merged, /#HttpOnly_\.x\.com\tTRUE\t\/\tTRUE\t0\tauth_token\tx1/);
+    assert.doesNotMatch(merged, /yt-from-export/);
+    assert.match(fs.readFileSync(COOKIES_FILE, 'utf8'), /^# Netscape HTTP Cookie File\n\.youtube\.com[^\n]*\n$/, 'shared file untouched');
+  } finally {
+    clearSiteCookies('reddit');
+    clearSiteCookies('twitter');
+    fs.rmSync(COOKIES_FILE, { force: true });
+  }
+  assert.deepEqual(cookieArgs(), []);
+  assert.deepEqual(siteCookiesStatus('twitter'), { configured: false, cookieCount: 0 });
+});
+
 test('sweepPrivateCookieDirs removes private cookie copies left behind by a crash', () => {
   const fs = require('fs');
   const path = require('path');

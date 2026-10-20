@@ -98,6 +98,9 @@ export const api = {
   getCookiesStatus: () => request('/settings/cookies'),
   saveCookies: (content) => request('/settings/cookies', { method: 'PUT', body: JSON.stringify({ content }) }),
   clearCookies: () => request('/settings/cookies', { method: 'DELETE' }),
+  getSiteCookies: () => request('/settings/cookies/sites'),
+  saveSiteCookies: (site, content) => request(`/settings/cookies/sites/${site}`, { method: 'PUT', body: JSON.stringify({ content }) }),
+  clearSiteCookies: (site) => request(`/settings/cookies/sites/${site}`, { method: 'DELETE' }),
 
   getYtdlpVersions: () => request('/settings/ytdlp/version'),
   updateYtdlp: (channel) => request('/settings/ytdlp/update', { method: 'POST', body: JSON.stringify({ channel }) }),

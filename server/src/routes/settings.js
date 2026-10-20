@@ -5,6 +5,7 @@ const { requireAuth } = require('../auth');
 const ytdlp = require('../services/ytdlp');
 const queue = require('../services/queue');
 const outputTemplate = require('../services/outputTemplate');
+const { SITE_COOKIES, writeSiteCookies, clearSiteCookies, siteCookiesStatus } = require('../services/ytdlpCookies');
 const { COOKIES_FILE } = ytdlp;
 
 const router = express.Router();
@@ -56,6 +57,44 @@ router.put('/cookies', (req, res) => {
 // an explicit "remove everything" action, unlike the PUT above.
 router.delete('/cookies', (req, res) => {
   if (fs.existsSync(COOKIES_FILE)) fs.unlinkSync(COOKIES_FILE);
+  res.json({ ok: true });
+});
+
+// Reddit and Twitter/X cookies live in their own files (see SITE_COOKIES) so uploading one
+// never replaces the shared cookies.txt above.
+function siteParam(req, res) {
+  const { site } = req.params;
+  if (!Object.prototype.hasOwnProperty.call(SITE_COOKIES, site)) {
+    res.status(404).json({ error: `Unknown cookie site: ${site}` });
+    return null;
+  }
+  return site;
+}
+
+router.get('/cookies/sites', (req, res) => {
+  res.json(Object.fromEntries(Object.entries(SITE_COOKIES).map(([site, spec]) => [
+    site, { label: spec.label, domains: spec.domains, ...siteCookiesStatus(site) },
+  ])));
+});
+
+router.put('/cookies/sites/:site', (req, res) => {
+  const site = siteParam(req, res);
+  if (!site) return;
+  const { content } = req.body || {};
+  if (!content || typeof content !== 'string' || !content.trim()) {
+    return res.status(400).json({ error: 'cookies.txt content is required' });
+  }
+  try {
+    res.json({ ok: true, ...writeSiteCookies(site, content) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.delete('/cookies/sites/:site', (req, res) => {
+  const site = siteParam(req, res);
+  if (!site) return;
+  clearSiteCookies(site);
   res.json({ ok: true });
 });
 

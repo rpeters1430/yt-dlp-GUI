@@ -3,12 +3,34 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { COOKIES_FILE } = require('./ytdlpPaths');
+const { COOKIES_FILE, CONFIG_DIR } = require('./ytdlpPaths');
+
+// Per-site cookie files, kept apart from the shared cookies.txt so exporting Reddit or X
+// cookies doesn't replace the YouTube session (and vice versa). Each is filtered to the
+// site's own domains on save, then merged into every yt-dlp run's private copy (see
+// withPrivateCookies) — yt-dlp only reads one --cookies file.
+const SITE_COOKIES = {
+  reddit: {
+    label: 'Reddit',
+    file: path.join(CONFIG_DIR, 'cookies-reddit.txt'),
+    domains: ['reddit.com', 'redd.it', 'redditmedia.com'],
+  },
+  twitter: {
+    label: 'Twitter / X',
+    file: path.join(CONFIG_DIR, 'cookies-twitter.txt'),
+    domains: ['x.com', 'twitter.com', 'twimg.com', 'pscp.tv', 'periscope.tv'],
+  },
+};
+
+function siteCookieFiles() {
+  return Object.values(SITE_COOKIES).map((s) => s.file).filter((f) => fs.existsSync(f));
+}
 
 // If a cookies.txt (Netscape format) has been saved via Settings, pass it to yt-dlp so
-// age-restricted/members-only/private videos work. Absent by default.
+// age-restricted/members-only/private videos work. Absent by default. The path is always the
+// shared file; withPrivateCookies swaps it for a merged copy that also holds the site files.
 function cookieArgs() {
-  return fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
+  return fs.existsSync(COOKIES_FILE) || siteCookieFiles().length ? ['--cookies', COOKIES_FILE] : [];
 }
 
 // The Twitch auth-token is stored as a real cookie in the shared cookies.txt rather than
@@ -97,6 +119,49 @@ function writeCookiesFilePreservingTwitchAuth(content) {
   if (existingToken) setTwitchAuthCookie(existingToken);
 }
 
+function domainMatches(domain, domains) {
+  const host = String(domain || '').replace(/^\./, '').toLowerCase();
+  return domains.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+// Keeps only the rows for this site's domains, so a "whole browser" export can't override
+// another site's cookies in the merged file. Throws when nothing usable is left.
+function filterSiteCookies(site, content) {
+  const spec = SITE_COOKIES[site];
+  if (!spec) throw new Error(`Unknown cookie site: ${site}`);
+  const rows = String(content || '').split('\n')
+    .map((line) => line.replace(/\r$/, ''))
+    .filter((line) => {
+      const c = parseCookieLine(line);
+      return c && domainMatches(c.domain, spec.domains);
+    });
+  if (rows.length === 0) {
+    throw new Error(`No ${spec.label} cookies found. Export a Netscape-format cookies.txt while signed in to ${spec.domains[0]}.`);
+  }
+  return { content: ['# Netscape HTTP Cookie File', ...rows].join('\n') + '\n', count: rows.length };
+}
+
+function writeSiteCookies(site, content) {
+  const filtered = filterSiteCookies(site, content);
+  const file = SITE_COOKIES[site].file;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, filtered.content, { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+  return { cookieCount: filtered.count };
+}
+
+function clearSiteCookies(site) {
+  const spec = SITE_COOKIES[site];
+  if (spec && fs.existsSync(spec.file)) fs.unlinkSync(spec.file);
+}
+
+function siteCookiesStatus(site) {
+  const spec = SITE_COOKIES[site];
+  if (!spec || !fs.existsSync(spec.file)) return { configured: false, cookieCount: 0 };
+  const count = fs.readFileSync(spec.file, 'utf8').split('\n').filter((line) => parseCookieLine(line)).length;
+  return { configured: count > 0, cookieCount: count };
+}
+
 function getTwitchAuthTokenMasked() {
   for (const line of readCookieLines()) {
     const c = parseCookieLine(line);
@@ -147,17 +212,34 @@ function sweepPrivateCookieDirs() {
 }
 sweepPrivateCookieDirs();
 
+// The shared file plus the per-site files, later files winning for the same cookie.
+function writeMergedCookies(tmpFile, siteFiles) {
+  if (siteFiles.length === 0) {
+    fs.copyFileSync(COOKIES_FILE, tmpFile);
+    return;
+  }
+  const sources = fs.existsSync(COOKIES_FILE) ? [COOKIES_FILE, ...siteFiles] : siteFiles;
+  const body = sources.map((f) => fs.readFileSync(f, 'utf8').replace(/\s*$/, '')).join('\n');
+  fs.writeFileSync(tmpFile, `# Netscape HTTP Cookie File\n${body}\n`, { mode: 0o600 });
+}
+
+function withoutCookiesArg(args, idx) {
+  return fs.existsSync(COOKIES_FILE) ? args : [...args.slice(0, idx), ...args.slice(idx + 2)];
+}
+
 function withPrivateCookies(args) {
   const idx = args.indexOf('--cookies');
-  if (idx === -1 || args[idx + 1] !== COOKIES_FILE || !fs.existsSync(COOKIES_FILE)) {
-    return { args, cleanup: () => {} };
+  if (idx === -1 || args[idx + 1] !== COOKIES_FILE) return { args, cleanup: () => {} };
+  const siteFiles = siteCookieFiles();
+  if (!fs.existsSync(COOKIES_FILE) && siteFiles.length === 0) {
+    return { args: withoutCookiesArg(args, idx), cleanup: () => {} };
   }
   let tmpDir;
   try {
     fs.mkdirSync(PRIVATE_COOKIES_ROOT, { recursive: true, mode: 0o700 });
     tmpDir = fs.mkdtempSync(path.join(PRIVATE_COOKIES_ROOT, 'job-'));
     const tmpFile = path.join(tmpDir, 'cookies.txt');
-    fs.copyFileSync(COOKIES_FILE, tmpFile);
+    writeMergedCookies(tmpFile, siteFiles);
     fs.chmodSync(tmpFile, 0o600);
     const copy = args.slice();
     copy[idx + 1] = tmpFile;
@@ -173,11 +255,12 @@ function withPrivateCookies(args) {
   } catch (e) {
     console.error(`[ytdlp] Couldn't create private cookies copy, using shared file: ${e.message}`);
     if (tmpDir) removePrivateCookieDir(tmpDir);
-    return { args, cleanup: () => {} };
+    return { args: withoutCookiesArg(args, idx), cleanup: () => {} };
   }
 }
 
 module.exports = {
+  SITE_COOKIES, writeSiteCookies, clearSiteCookies, siteCookiesStatus, filterSiteCookies,
   cookieArgs, setTwitchAuthCookie, hasTwitchAuthCookie, getTwitchAuthTokenRaw, getTwitchAuthTokenMasked,
   writeCookiesFilePreservingTwitchAuth, withPrivateCookies, sweepPrivateCookieDirs, PRIVATE_COOKIES_ROOT,
 };
