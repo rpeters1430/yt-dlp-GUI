@@ -1,0 +1,79 @@
+.release-notes-dialog {
+  width: min(42rem, calc(100vw - 2rem));
+  max-height: min(80vh, 52rem);
+  padding: 1.5rem;
+  border: 1px solid var(--border-color, #343a46);
+  border-radius: 1rem;
+  background: var(--surface-color, #171a21);
+  color: var(--text-color, #f4f5f7);
+  box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 45%);
+}
+
+.release-notes-dialog::backdrop {
+  background: rgb(0 0 0 / 68%);
+  backdrop-filter: blur(3px);
+}
+
+.release-notes-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.release-notes-eyebrow,
+.release-notes-revision {
+  margin: 0;
+  color: var(--muted-text-color, #a4a9b5);
+  font-size: 0.82rem;
+}
+
+.release-notes-header h2 {
+  margin: 0.25rem 0 0;
+  font-size: 1.45rem;
+}
+
+.release-notes-close {
+  flex: 0 0 auto;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--border-color, #343a46);
+  border-radius: 0.55rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.release-notes-content {
+  overflow: auto;
+  max-height: min(58vh, 38rem);
+  line-height: 1.6;
+}
+
+.release-notes-content h1,
+.release-notes-content h2,
+.release-notes-content h3 {
+  margin: 1.15rem 0 0.5rem;
+}
+
+.release-notes-content p,
+.release-notes-content ul,
+.release-notes-content ol {
+  margin: 0.55rem 0;
+}
+
+.release-notes-content a {
+  color: var(--link-color, #8db7ff);
+}
+
+.release-notes-content pre {
+  overflow: auto;
+  padding: 0.8rem;
+  border-radius: 0.55rem;
+  background: rgb(0 0 0 / 25%);
+}
+
+.release-notes-revision {
+  margin-top: 1.2rem;
+  overflow-wrap: anywhere;
+}

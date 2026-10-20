@@ -7,13 +7,15 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint . --max-warnings 0",
-    "test": "node --test src/outputTemplatePreview.test.js src/playlistLinks.test.js src/pages/linkgrabber/sites.test.js"
+    "test": "node --test src/outputTemplatePreview.test.js src/playlistLinks.test.js src/pages/linkgrabber/sites.test.js src/releaseNotes.test.js src/components/ReleaseNotesDialog.test.js"
   },
   "dependencies": {
     "lucide-react": "^1.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.0.0",
+    "remark-gfm": "^4.0.1",
     "socket.io-client": "^4.7.5"
   },
   "devDependencies": {

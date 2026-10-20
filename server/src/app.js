@@ -1,9 +1,11 @@
 const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const session = require('express-session');
 const SqliteStoreFactory = require('connect-sqlite3');
 
 const db = require('./db');
+const { requireAuth } = require('./auth');
 
 const sqliteSessionDb = {
   exec(sql, callback) {
@@ -83,7 +85,7 @@ const SqliteStore = SqliteStoreFactory(session);
 // Builds the Express app and its session middleware without starting anything, so the real
 // wiring (session, auth, every router) can be exercised by tests. index.js adds the server,
 // socket.io and the background jobs.
-function createApp({ watchRepository, watchService, checkAllWatches }) {
+function createApp({ watchRepository, watchService, checkAllWatches, buildInfoPath = path.join(__dirname, '..', '..', 'build-info.json') }) {
   const app = express();
 
   // Readiness includes database access and does not create a login session.
@@ -135,6 +137,20 @@ function createApp({ watchRepository, watchService, checkAllWatches }) {
   app.use('/api/linkgrabber', express.json({ limit: '10mb' }));
   app.use(express.json());
   app.use(sessionMiddleware);
+
+  app.get('/api/release-notes', requireAuth, (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      const buildInfo = JSON.parse(fs.readFileSync(buildInfoPath, 'utf8'));
+      res.json({
+        version: typeof buildInfo.version === 'string' ? buildInfo.version : '',
+        revision: typeof buildInfo.revision === 'string' ? buildInfo.revision : '',
+        notes: typeof buildInfo.notes === 'string' ? buildInfo.notes : '',
+      });
+    } catch {
+      res.json({ version: '', revision: '', notes: '' });
+    }
+  });
 
   app.use('/api/auth', authRoutes);
   app.use('/api/downloads', downloadsRoutes);
