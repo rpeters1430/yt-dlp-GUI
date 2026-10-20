@@ -460,6 +460,7 @@ function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, play
       try {
         resolve(JSON.parse(stdout));
       } catch (e) {
+        console.error(`[ytdlp:info] Unparseable JSON (${url}): ${e.message}; stdout starts: ${stdout.slice(0, 200)}`);
         reject(new Error('Failed to parse yt-dlp JSON output: ' + e.message));
       }
     });
