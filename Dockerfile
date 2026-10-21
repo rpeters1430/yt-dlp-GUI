@@ -37,10 +37,10 @@ RUN set -eux; \
 FROM node:24-bookworm-slim@sha256:91acba91b842bec0bf7ea6f5e09c644c7ccad72c4996ed9616d861d1c7cd60d4
 
 # Immutable image baselines. Update release, asset version and checksums together.
-ARG FFMPEG_RELEASE=autobuild-2026-10-06-19-26
-ARG FFMPEG_VERSION=N-127226-gdc234edb2c
-ARG FFMPEG_SHA256_AMD64=43e8dfcfbad7ec3a1e01681face41e5afaffe50edfdcf7d7daf0e749b1d10c20
-ARG FFMPEG_SHA256_ARM64=7ad92dce89cd7d5813ecae07bb6d9400c586d51c3715c2930bae0e9a6b6a78bc
+ARG FFMPEG_RELEASE=autobuild-2026-10-20-18-29
+ARG FFMPEG_VERSION=N-127798-g1c767fe664
+ARG FFMPEG_SHA256_AMD64=1bc9a1f44b7680d0d54ebd917ce521aa172f52d8b8b781936f771184a5318049
+ARG FFMPEG_SHA256_ARM64=427e8517b6de6251e21d7bdca75d9c799e7125e9722d0fadd4a73d474320f1a1
 COPY requirements-docker.txt /tmp/requirements-docker.txt
 
 # CI sets this to the Debian security archive's publish date so the cached
