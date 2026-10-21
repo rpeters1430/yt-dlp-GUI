@@ -1,3 +1,11 @@
+# --- Resolve nightly yt-dlp and the latest FFmpeg autobuild ---
+# CI resolves once and passes the same manifest to both architectures. Local
+# builds resolve here; use --no-cache-filter tool-versions to check again.
+FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS tool-versions
+ARG TOOL_MANIFEST=
+COPY scripts/ci/resolve-tools.mjs /resolve-tools.mjs
+RUN node /resolve-tools.mjs --manifest-base64 "$TOOL_MANIFEST" --output /out
+
 # --- Build client ---
 FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS client-build
 WORKDIR /app/client
@@ -36,12 +44,9 @@ RUN set -eux; \
 # --- Final image ---
 FROM node:24-bookworm-slim@sha256:91acba91b842bec0bf7ea6f5e09c644c7ccad72c4996ed9616d861d1c7cd60d4
 
-# Immutable image baselines. Update release, asset version and checksums together.
-ARG FFMPEG_RELEASE=autobuild-2026-10-06-19-26
-ARG FFMPEG_VERSION=N-127226-gdc234edb2c
-ARG FFMPEG_SHA256_AMD64=43e8dfcfbad7ec3a1e01681face41e5afaffe50edfdcf7d7daf0e749b1d10c20
-ARG FFMPEG_SHA256_ARM64=7ad92dce89cd7d5813ecae07bb6d9400c586d51c3715c2930bae0e9a6b6a78bc
-COPY requirements-docker.txt /tmp/requirements-docker.txt
+# The resolved source/archive hashes are also retained for diagnostics.
+COPY --from=tool-versions /out/requirements-docker.txt /tmp/requirements-docker.txt
+COPY --from=tool-versions /out/tool-versions.json /usr/local/share/yt-dlp-gui/tool-versions.json
 
 # CI sets this to the Debian security archive's publish date so the cached
 # `apt-get upgrade` layer is rebuilt whenever new security fixes ship.
@@ -60,11 +65,13 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 # Install a checksum-verified static FFmpeg build (amd64 / arm64).
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in \
-      amd64) FFMPEG_ARCH=linux64; FFMPEG_SHA256="$FFMPEG_SHA256_AMD64" ;; \
-      arm64) FFMPEG_ARCH=linuxarm64; FFMPEG_SHA256="$FFMPEG_SHA256_ARM64" ;; \
+      amd64) FFMPEG_ARCH=amd64 ;; \
+      arm64) FFMPEG_ARCH=arm64 ;; \
       *) echo "Unsupported architecture for ffmpeg" >&2; exit 1 ;; \
     esac; \
-    curl --retry 3 -fsSL -o /tmp/ffmpeg.tar.xz "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/${FFMPEG_RELEASE}/ffmpeg-${FFMPEG_VERSION}-${FFMPEG_ARCH}-gpl.tar.xz"; \
+    FFMPEG_URL=$(python3 -c 'import json,sys; print(json.load(open("/usr/local/share/yt-dlp-gui/tool-versions.json"))["ffmpeg"][sys.argv[1]]["url"])' "$FFMPEG_ARCH"); \
+    FFMPEG_SHA256=$(python3 -c 'import json,sys; print(json.load(open("/usr/local/share/yt-dlp-gui/tool-versions.json"))["ffmpeg"][sys.argv[1]]["sha256"])' "$FFMPEG_ARCH"); \
+    curl --retry 3 -fsSL -o /tmp/ffmpeg.tar.xz "$FFMPEG_URL"; \
     echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.xz" | sha256sum -c -; \
     mkdir -p /tmp/ffmpeg-extracted; \
     tar -xf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg-extracted; \

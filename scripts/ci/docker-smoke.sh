@@ -17,6 +17,22 @@ docker run --rm --platform "$platform" --entrypoint sh "$image" -ec '
   qjs --version
   node -e "require(\"/app/server/node_modules/better-sqlite3\")(\":memory:\").prepare(\"SELECT 1\").get()"
 '
+docker run --rm -i --platform "$platform" --entrypoint python3 "$image" - <<'PY'
+import json
+import subprocess
+import yt_dlp.version
+
+with open('/usr/local/share/yt-dlp-gui/tool-versions.json') as source:
+    manifest = json.load(source)
+assert yt_dlp.version.__version__ == manifest['ytdlp']['release'], 'yt-dlp differs from resolved nightly'
+for tool in ('ffmpeg', 'ffprobe'):
+    version = subprocess.check_output([tool, '-version'], text=True).splitlines()[0]
+    actual = version.split()[2]
+    expected = manifest['ffmpeg']['version']
+    # Upstream appends a build date (for example -20261020) to the git version.
+    assert actual == expected or actual.startswith(expected + '-'), version
+print('Resolved tools verified:', json.dumps(manifest))
+PY
 docker run -d --platform "$platform" --name "$name" \
   -e ADMIN_USER=ci -e ADMIN_PASSWORD=ci-smoke-password \
   --mount type=volume,destination=/config \
