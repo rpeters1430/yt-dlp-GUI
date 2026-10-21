@@ -44,6 +44,28 @@
 > **Current Release:** `v1.0.0` (Active Production & Feature Development)  
 > Container image builds are automatically published to GitHub Container Registry (`ghcr.io/rpeters1430/yt-dlp-gui:latest`) on every merge to `main`.
 
+Each GitHub Actions image build checks the official upstream releases for the
+latest **yt-dlp nightly** and **FFmpeg autobuild**. It resolves both tools once,
+uses the same versions for amd64 and arm64, and verifies their SHA256 hashes.
+New versions invalidate the relevant Docker layers automatically. Runtime smoke
+tests and vulnerability scans must pass before the image is published.
+
+The Actions summary records the selected releases. Their URLs and checksums are
+also saved inside the image at
+`/usr/local/share/yt-dlp-gui/tool-versions.json`. Existing tools stored in your
+`/config` volume can still take precedence according to the app's settings.
+
+For a local build that checks upstream again even when Docker layers are cached:
+
+```bash
+docker buildx build --no-cache-filter tool-versions --load -t yt-dlp-gui:local .
+# Or refresh all layers when building with Compose:
+docker compose build --no-cache
+```
+
+This checks for tool updates whenever an image is built; it does not schedule
+additional image builds. The app's existing overnight tool updates still apply.
+
 ### Component Status Matrix
 
 | Module | Status | Highlights |
