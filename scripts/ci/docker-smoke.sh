@@ -27,7 +27,10 @@ with open('/usr/local/share/yt-dlp-gui/tool-versions.json') as source:
 assert yt_dlp.version.__version__ == manifest['ytdlp']['release'], 'yt-dlp differs from resolved nightly'
 for tool in ('ffmpeg', 'ffprobe'):
     version = subprocess.check_output([tool, '-version'], text=True).splitlines()[0]
-    assert version.startswith(f"{tool} version {manifest['ffmpeg']['version']} "), version
+    actual = version.split()[2]
+    expected = manifest['ffmpeg']['version']
+    # Upstream appends a build date (for example -20261020) to the git version.
+    assert actual == expected or actual.startswith(expected + '-'), version
 print('Resolved tools verified:', json.dumps(manifest))
 PY
 docker run -d --platform "$platform" --name "$name" \
