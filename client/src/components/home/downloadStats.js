@@ -2,7 +2,7 @@ const SMOOTHING_TIME_CONSTANT_MS = 3000;
 
 function parseSpeed(speed) {
   if (typeof speed !== 'string') return null;
-  const match = speed.trim().match(/^(\\d+(?:\\.\\d+)?)\\s*(B|kB|MB|GB|TB|KiB|MiB|GiB|TiB)\\/s$/i);
+  const match = speed.trim().match(/^(\d+(?:\.\d+)?)\s*(B|kB|MB|GB|TB|KiB|MiB|GiB|TiB)\/s$/i);
   if (!match) return null;
   const value = Number(match[1]);
   const unit = match[2];
@@ -15,7 +15,7 @@ function parseSpeed(speed) {
 
 function parseEta(eta) {
   if (typeof eta !== 'string') return null;
-  const match = eta.trim().match(/^(\\d+):(\\d{1,2})(?::(\\d{1,2}))?$/);
+  const match = eta.trim().match(/^(\d+):(\d{1,2})(?::(\d{1,2}))?$/);
   if (!match) return null;
   const first = Number(match[1]);
   const second = Number(match[2]);
