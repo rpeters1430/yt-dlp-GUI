@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Art from '../Art.jsx';
 import JobLog from '../JobLog.jsx';
 import ConfirmDialog from '../ConfirmDialog.jsx';
 import { api } from '../../api.js';
 import { formatDuration, parseUtc, siteName } from '../../format.js';
 import { useNow } from '../../hooks/useNow.js';
+import { smoothDownloadStats } from './downloadStats.js';
 
 export function jobOptions(job) {
   try {
@@ -47,11 +48,30 @@ export function useLiveElapsed(job) {
   return live && since ? formatDuration((now - since.getTime()) / 1000) : null;
 }
 
+function useSmoothedStats(job) {
+  const previous = useRef(null);
+  const [stats, setStats] = useState(() => ({
+    jobId: job?.id,
+    speed: job?.speed || null,
+    eta: job?.eta || null,
+  }));
+
+  useEffect(() => {
+    const next = smoothDownloadStats(previous.current, job);
+    previous.current = next;
+    setStats(next);
+  }, [job?.id, job?.percent, job?.speed, job?.eta]);
+
+  // Avoid showing the prior download's stats for the one render before the effect runs.
+  return stats.jobId === job?.id ? stats : { speed: job?.speed || null, eta: job?.eta || null };
+}
+
 // The big "Now downloading" panel for the first running download.
 export default function NowDownloading({ job, onRemoved }) {
   const [showLog, setShowLog] = useState(false);
   const [confirm, setConfirm] = useState(null);
   const elapsed = useLiveElapsed(job || {});
+  const smoothedStats = useSmoothedStats(job);
 
   if (!job) {
     return (
@@ -72,7 +92,7 @@ export default function NowDownloading({ job, onRemoved }) {
   const meta = [job.extractor ? siteName(job.extractor) : null, jobQualityLine(job)].filter(Boolean).join(' · ');
   const stats = live
     ? [job.stage, job.speed].filter(Boolean).join(' · ')
-    : [job.speed, job.eta ? `ETA ${job.eta}` : null, job.stage].filter(Boolean).join(' · ');
+    : [job.stage, smoothedStats.speed, smoothedStats.eta ? `ETA ${smoothedStats.eta}` : null].filter(Boolean).join(' · ');
 
   return (
     <section className="hero">
