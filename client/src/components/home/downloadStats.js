@@ -6,9 +6,8 @@ function parseSpeed(speed) {
   if (!match) return null;
   const value = Number(match[1]);
   const unit = match[2];
-  const power = ['B', 'kB', 'MB', 'GB', 'TB', 'KiB', 'MiB', 'GiB', 'TiB']
-    .findIndex((candidate) => candidate.toLowerCase() === unit.toLowerCase());
-  if (power < 0) return null;
+  const power = { b: 0, kb: 1, mb: 2, gb: 3, tb: 4, kib: 1, mib: 2, gib: 3, tib: 4 }[unit.toLowerCase()];
+  if (power == null) return null;
   const base = unit.toLowerCase().includes('i') ? 1024 : 1000;
   return value * (base ** power);
 }
