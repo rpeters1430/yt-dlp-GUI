@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint . --max-warnings 0",
-    "test": "node --test src/outputTemplatePreview.test.js src/playlistLinks.test.js src/pages/linkgrabber/sites.test.js src/releaseNotes.test.js src/components/ReleaseNotesDialog.test.js"
+    "test": "node --test src/outputTemplatePreview.test.js src/playlistLinks.test.js src/pages/linkgrabber/sites.test.js src/releaseNotes.test.js src/components/ReleaseNotesDialog.test.js src/components/home/downloadStats.test.js"
   },
   "dependencies": {
     "lucide-react": "^1.0.0",
