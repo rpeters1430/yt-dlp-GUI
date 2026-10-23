@@ -3,11 +3,13 @@ const ytdlp = require('./ytdlp');
 const YTDLP_UPDATE_CRON = process.env.YTDLP_UPDATE_CRON || '0 3 * * *';
 const FFMPEG_UPDATE_CRON = process.env.FFMPEG_UPDATE_CRON || '30 3 * * *';
 const QUICKJS_UPDATE_CRON = process.env.QUICKJS_UPDATE_CRON || '45 3 * * *';
+const DENO_UPDATE_CRON = process.env.DENO_UPDATE_CRON || '50 3 * * *';
 const STARTUP_DELAY_MS = Math.max(0, parseInt(process.env.DEPENDENCY_UPDATE_STARTUP_DELAY_MS || '30000', 10));
 
 let ytdlpUpdateRunning = false;
 let ffmpegUpdateRunning = false;
 let quickjsUpdateRunning = false;
+let denoUpdateRunning = false;
 
 function getDb() {
   return require('../db');
@@ -91,6 +93,26 @@ async function updateQuickjsNightly(deps = {}) {
   }
 }
 
+async function updateDenoNightly(deps = {}) {
+  const ytdlpSvc = deps.ytdlp || ytdlp;
+  if (downloadsAreActive(deps)) {
+    console.log('[dependency-updater] Skipping Deno nightly check while downloads are active');
+    return { skipped: 'active-downloads' };
+  }
+  if (denoUpdateRunning) return { skipped: 'already-running' };
+
+  denoUpdateRunning = true;
+  try {
+    const result = await ytdlpSvc.updateDenoIfAvailable();
+    if (result.skipped !== 'not-installed') {
+      console.log(`[dependency-updater] Deno nightly check complete (${result.updated ? 'updated' : 'already current'})`);
+    }
+    return result;
+  } finally {
+    denoUpdateRunning = false;
+  }
+}
+
 function logFailure(name, error) {
   console.error(`[dependency-updater] ${name} failed: ${error.message}`);
 }
@@ -109,6 +131,10 @@ function start() {
     updateQuickjsNightly().catch((error) => logFailure('QuickJS nightly update', error));
   }, cronOptions());
 
+  cron.schedule(DENO_UPDATE_CRON, () => {
+    updateDenoNightly().catch((error) => logFailure('Deno nightly update', error));
+  }, cronOptions());
+
   // A rebuilt/recreated container starts with the image's stable pip package. Re-apply a
   // persisted nightly preference shortly after boot so an app update cannot silently switch
   // the running yt-dlp back to stable until the next 03:00 job.
@@ -117,7 +143,7 @@ function start() {
   }, STARTUP_DELAY_MS);
   if (startupTimer.unref) startupTimer.unref();
 
-  console.log(`[dependency-updater] Scheduled yt-dlp (${YTDLP_UPDATE_CRON}), FFmpeg (${FFMPEG_UPDATE_CRON}), and QuickJS (${QUICKJS_UPDATE_CRON}) checks`);
+  console.log(`[dependency-updater] Scheduled yt-dlp (${YTDLP_UPDATE_CRON}), FFmpeg (${FFMPEG_UPDATE_CRON}), QuickJS (${QUICKJS_UPDATE_CRON}), and Deno (${DENO_UPDATE_CRON}) checks`);
 }
 
-module.exports = { start, updateNightlyYtdlp, updateFfmpegNightly, updateQuickjsNightly, selectedYtdlpChannel };
+module.exports = { start, updateNightlyYtdlp, updateFfmpegNightly, updateQuickjsNightly, updateDenoNightly, selectedYtdlpChannel };

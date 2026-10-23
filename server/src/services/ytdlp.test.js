@@ -101,6 +101,23 @@ test('dependencyUpdater exports updateQuickjsNightly function', () => {
   assert.equal(typeof updater.updateQuickjsNightly, 'function');
 });
 
+test('parseDenoVersion reads the version from deno --version output', () => {
+  const { parseDenoVersion } = require('./ytdlpTools');
+  assert.equal(parseDenoVersion('deno 2.5.4 (stable, release, x86_64-unknown-linux-gnu)\nv8 14.0\ntypescript 5.9.2\n'), '2.5.4');
+  assert.equal(parseDenoVersion(null), null);
+  assert.equal(parseDenoVersion('qjs 0.17.0'), null);
+});
+
+test('updateDenoNightly delegates to updateDenoIfAvailable and skips during downloads', async () => {
+  const { updateDenoNightly } = require('./dependencyUpdater');
+  let calls = 0;
+  const ytdlp = { updateDenoIfAvailable: async () => { calls += 1; return { updated: false, skipped: 'not-installed' }; } };
+  assert.deepEqual(await updateDenoNightly({ ytdlp, getActiveCount: () => 1 }), { skipped: 'active-downloads' });
+  assert.equal(calls, 0);
+  assert.equal((await updateDenoNightly({ ytdlp, getActiveCount: () => 0 })).skipped, 'not-installed');
+  assert.equal(calls, 1);
+});
+
 test('isYouTube correctly identifies YouTube and non-YouTube sources', () => {
   const { isYouTube } = require('./ytdlp');
   assert.equal(isYouTube('https://www.youtube.com/watch?v=dQw4w9WgXcQ'), true);

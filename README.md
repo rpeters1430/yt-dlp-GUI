@@ -403,6 +403,7 @@ All configuration variables can be passed via `.env` or the `environment:` block
 | `YTDLP_UPDATE_CRON` | `0 3 * * *` | When to check for a new yt-dlp build (only when the saved channel is Nightly). |
 | `FFMPEG_UPDATE_CRON` | `30 3 * * *` | When to check for a new FFmpeg build. |
 | `QUICKJS_UPDATE_CRON` | `45 3 * * *` | When to check for a new QuickJS-ng release. |
+| `DENO_UPDATE_CRON` | `50 3 * * *` | When to check for a new Deno release (only if Deno is installed). |
 | `DEPENDENCY_UPDATE_STARTUP_DELAY_MS` | `30000` | Delay before re-applying a saved Nightly yt-dlp channel after startup. |
 
 ### Update Schedules (Cron)
@@ -552,6 +553,7 @@ All times are server-local (set `TZ`).
 | yt-dlp nightly check | 03:00 (`YTDLP_UPDATE_CRON`, Nightly channel only) |
 | FFmpeg check | 03:30 (`FFMPEG_UPDATE_CRON`) — downloaded only when the upstream build changes |
 | QuickJS-ng check | 03:45 (`QUICKJS_UPDATE_CRON`) |
+| Deno check | 03:50 (`DENO_UPDATE_CRON`, only once Deno is installed) |
 
 Dependency updates are skipped while downloads are active, so they never interrupt a running job.
 
@@ -667,7 +669,7 @@ Verify that `COOKIE_SECURE=1` is only enabled when accessing over HTTPS, and tha
 - **Backend** — Node.js + Express, `better-sqlite3` for storage, `socket.io` for live progress, and `node-cron` for scheduling. yt-dlp is invoked via `child_process.spawn` rather than a library binding, so any yt-dlp version and any site it supports works without code changes.
 - **Frontend** — React (Vite), built and served as static files by the Express server: one container, one port.
 - **Library playback** — files are streamed from disk (with HTTP range requests, so seeking works) behind the same login as the rest of the app. Files are only served by download ID, from the path yt-dlp reported when the download finished — never from a path the browser supplies.
-- **YouTube JS runtime**: since yt-dlp 2025.11.12, full YouTube support requires an external JavaScript runtime to solve YouTube's JS challenges. The image builds [QuickJS-ng](https://github.com/quickjs-ng/quickjs) (`qjs`) from a pinned release for both amd64 and arm64. The app runs yt-dlp with `--no-js-runtimes` plus a `--js-runtimes <name>:<path>` for every runtime it finds: Deno (if a `deno` binary is in `/config/bin` or on `PATH`), the Node.js the app itself runs on, and QuickJS-ng. yt-dlp then picks its preferred one (Deno, then Node, then QuickJS). Set `JS_RUNTIMES` to narrow the list. Which runtimes yt-dlp actually detected is logged at startup (`[ytdlp:js] ...`) and shown under **Settings → Tools**. Outside Docker, put `qjs` on your `PATH` yourself.
+- **YouTube JS runtime**: since yt-dlp 2025.11.12, full YouTube support requires an external JavaScript runtime to solve YouTube's JS challenges. The image builds [QuickJS-ng](https://github.com/quickjs-ng/quickjs) (`qjs`) from a pinned release for both amd64 and arm64. The app runs yt-dlp with `--no-js-runtimes` plus a `--js-runtimes <name>:<path>` for every runtime it finds: Deno (if a `deno` binary is in `/config/bin` or on `PATH`; **Settings → Tools → Install Deno** puts the latest release in `/config/bin`), the Node.js the app itself runs on, and QuickJS-ng. yt-dlp then picks its preferred one (Deno, then Node, then QuickJS). Set `JS_RUNTIMES` to narrow the list. Which runtimes yt-dlp actually detected is logged at startup (`[ytdlp:js] ...`) and shown under **Settings → Tools**. Outside Docker, put `qjs` on your `PATH` yourself.
 - **Watches** — every video a Watch discovers is a row in a ledger (`watch_items`) with its filter decision and download state, and every check is a row in `watch_runs`; download jobs link back to their item, so a failure is retried rather than forgotten. The first check on a new Watch only records existing videos; later checks auto-queue anything new. **Reset history** forgets everything except completed downloads and re-baselines on the next check.
 - **Auto-delete** — evaluates only Watch-downloaded videos; see [Jellyfin integration](#jellyfin-integration) for how "watched" is determined.
 - **Jellyfin playlist sync** — each Watch's playlist is created on first sync and its Jellyfin item ID is cached on the Watch, so renaming it doesn't create a duplicate.

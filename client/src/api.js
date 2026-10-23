@@ -107,6 +107,7 @@ export const api = {
   updateYtdlp: (channel) => request('/settings/ytdlp/update', { method: 'POST', body: JSON.stringify({ channel }) }),
   updateFfmpeg: () => request('/settings/ffmpeg/update', { method: 'POST' }),
   updateQuickjs: () => request('/settings/quickjs/update', { method: 'POST' }),
+  updateDeno: () => request('/settings/deno/update', { method: 'POST' }),
 
   // Auto-delete / Jellyfin cleanup
   getCleanupSettings: () => request('/cleanup/settings'),

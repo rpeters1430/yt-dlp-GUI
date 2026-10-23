@@ -148,6 +148,19 @@ router.post('/quickjs/update', async (req, res) => {
   }
 });
 
+// Installs Deno if it's missing, otherwise replaces it with the latest release.
+router.post('/deno/update', async (req, res) => {
+  if (queue.getActiveCount && queue.getActiveCount() > 0) {
+    return res.status(409).json({ error: 'Cannot update Deno while downloads are active. Please wait for them to complete.' });
+  }
+  try {
+    const versions = await ytdlp.updateDeno();
+    res.json({ ok: true, ...versions });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // The effective global filename template plus the built-in presets the Settings page offers.
 router.get('/output-template', (req, res) => {
   res.json({

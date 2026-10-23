@@ -13,7 +13,7 @@ const SECTIONS = [
   { id: 'downloads', label: 'Downloads', description: 'Defaults used when you analyze a link. You can still change them per download.' },
   { id: 'naming', label: 'File naming', description: 'Where downloads are saved and how files are named.' },
   { id: 'cookies', label: 'Cookies', description: 'Sign-in cookies for members-only, age-restricted or bot-checked videos.' },
-  { id: 'tools', label: 'Tools', description: 'yt-dlp, FFmpeg and QuickJS versions and updates.' },
+  { id: 'tools', label: 'Tools', description: 'yt-dlp, FFmpeg, QuickJS and Deno versions and updates.' },
   { id: 'media', label: 'Media servers', description: 'Jellyfin and Plex playlists, library scans and .nfo metadata.' },
   { id: 'autodelete', label: 'Auto-delete', description: 'Remove downloads once they have been watched.' },
   { id: 'notifications', label: 'Notifications', description: 'Get told when downloads finish or fail.' },
@@ -58,6 +58,10 @@ export default function Settings({ username, onLogout }) {
   const [quickjsBusy, setQuickjsBusy] = useState(false);
   const [quickjsMessage, setQuickjsMessage] = useState('');
   const [quickjsError, setQuickjsError] = useState('');
+
+  const [denoBusy, setDenoBusy] = useState(false);
+  const [denoMessage, setDenoMessage] = useState('');
+  const [denoError, setDenoError] = useState('');
 
   const [cleanupSettings, setCleanupSettings] = useState(null);
   const [jellyfinApiKeyInput, setJellyfinApiKeyInput] = useState('');
@@ -279,6 +283,21 @@ export default function Settings({ username, onLogout }) {
       setQuickjsError(err.message);
     } finally {
       setQuickjsBusy(false);
+    }
+  }
+
+  async function handleUpdateDeno() {
+    setDenoMessage('');
+    setDenoError('');
+    setDenoBusy(true);
+    try {
+      const result = await api.updateDeno();
+      setVersions(result);
+      setDenoMessage(`Deno is now updated (${result.deno || 'latest'}).`);
+    } catch (err) {
+      setDenoError(err.message);
+    } finally {
+      setDenoBusy(false);
     }
   }
 
@@ -683,6 +702,28 @@ export default function Settings({ username, onLogout }) {
             </div>
             {quickjsMessage && <div className="alert alert-success" style={{ marginTop: '10px' }}><CheckCircle2 size={15} />{quickjsMessage}</div>}
             {quickjsError && <div className="alert alert-error" style={{ marginTop: '10px' }}><AlertCircle size={15} />{quickjsError}</div>}
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+            <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>Deno</h3>
+            <p className="panel-description" style={{ marginBottom: '10px' }}>
+              yt-dlp's preferred JavaScript runtime for YouTube challenges. It isn't bundled; installing
+              downloads the latest release from{' '}
+              <a href="https://github.com/denoland/deno/releases" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>
+                denoland/deno
+              </a>{' '}
+              into the config folder, so it survives container updates. Once installed, the app checks
+              for a newer release nightly at 3:50 AM.
+            </p>
+            <div className="options-row" style={{ marginTop: 0 }}>
+              <button type="button" onClick={handleUpdateDeno} disabled={denoBusy || !versions}>
+                {denoBusy
+                  ? (versions && versions.deno ? 'Updating Deno…' : 'Installing Deno…')
+                  : (versions && versions.deno ? 'Update Deno' : 'Install Deno')}
+              </button>
+            </div>
+            {denoMessage && <div className="alert alert-success" style={{ marginTop: '10px' }}><CheckCircle2 size={15} />{denoMessage}</div>}
+            {denoError && <div className="alert alert-error" style={{ marginTop: '10px' }}><AlertCircle size={15} />{denoError}</div>}
           </div>
         </div>
       </section>

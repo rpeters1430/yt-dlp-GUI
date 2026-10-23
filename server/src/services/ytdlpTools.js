@@ -1,4 +1,4 @@
-// Version reporting and in-place installs/updates of yt-dlp, FFmpeg and QuickJS-ng.
+// Version reporting and in-place installs/updates of yt-dlp, FFmpeg, QuickJS-ng and Deno.
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -586,6 +586,145 @@ async function updateQuickjsIfAvailable() {
   return updateQuickjs(latestVersion);
 }
 
+// Deno publishes a zipped `deno` binary per target triple on each GitHub release, each with a
+// `<asset>.sha256sum` beside it. Linux builds are glibc, which matches the Debian-based image.
+function getDenoAssetName() {
+  const platform = process.platform;
+  const arch = process.arch;
+
+  if (platform === 'linux') {
+    if (arch === 'x64') return 'deno-x86_64-unknown-linux-gnu.zip';
+    if (arch === 'arm64') return 'deno-aarch64-unknown-linux-gnu.zip';
+  } else if (platform === 'win32') {
+    if (arch === 'x64') return 'deno-x86_64-pc-windows-msvc.zip';
+  } else if (platform === 'darwin') {
+    if (arch === 'x64') return 'deno-x86_64-apple-darwin.zip';
+    if (arch === 'arm64') return 'deno-aarch64-apple-darwin.zip';
+  }
+
+  throw new Error(`Deno builds are not available for platform '${platform}' (${arch}).`);
+}
+
+const DENO_RELEASES_URL = 'https://github.com/denoland/deno/releases';
+
+let isUpdatingDeno = false;
+
+// `deno --version` starts with e.g. "deno 2.5.4 (stable, release, ...)"; returns "2.5.4",
+// or null when Deno isn't installed.
+function parseDenoVersion(output) {
+  const match = output && output.match(/^deno\s+(\S+)/m);
+  return match ? match[1] : null;
+}
+
+async function getInstalledDenoVersion() {
+  const denoBin = findOnPath('deno');
+  return denoBin ? parseDenoVersion(await runCommand(denoBin, ['--version'])) : null;
+}
+
+// Same redirect trick as QuickJS-ng: /releases/latest lands on /releases/tag/vX.Y.Z.
+async function getLatestDenoVersion() {
+  const res = await fetch(`${DENO_RELEASES_URL}/latest`, {
+    method: 'HEAD',
+    headers: { 'User-Agent': 'yt-dlp-gui' },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to check Deno release (${res.status} ${res.statusText})`);
+  }
+  const match = res.url.match(/\/releases\/tag\/v?([^/?#]+)$/);
+  if (!match) {
+    throw new Error(`Could not determine the latest Deno version from ${res.url}`);
+  }
+  return match[1];
+}
+
+// Installs Deno into CUSTOM_BIN_DIR, or replaces the copy there. findOnPath checks that dir
+// first, so the installed build takes precedence over any other `deno` on PATH.
+async function updateDeno(knownVersion = null) {
+  if (isUpdatingDeno) {
+    throw new Error('Deno update is already in progress');
+  }
+
+  isUpdatingDeno = true;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-deno-'));
+
+  try {
+    const version = knownVersion || await getLatestDenoVersion();
+    const assetName = getDenoAssetName();
+    const downloadUrl = `${DENO_RELEASES_URL}/download/v${version}/${assetName}`;
+    const res = await fetch(downloadUrl, {
+      headers: { 'User-Agent': 'yt-dlp-gui' },
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to download Deno build (${res.status} ${res.statusText})`);
+    }
+
+    const archivePath = path.join(tempDir, assetName);
+    await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(archivePath));
+
+    const shaRes = await fetch(`${downloadUrl}.sha256sum`, {
+      headers: { 'User-Agent': 'yt-dlp-gui' },
+    });
+    if (!shaRes.ok) {
+      throw new Error(`Failed to download Deno checksum (${shaRes.status} ${shaRes.statusText})`);
+    }
+    // Linux/macOS sums are `sha256sum` output; Windows ones are a Get-FileHash table, so fall
+    // back to the first 64-hex token.
+    const shaText = await shaRes.text();
+    const expected = parseSha256ForAsset(shaText, assetName) || (shaText.match(/\b([a-fA-F0-9]{64})\b/)?.[1]?.toLowerCase() ?? null);
+    if (!expected) {
+      throw new Error(`Could not find a SHA-256 checksum for ${assetName}`);
+    }
+    const actual = await computeFileSha256(archivePath);
+    if (actual !== expected) {
+      throw new Error(`Deno SHA-256 mismatch for ${assetName}: expected ${expected}, got ${actual}`);
+    }
+
+    const extractDir = path.join(tempDir, 'extracted');
+    fs.mkdirSync(extractDir, { recursive: true });
+    await extractArchive(archivePath, extractDir);
+
+    const denoTarget = process.platform === 'win32' ? 'deno.exe' : 'deno';
+    const denoSrc = findBinary(extractDir, denoTarget);
+    if (!denoSrc) {
+      throw new Error(`Extracted archive did not contain ${denoTarget}`);
+    }
+    verifyExecutableHeader(denoSrc);
+    if (process.platform !== 'win32') fs.chmodSync(denoSrc, 0o755);
+
+    // Make sure the download actually runs here before it replaces a working copy.
+    if (!parseDenoVersion(await runCommand(denoSrc, ['--version']))) {
+      throw new Error(`Downloaded Deno build (${assetName}) did not run on this system`);
+    }
+
+    installBinary(denoSrc, CUSTOM_BIN_DIR, denoTarget);
+
+    const paths = (process.env.PATH || '').split(path.delimiter);
+    if (!paths.includes(CUSTOM_BIN_DIR)) {
+      process.env.PATH = `${CUSTOM_BIN_DIR}${path.delimiter}${process.env.PATH}`;
+    }
+
+    return { updated: true, ...(await getVersions()) };
+  } finally {
+    isUpdatingDeno = false;
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+// Nightly check: only keeps an existing Deno current, never installs one the user didn't add.
+async function updateDenoIfAvailable() {
+  const installedVersion = await getInstalledDenoVersion();
+  if (!installedVersion) {
+    return { updated: false, skipped: 'not-installed', ...(await getVersions()) };
+  }
+  const latestVersion = await getLatestDenoVersion();
+  if (latestVersion === installedVersion) {
+    return { updated: false, ...(await getVersions()) };
+  }
+  return updateDeno(latestVersion);
+}
+
 module.exports = {
   detectJsRuntimes,
   runCommand,
@@ -596,6 +735,9 @@ module.exports = {
   updateFfmpegIfAvailable,
   updateQuickjs,
   updateQuickjsIfAvailable,
+  updateDeno,
+  updateDenoIfAvailable,
+  parseDenoVersion,
   computeFileSha256,
   parseSha256ForAsset,
   verifyExecutableHeader,

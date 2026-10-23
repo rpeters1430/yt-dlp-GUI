@@ -14,7 +14,7 @@ const {
 } = require('./ytdlpCookies');
 const {
   getVersions, detectJsRuntimes, updateYtdlp, updateFfmpeg, updateFfmpegIfAvailable, updateQuickjs, updateQuickjsIfAvailable,
-  computeFileSha256, parseSha256ForAsset, verifyExecutableHeader,
+  updateDeno, updateDenoIfAvailable, computeFileSha256, parseSha256ForAsset, verifyExecutableHeader,
 } = require('./ytdlpTools');
 
 function spawnYtdlp(args, options) {
@@ -1608,6 +1608,8 @@ module.exports = {
   updateQuickjs,
   updateQuickjsIfAvailable,
   getQuickjsBin,
+  updateDeno,
+  updateDenoIfAvailable,
   DOWNLOAD_DIR,
   VIDEO_DIR,
   MUSIC_DIR,
