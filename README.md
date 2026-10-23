@@ -178,8 +178,13 @@ additional image builds. The app's existing overnight tool updates still apply.
 - Promote a queued download to the front of the queue
 - Filter failed jobs by likely cause (network, bot check, authentication, or unavailable) and retry only matching or transient failures
 
+### Install as an app (PWA)
+- Install it from the browser (Chrome/Edge: the install icon in the address bar; Android: **Add to Home screen**; iOS Safari: **Share → Add to Home Screen**) to get its own window, icon and app shortcuts to History, Watches and Library
+- Installing needs HTTPS (or `localhost`): put the app behind a reverse proxy with a certificate if you reach it by IP or hostname
+- A service worker caches the app shell, so it opens without a connection; downloads and the API always go to the server
+
 ### Mobile sharing
-- Install the app on a supported Android browser and share links to it from other apps, or use the bookmarklet in Settings → Downloads
+- Once installed on Android, share links to it from other apps, or use the bookmarklet in Settings → Downloads
 
 ### Live streams
 - **YouTube and any other yt-dlp live extractor** — a URL that's currently live is detected automatically in the Analyze modal

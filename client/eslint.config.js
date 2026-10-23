@@ -23,6 +23,10 @@ export default [
     },
   },
   {
+    files: ['public/sw.js'],
+    languageOptions: { sourceType: 'script', globals: { ...globals.serviceworker } },
+  },
+  {
     files: ['vite.config.js'],
     languageOptions: { globals: { ...globals.node } },
   },
