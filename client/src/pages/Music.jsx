@@ -1438,7 +1438,7 @@ export default function MusicPage() {
                   <img
                     src={directInfo.thumbnail}
                     alt=""
-                    style={{ width: 120, height: 120, borderRadius: 10, objectFit: 'cover', boxShadow: 'var(--shadow-sm)' }}
+                    style={{ width: 120, height: 120, borderRadius: 'var(--radius-sm)', objectFit: 'cover', boxShadow: 'var(--shadow-sm)' }}
                   />
                 )}
                 <div>
@@ -1494,11 +1494,11 @@ export default function MusicPage() {
                 <div style={{
                   marginBottom: 14,
                   padding: '8px 12px',
-                  borderRadius: 6,
+                  borderRadius: 'var(--radius-sm)',
                   fontSize: '0.78rem',
-                  background: 'rgba(239, 68, 68, 0.1)',
-                  border: '1px solid rgba(239, 68, 68, 0.25)',
-                  color: '#f87171',
+                  background: 'rgba(255, 42, 109, 0.1)',
+                  border: '1px solid rgba(255, 42, 109, 0.25)',
+                  color: 'var(--danger)',
                   lineHeight: 1.4,
                 }}>
                   ⚠️ <strong>Notice:</strong> YouTube does not host lossless audio. {downloadFormat.toUpperCase()} will transcode YouTube's lossy 160k Opus stream into a large file without improving quality. For the highest native quality, choose <strong>OPUS</strong> or <strong>MP3 (320k)</strong>.
@@ -1507,10 +1507,10 @@ export default function MusicPage() {
                 <div style={{
                   marginBottom: 14,
                   padding: '8px 12px',
-                  borderRadius: 6,
+                  borderRadius: 'var(--radius-sm)',
                   fontSize: '0.78rem',
-                  background: 'rgba(16, 185, 129, 0.1)',
-                  border: '1px solid rgba(16, 185, 129, 0.25)',
+                  background: 'rgba(57, 255, 156, 0.1)',
+                  border: '1px solid rgba(57, 255, 156, 0.25)',
                   color: 'var(--success, #10b981)',
                   lineHeight: 1.4,
                 }}>
@@ -1543,7 +1543,7 @@ export default function MusicPage() {
                     </div>
                   </div>
 
-                  <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+                  <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
                     <table className="table" style={{ width: '100%', margin: 0 }}>
                       <thead>
                         <tr>
@@ -1570,7 +1570,7 @@ export default function MusicPage() {
                         {directInfo.entries.map((e, idx) => {
                           const isSelected = directSelectedTracks.has(idx);
                           return (
-                            <tr key={e.id || idx} style={{ backgroundColor: isSelected ? 'rgba(91, 109, 248, 0.04)' : undefined }}>
+                            <tr key={e.id || idx} style={{ backgroundColor: isSelected ? 'rgba(0, 240, 255, 0.04)' : undefined }}>
                               <td>
                                 <input
                                   type="checkbox"
@@ -1944,7 +1944,7 @@ export default function MusicPage() {
                 padding: '12px 14px',
                 background: 'rgba(255, 255, 255, 0.03)',
                 border: '1px solid var(--border)',
-                borderRadius: 8,
+                borderRadius: 'var(--radius-sm)',
                 fontSize: '0.8rem',
                 color: 'var(--text-secondary)',
                 lineHeight: 1.5,
@@ -1998,9 +1998,9 @@ export default function MusicPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{
                 padding: '10px 14px',
-                borderRadius: 8,
-                background: 'rgba(16, 185, 129, 0.1)',
-                border: '1px solid rgba(16, 185, 129, 0.25)',
+                borderRadius: 'var(--radius-sm)',
+                background: 'rgba(57, 255, 156, 0.1)',
+                border: '1px solid rgba(57, 255, 156, 0.25)',
                 fontSize: '0.85rem',
                 display: 'flex',
                 alignItems: 'center',
@@ -2044,7 +2044,7 @@ export default function MusicPage() {
           ) : (
             <div style={{
               padding: '14px',
-              borderRadius: 8,
+              borderRadius: 'var(--radius-sm)',
               background: 'rgba(255, 255, 255, 0.03)',
               border: '1px solid var(--border)',
               fontSize: '0.86rem',
@@ -2081,7 +2081,7 @@ export default function MusicPage() {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {lidarrConfig.enabled ? (
-                  <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '4px 10px', fontSize: '0.8rem' }}>
+                  <span className="badge" style={{ background: 'rgba(57, 255, 156, 0.15)', color: 'var(--success)', border: '1px solid rgba(57, 255, 156, 0.3)', padding: '4px 10px', fontSize: '0.8rem' }}>
                     ● Integration Enabled
                   </span>
                 ) : (
@@ -2104,7 +2104,7 @@ export default function MusicPage() {
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 16 }}>
               {/* Step 1: Torznab Indexer */}
-              <div style={{ padding: 14, borderRadius: 8, background: 'var(--surface-hover)', border: '1px solid var(--border)' }}>
+              <div style={{ padding: 14, borderRadius: 'var(--radius-sm)', background: 'var(--surface-hover)', border: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                   <strong style={{ fontSize: '0.92rem', color: 'var(--text-primary)' }}>1. Add as Indexer in Lidarr</strong>
                   <span className="badge" style={{ fontSize: '0.72rem' }}>Torznab</span>
@@ -2165,7 +2165,7 @@ export default function MusicPage() {
               </div>
 
               {/* Step 2: Download Client */}
-              <div style={{ padding: 14, borderRadius: 8, background: 'var(--surface-hover)', border: '1px solid var(--border)' }}>
+              <div style={{ padding: 14, borderRadius: 'var(--radius-sm)', background: 'var(--surface-hover)', border: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                   <strong style={{ fontSize: '0.92rem', color: 'var(--text-primary)' }}>2. Add as Download Client</strong>
                   <span className="badge" style={{ fontSize: '0.72rem' }}>qBittorrent</span>
@@ -2230,9 +2230,9 @@ export default function MusicPage() {
                   <div style={{
                     marginTop: 8,
                     padding: '8px 10px',
-                    borderRadius: 6,
-                    background: 'rgba(234, 179, 8, 0.08)',
-                    border: '1px solid rgba(234, 179, 8, 0.25)',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'rgba(245, 237, 0, 0.08)',
+                    border: '1px solid rgba(245, 237, 0, 0.25)',
                     fontSize: '0.74rem',
                     color: 'var(--text-secondary)',
                     lineHeight: 1.4,
@@ -2340,9 +2340,9 @@ export default function MusicPage() {
                 {lidarrTestResult && (
                   <div style={{
                     padding: '10px 14px',
-                    borderRadius: 8,
-                    background: lidarrTestResult.ok ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-                    border: `1px solid ${lidarrTestResult.ok ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                    borderRadius: 'var(--radius-sm)',
+                    background: lidarrTestResult.ok ? 'rgba(57, 255, 156, 0.12)' : 'rgba(255, 42, 109, 0.12)',
+                    border: `1px solid ${lidarrTestResult.ok ? 'rgba(57, 255, 156, 0.3)' : 'rgba(255, 42, 109, 0.3)'}`,
                     color: lidarrTestResult.ok ? 'var(--success)' : 'var(--danger)',
                     fontSize: '0.86rem',
                     display: 'flex',
@@ -2429,7 +2429,7 @@ export default function MusicPage() {
                           key={item.id}
                           style={{
                             padding: '10px 14px',
-                            borderRadius: 8,
+                            borderRadius: 'var(--radius-sm)',
                             background: 'var(--surface-hover)',
                             border: '1px solid var(--border)',
                             display: 'flex',
@@ -2442,7 +2442,7 @@ export default function MusicPage() {
                             <div style={{
                               width: 40,
                               height: 40,
-                              borderRadius: 6,
+                              borderRadius: 'var(--radius-sm)',
                               background: 'var(--bg-subtle, rgba(255,255,255,0.05))',
                               display: 'flex',
                               alignItems: 'center',
@@ -2493,10 +2493,10 @@ export default function MusicPage() {
                   const isError = task.state === 'error';
                   const pct = Math.round((task.progress || 0) * 100);
                   const badgeBg = isReady
-                    ? 'rgba(16, 185, 129, 0.15)'
+                    ? 'rgba(57, 255, 156, 0.15)'
                     : isError
-                      ? 'rgba(239, 68, 68, 0.15)'
-                      : 'rgba(91, 109, 248, 0.15)';
+                      ? 'rgba(255, 42, 109, 0.15)'
+                      : 'rgba(0, 240, 255, 0.15)';
                   const badgeColor = isReady
                     ? 'var(--success)'
                     : isError
@@ -2514,7 +2514,7 @@ export default function MusicPage() {
                       key={task.hash}
                       style={{
                         padding: '10px 14px',
-                        borderRadius: 8,
+                        borderRadius: 'var(--radius-sm)',
                         background: 'var(--surface-hover)',
                         border: '1px solid var(--border)',
                         display: 'flex',
@@ -2600,9 +2600,9 @@ export default function MusicPage() {
               <div style={{
                 marginBottom: 16,
                 padding: '10px 14px',
-                borderRadius: 8,
-                background: 'rgba(16, 185, 129, 0.12)',
-                border: '1px solid rgba(16, 185, 129, 0.3)',
+                borderRadius: 'var(--radius-sm)',
+                background: 'rgba(57, 255, 156, 0.12)',
+                border: '1px solid rgba(57, 255, 156, 0.3)',
                 fontSize: '0.84rem',
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
@@ -2651,18 +2651,18 @@ export default function MusicPage() {
                         key={c.id || idx}
                         style={{
                           padding: '10px 12px',
-                          borderRadius: 8,
+                          borderRadius: 'var(--radius-sm)',
                           border: isSelected ? '2px solid var(--accent)' : '1px solid var(--border)',
-                          background: isSelected ? 'rgba(91, 109, 248, 0.08)' : 'var(--bg-subtle, rgba(255,255,255,0.02))',
+                          background: isSelected ? 'rgba(0, 240, 255, 0.08)' : 'var(--bg-subtle, rgba(255,255,255,0.02))',
                           display: 'flex',
                           alignItems: 'center',
                           gap: 12,
                         }}
                       >
                         {c.thumbnail ? (
-                          <img src={c.thumbnail} alt="" style={{ width: 44, height: 44, borderRadius: 6, objectFit: 'cover' }} />
+                          <img src={c.thumbnail} alt="" style={{ width: 44, height: 44, borderRadius: 'var(--radius-sm)', objectFit: 'cover' }} />
                         ) : (
-                          <div style={{ width: 44, height: 44, borderRadius: 6, background: 'var(--surface-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <div style={{ width: 44, height: 44, borderRadius: 'var(--radius-sm)', background: 'var(--surface-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                             <Music size={18} />
                           </div>
                         )}
@@ -2673,7 +2673,7 @@ export default function MusicPage() {
                           <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, flexWrap: 'wrap' }}>
                             <span>{c.uploader}</span>
                             {c.isTopic && (
-                              <span className="badge" style={{ fontSize: '0.68rem', padding: '1px 5px', background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success)' }}>
+                              <span className="badge" style={{ fontSize: '0.68rem', padding: '1px 5px', background: 'rgba(57, 255, 156, 0.15)', color: 'var(--success)' }}>
                                 Official Album Master
                               </span>
                             )}

@@ -1,38 +1,34 @@
-const STORAGE_KEY = 'ytdlp-gui-theme';
+// The app has one look; the only appearance choice left is the CRT scanline overlay.
+const SCANLINES_KEY = 'ytdlp-gui-scanlines';
 
-export function getStoredTheme() {
+export function getScanlines() {
   try {
-    return localStorage.getItem(STORAGE_KEY);
+    return localStorage.getItem(SCANLINES_KEY) !== 'off';
   } catch {
-    return null;
+    return true;
   }
 }
 
-export function applyTheme(theme) {
-  const root = document.documentElement;
-  if (theme === 'light' || theme === 'dark' || theme === 'midnight') {
-    root.setAttribute('data-theme', theme);
-  } else {
-    root.removeAttribute('data-theme');
-  }
+export function applyScanlines(on) {
+  document.documentElement.setAttribute('data-scanlines', on ? 'on' : 'off');
 }
 
-export function setTheme(theme) {
+export function setScanlines(on) {
   try {
-    if (theme) localStorage.setItem(STORAGE_KEY, theme);
-    else localStorage.removeItem(STORAGE_KEY);
+    if (on) localStorage.removeItem(SCANLINES_KEY);
+    else localStorage.setItem(SCANLINES_KEY, 'off');
   } catch {
     // ignore storage failures (private browsing, etc.)
   }
-  applyTheme(theme);
-}
-
-export function getEffectiveTheme() {
-  const stored = getStoredTheme();
-  if (stored === 'light' || stored === 'dark' || stored === 'midnight') return stored;
-  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  applyScanlines(on);
 }
 
 export function initTheme() {
-  applyTheme(getStoredTheme());
+  try {
+    // Leftover from the old light/dark/midnight picker.
+    localStorage.removeItem('ytdlp-gui-theme');
+  } catch {
+    // ignore
+  }
+  applyScanlines(getScanlines());
 }

@@ -1,27 +1,22 @@
 import React, { useState } from 'react';
 import { Segmented } from '../DownloadOptionsFields.jsx';
 import { SettingRow } from './DownloadsSettings.jsx';
-import { getStoredTheme, setTheme } from '../../theme.js';
+import { getScanlines, setScanlines } from '../../theme.js';
 import { getEffectiveDensity, setDensity } from '../../density.js';
 
-// Theme and density, moved here from the old sidebar footer.
+// Scanline overlay and density.
 export default function AppearanceSettings() {
-  const [theme, setThemeState] = useState(() => getStoredTheme() || 'system');
+  const [scanlines, setScanlinesState] = useState(getScanlines);
   const [density, setDensityState] = useState(getEffectiveDensity);
 
   return (
     <div className="setting-rows">
-      <SettingRow label="Theme" description="System follows your device's light or dark setting">
+      <SettingRow label="Scanlines" description="Faint CRT lines over the whole screen">
         <Segmented
           size="sm"
-          value={theme}
-          onChange={(v) => { setTheme(v === 'system' ? null : v); setThemeState(v); }}
-          options={[
-            { value: 'system', label: 'System' },
-            { value: 'dark', label: 'Dark' },
-            { value: 'midnight', label: 'Midnight' },
-            { value: 'light', label: 'Light' },
-          ]}
+          value={scanlines ? 'on' : 'off'}
+          onChange={(v) => { setScanlines(v === 'on'); setScanlinesState(v === 'on'); }}
+          options={[{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }]}
         />
       </SettingRow>
       <SettingRow label="Density" description="Compact fits more rows on screen">

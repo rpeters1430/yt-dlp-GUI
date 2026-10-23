@@ -6,6 +6,7 @@ import { initTheme } from './theme.js';
 import { initDensity } from './density.js';
 import './styles.css';
 import './components.css';
+import './cyberpunk.css';
 
 initTheme();
 initDensity();

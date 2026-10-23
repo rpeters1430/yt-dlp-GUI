@@ -2,10 +2,10 @@
   width: min(42rem, calc(100vw - 2rem));
   max-height: min(80vh, 52rem);
   padding: 1.5rem;
-  border: 1px solid var(--border-color, #343a46);
+  border: 1px solid var(--border-strong);
   border-radius: 1rem;
-  background: var(--surface-color, #171a21);
-  color: var(--text-color, #f4f5f7);
+  background: var(--surface);
+  color: var(--text);
   box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 45%);
 }
 
@@ -25,7 +25,7 @@
 .release-notes-eyebrow,
 .release-notes-revision {
   margin: 0;
-  color: var(--muted-text-color, #a4a9b5);
+  color: var(--text-tertiary);
   font-size: 0.82rem;
 }
 
@@ -37,7 +37,7 @@
 .release-notes-close {
   flex: 0 0 auto;
   padding: 0.5rem 0.8rem;
-  border: 1px solid var(--border-color, #343a46);
+  border: 1px solid var(--border-strong);
   border-radius: 0.55rem;
   background: transparent;
   color: inherit;
@@ -63,7 +63,7 @@
 }
 
 .release-notes-content a {
-  color: var(--link-color, #8db7ff);
+  color: var(--accent-text);
 }
 
 .release-notes-content pre {
