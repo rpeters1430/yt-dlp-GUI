@@ -56,11 +56,18 @@ function useSmoothedStats(job) {
     eta: job?.eta || null,
   }));
 
+  // Keyed on the fields the smoother reads, not the job object: socket updates hand over a
+  // new object each time, and re-sampling unchanged stats would skew the average.
+  const hasJob = Boolean(job);
+  const id = job?.id;
+  const percent = job?.percent;
+  const speed = job?.speed;
+  const eta = job?.eta;
   useEffect(() => {
-    const next = smoothDownloadStats(previous.current, job);
+    const next = smoothDownloadStats(previous.current, hasJob ? { id, percent, speed, eta } : null);
     previous.current = next;
     setStats(next);
-  }, [job?.id, job?.percent, job?.speed, job?.eta]);
+  }, [hasJob, id, percent, speed, eta]);
 
   // Avoid showing the prior download's stats for the one render before the effect runs.
   return stats.jobId === job?.id ? stats : { speed: job?.speed || null, eta: job?.eta || null };
