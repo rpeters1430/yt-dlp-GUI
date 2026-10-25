@@ -343,7 +343,19 @@ async function getInfo(url, { resolveShare = true, reuseRecent = false, ...optio
       return recent;
     }
   }
-  const info = await getInfoResolved(resolved, options);
+  let info;
+  try {
+    info = await getInfoResolved(resolved, options);
+  } catch (err) {
+    const isTransient = /timed out|ECONNRESET|ETIMEDOUT|Connection reset|socket hang up|WinError/i.test(err.message);
+    if (isTransient) {
+      console.warn(`[ytdlp:info] Transient lookup failure (${resolved}), retrying once: ${err.message}`);
+      await new Promise((r) => setTimeout(r, 600));
+      info = await getInfoResolved(resolved, options);
+    } else {
+      throw err;
+    }
+  }
   if (cacheable) rememberInfo(resolved, info);
   return info;
 }
@@ -425,14 +437,23 @@ function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, play
     }, GETINFO_TIMEOUT_MS);
 
     let pending = '';
+    let jsonStarted = false;
     const takeLines = (chunk) => {
       pending += chunk;
       const lines = pending.split('\n');
       pending = lines.pop();
       for (const line of lines) {
-        const stage = line.startsWith('[') ? parseStageLine(line) : null;
-        if (stage) {
-          try { onProgress(stage); } catch (_) {}
+        if (!jsonStarted) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+            jsonStarted = true;
+            stdout += line + '\n';
+          } else {
+            const stage = line.startsWith('[') ? parseStageLine(line) : null;
+            if (stage) {
+              try { onProgress(stage); } catch (_) {}
+            }
+          }
         } else {
           stdout += line + '\n';
         }
@@ -446,7 +467,9 @@ function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, play
     proc.on('close', (code) => {
       clearTimeout(timeout);
       if (onProgress && pending) {
-        stdout += pending;
+        if (jsonStarted || pending.trim().startsWith('{') || pending.trim().startsWith('[')) {
+          stdout += pending;
+        }
         pending = '';
       }
       if (timedOut) {
@@ -458,7 +481,13 @@ function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, play
         return reject(new Error(errMsg));
       }
       try {
-        resolve(JSON.parse(stdout));
+        const raw = stdout.trim();
+        const firstBrace = raw.indexOf('{');
+        const lastBrace = raw.lastIndexOf('}');
+        const cleanJson = (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace)
+          ? raw.slice(firstBrace, lastBrace + 1)
+          : raw;
+        resolve(JSON.parse(cleanJson));
       } catch (e) {
         console.error(`[ytdlp:info] Unparseable JSON (${url}): ${e.message}; stdout starts: ${stdout.slice(0, 200)}`);
         reject(new Error('Failed to parse yt-dlp JSON output: ' + e.message));

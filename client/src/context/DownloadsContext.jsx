@@ -178,7 +178,9 @@ export function DownloadsProvider({ children, isAuthenticated }) {
 
   const currentJob = downloadingJobs[0] || activeJobs[0] || null;
 
-  const value = {
+  const refreshJobs = useCallback(() => api.listDownloads().then((list) => setJobs((prev) => mergeList(prev, list))).catch(() => {}), []);
+
+  const value = useMemo(() => ({
     jobs,
     setJobs,
     loaded,
@@ -194,12 +196,25 @@ export function DownloadsProvider({ children, isAuthenticated }) {
     currentJob,
     hasActive: activeJobs.length > 0,
     isDownloading: downloadingJobs.length > 0,
-    refreshJobs: () => api.listDownloads().then((list) => setJobs((prev) => mergeList(prev, list))).catch(() => {}),
+    refreshJobs,
     subscribeWatchUpdates,
     subscribeAnalyzeProgress,
     subscribeLinkGrabber,
     connected,
-  };
+  }), [
+    jobs,
+    loaded,
+    activeJobs,
+    downloadingJobs,
+    queuedJobs,
+    effectiveCounts,
+    currentJob,
+    refreshJobs,
+    subscribeWatchUpdates,
+    subscribeAnalyzeProgress,
+    subscribeLinkGrabber,
+    connected,
+  ]);
 
   return (
     <DownloadsContext.Provider value={value}>

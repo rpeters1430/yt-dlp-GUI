@@ -107,7 +107,11 @@ export function StagingProvider({ children }) {
   }), [subscribeAnalyzeProgress]);
 
   const update = useCallback((id, patch) => {
-    setStaged((prev) => prev.map((it) => (it.id === id ? { ...it, ...(typeof patch === 'function' ? patch(it) : patch) } : it)));
+    setStaged((prev) => {
+      const next = prev.map((it) => (it.id === id ? { ...it, ...(typeof patch === 'function' ? patch(it) : patch) } : it));
+      stagedRef.current = next;
+      return next;
+    });
   }, []);
 
   const analyze = useCallback((text) => {
@@ -156,8 +160,15 @@ export function StagingProvider({ children }) {
     return fresh.length;
   }, [update]);
 
-  const remove = useCallback((id) => setStaged((prev) => prev.filter((it) => it.id !== id)), []);
-  const clear = useCallback(() => setStaged([]), []);
+  const remove = useCallback((id) => setStaged((prev) => {
+    const next = prev.filter((it) => it.id !== id);
+    stagedRef.current = next;
+    return next;
+  }), []);
+  const clear = useCallback(() => {
+    stagedRef.current = [];
+    setStaged([]);
+  }, []);
 
   // Queues downloads (grouped by identical options), sets up Watches, and skips duplicates.
   // Returns the toast text. Links that fail stay in the tray.

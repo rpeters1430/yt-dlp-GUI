@@ -93,6 +93,7 @@ async function sendLinks({ target, urls, crawl = null, packagePerPage = false, .
       packagePerPage: !!packagePerPage,
       urlMetadata: pkg.urlMetadata,
       threadUrl: pkg.threadUrl,
+      autostart: !!given.autostart,
     });
     return { ...result, failed: [], seen: list };
   }

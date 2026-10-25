@@ -229,6 +229,76 @@ test('a sending watch sends new links to JDownloader once', async (t) => {
   assert.equal(received.length, 1);
 });
 
+test('a watch with linkTypes filters down to chosen link types and passes autostart', async (t) => {
+  const { watches, send } = load(t);
+  const received = [];
+  const jd = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => { received.push(new URLSearchParams(body)); res.end('success'); });
+  });
+  await new Promise((resolve) => jd.listen(0, '127.0.0.1', resolve));
+  t.after(() => jd.close());
+  send.saveSetting('jdUrl', `http://127.0.0.1:${jd.address().port}`);
+
+  const html = post(1, `
+    <a href="https://bunkr.si/v/1">bunkr</a>
+    <a href="https://gofile.io/d/2">gofile</a>
+    <a href="https://pixeldrain.com/u/3">pixeldrain</a>
+    <a href="https://mega.nz/file/4">mega</a>
+  `);
+  const { offline } = site({ [THREAD]: html });
+  const w = watches.createWatch({
+    url: THREAD,
+    lastN: 1,
+    target: 'jdownloader',
+    linkTypes: 'bunkr, gofile',
+    autostart: true,
+  });
+
+  const checked = await watches.checkWatch(w.id, { crawlOptions: offline });
+  assert.equal(checked.found, 2, 'only bunkr and gofile links are accepted');
+  assert.equal(received.length, 1);
+  const urls = received[0].get('urls').split('\r\n');
+  assert.deepEqual(urls.sort(), ['https://bunkr.si/v/1', 'https://gofile.io/d/2'].sort());
+  assert.equal(received[0].get('autostart'), '1');
+  assert.equal(received[0].get('autoconfirm'), '1');
+});
+
+test('a thread watch checking new pages crawls the new pages and the last couple', async (t) => {
+  const { watches } = load(t);
+  const p1 = `${THREAD}page-1`;
+  const p2 = `${THREAD}page-2`;
+  const p3 = `${THREAD}page-3`;
+  const p4 = `${THREAD}page-4`;
+
+  // Start with 2 pages
+  const pages = {
+    [THREAD]: `${nav(2)}${post(1, '<a href="https://gofile.io/d/P1">1</a>')}`,
+    [p1]: `${nav(2)}${post(1, '<a href="https://gofile.io/d/P1">1</a>')}`,
+    [p2]: `${nav(2)}${post(2, '<a href="https://bunkr.si/v/P2">2</a>')}`,
+  };
+  const { offline, calls } = site(pages);
+  const w = watches.createWatch({ url: THREAD, lastN: 2, target: 'none' });
+
+  const first = await watches.checkWatch(w.id, { crawlOptions: offline });
+  assert.equal(first.found, 2);
+  assert.equal(first.lastMaxPage, 2);
+
+  // Now thread grows to 4 pages (new pages: 3 and 4)
+  pages[THREAD] = `${nav(4)}${post(1, '<a href="https://gofile.io/d/P1">1</a>')}`;
+  pages[p3] = `${nav(4)}${post(3, '<a href="https://bunkr.si/v/P3">3</a>')}`;
+  pages[p4] = `${nav(4)}${post(4, '<a href="https://gofile.io/d/P4">4</a>')}`;
+
+  calls.length = 0;
+  const second = await watches.checkWatch(w.id, { crawlOptions: offline });
+  assert.equal(second.found, 2); // P3 and P4
+  assert.equal(second.lastMaxPage, 4);
+  // Checked pages should include page 1 or 2 (last couple of prev check) plus 3 and 4
+  assert.ok(calls.includes(p3), 'crawled new page 3');
+  assert.ok(calls.includes(p4), 'crawled new page 4');
+});
+
 test('a failing watch records the error', async (t) => {
   const { watches } = load(t);
   const { offline } = site({});

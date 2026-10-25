@@ -12,7 +12,8 @@ const TARGETS = [
   { id: 'aria2', label: 'Send to aria2' },
 ];
 const INTERVALS = [[30, 'Every 30 min'], [60, 'Every hour'], [180, 'Every 3 hours'], [360, 'Every 6 hours'], [720, 'Every 12 hours'], [1440, 'Daily']];
-const EMPTY = { url: '', title: '', lastN: 2, intervalMins: 360, target: 'jdownloader', hostersOnly: true, packagePerPage: true };
+const COMMON_HOSTS = ['bunkr', 'gofile', 'pixeldrain', 'mega'];
+const EMPTY = { url: '', title: '', lastN: 2, intervalMins: 360, target: 'jdownloader', hostersOnly: true, linkTypes: '', autostart: true, packagePerPage: true };
 
 const targetLabel = (id) => TARGETS.find((t) => t.id === id)?.label || id;
 const intervalLabel = (mins) => INTERVALS.find(([m]) => m === mins)?.[1] || `Every ${mins} min`;
@@ -47,6 +48,19 @@ export default function ThreadWatches({ draft, onDraftUsed, onOpenCrawl }) {
     const value = e.target.type === 'checkbox' ? e.target.checked : parse(e.target.value);
     setForm((prev) => ({ ...prev, [field]: value }));
   };
+
+  function toggleHostChip(host) {
+    setForm((prev) => {
+      const current = (prev?.linkTypes || '')
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      const next = current.includes(host)
+        ? current.filter((h) => h !== host)
+        : [...current, host];
+      return { ...prev, linkTypes: next.join(', ') };
+    });
+  }
 
   async function handleAdd(e) {
     e.preventDefault();
@@ -98,8 +112,8 @@ export default function ThreadWatches({ draft, onDraftUsed, onOpenCrawl }) {
         {!form && <button type="button" className="btn-secondary small" onClick={() => setForm({ ...EMPTY })}>Add watch</button>}
       </div>
       <p className="panel-description">
-        Re-crawls a thread&apos;s last pages on a schedule. Links you haven&apos;t sent or copied before go to the downloader you choose,
-        using your saved crawler cookies. The first check sends every such link on those pages.
+        Re-crawls a thread&apos;s last couple of pages on a schedule and crawls new pages automatically as they appear.
+        Links matching your chosen link types are sent directly to your download client with auto-downloading enabled.
       </p>
 
       {form && (
@@ -108,9 +122,41 @@ export default function ThreadWatches({ draft, onDraftUsed, onOpenCrawl }) {
             Thread URL
             <input className="mono" type="url" required value={form.url} onChange={update('url')} placeholder="https://forum.example/threads/name.123/" />
           </label>
+          <label className="field-label lg-watch-full">
+            Link types to auto-send
+            <input
+              type="text"
+              value={form.linkTypes}
+              onChange={update('linkTypes')}
+              placeholder="e.g. bunkr, gofile (leave blank for all)"
+            />
+            <span className="lg-inline small muted" style={{ marginTop: 6, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span>Quick add:</span>
+              {COMMON_HOSTS.map((h) => {
+                const active = (form.linkTypes || '').toLowerCase().split(',').map((s) => s.trim()).includes(h);
+                return (
+                  <button
+                    key={h}
+                    type="button"
+                    className={`chip small${active ? ' active' : ''}`}
+                    onClick={() => toggleHostChip(h)}
+                  >
+                    {h}
+                  </button>
+                );
+              })}
+            </span>
+          </label>
           <label className="field-label">
-            Pages to check
-            <input type="number" min={1} max={10} value={form.lastN} onChange={update('lastN', Number)} />
+            Pages to check (last couple)
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={form.lastN}
+              onChange={update('lastN', Number)}
+              title="Checks the last N pages, plus automatically crawls new pages as the thread grows"
+            />
           </label>
           <label className="field-label">
             How often
@@ -123,6 +169,10 @@ export default function ThreadWatches({ draft, onDraftUsed, onOpenCrawl }) {
             <select value={form.target} onChange={update('target')}>
               {TARGETS.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
             </select>
+          </label>
+          <label className="checkbox-label" title="Automatically start downloading links in JDownloader, aria2, or yt-dlp queue">
+            <input type="checkbox" checked={form.autostart} onChange={update('autostart')} />
+            Auto-download in client
           </label>
           <label className="checkbox-label">
             <input type="checkbox" checked={form.hostersOnly} onChange={update('hostersOnly')} />
@@ -152,8 +202,9 @@ export default function ThreadWatches({ draft, onDraftUsed, onOpenCrawl }) {
                 title={w.lastCrawlId ? 'Show the latest check\'s links' : undefined}>
                 <span className="lg-card-title">{w.title || w.url}</span>
                 <span className="muted small">
-                  {intervalLabel(w.intervalMins)}, last {w.lastN} page{w.lastN === 1 ? '' : 's'} · {targetLabel(w.target)}
-                  {w.hostersOnly ? ' · file hosts only' : ''}
+                  {intervalLabel(w.intervalMins)}, last {w.lastN} page{w.lastN === 1 ? '' : 's'} + new pages · {targetLabel(w.target)}
+                  {w.linkTypes ? ` · types: ${w.linkTypes}` : (w.hostersOnly ? ' · file hosts only' : '')}
+                  {w.autostart ? ' · auto-download' : ''}
                 </span>
                 <span className="muted small">
                   {w.checking ? 'Checking now…' : w.lastCheckedAt ? `Checked ${relativeTime(w.lastCheckedAt)}: ${w.lastNewCount ?? 0} new` : 'Not checked yet'}

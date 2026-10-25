@@ -546,6 +546,17 @@ function canonicalUrl(url) {
   return `${host}${u.port ? `:${u.port}` : ''}${pathname}${query ? `?${query}` : ''}`;
 }
 
+const SECOND_LEVEL = new Set(['co', 'com', 'net', 'org', 'gov', 'edu', 'ac']);
+const SITE_ALIASES = { bunkrr: 'bunkr', teraboxapp: 'terabox', pixeldra: 'pixeldrain' };
+
+function siteName(host) {
+  const labels = String(host || '').toLowerCase().replace(/^www\./, '').split('.').filter(Boolean);
+  if (labels.length < 2 || /^\d+$/.test(labels.at(-1))) return labels.join('.');
+  let i = labels.length - 2;
+  if (labels.length >= 3 && labels.at(-1).length === 2 && SECOND_LEVEL.has(labels[i])) i -= 1;
+  return SITE_ALIASES[labels[i]] || labels[i];
+}
+
 // Drops the page's own navigation: links back to the crawled site are only kept when they're
 // embeds or point straight at a media/archive file (e.g. an attachment the site hosts itself).
 function shouldKeep(url, source, siteHost) {
@@ -820,6 +831,7 @@ async function crawl({
   startPage,
   endPage,
   lastN,
+  sincePage = 0,
   skipQuotes = true,
   skipBots = true,
   decodeBase64 = true,
@@ -917,7 +929,11 @@ async function crawl({
       for (let p = 1; p <= detectedMaxPage; p++) requested.push(p);
     } else if (mode === 'last') {
       const n = Math.min(Math.max(parseInt(lastN, 10) || 3, 1), MAX_PAGES_LIMIT);
-      for (let p = Math.max(1, detectedMaxPage - n + 1); p <= detectedMaxPage; p++) requested.push(p);
+      const minFromLast = Math.max(1, detectedMaxPage - n + 1);
+      const parsedSince = parseInt(sincePage, 10) || 0;
+      const minFromSince = parsedSince > 0 ? Math.max(1, parsedSince - n + 1) : minFromLast;
+      const start = Math.min(minFromLast, minFromSince);
+      for (let p = start; p <= detectedMaxPage; p++) requested.push(p);
     } else {
       const s = Math.max(1, parseInt(startPage, 10) || 1);
       if (s > detectedMaxPage) {
@@ -1090,7 +1106,7 @@ function cleanUrls(urls) {
 // JDownloader's Click'n'Load listener (port 9666).
 // In package-per-page mode each package gets its own page's passwords when `pagePasswords`
 // ({ [page]: [...] }) is given, and each page is recorded in history as soon as it is accepted.
-async function sendToJDownloader(urls, { baseUrl, packageName, passwords, packagePerPage, urlMetadata, pagePasswords, threadUrl = '', fetchImpl = fetch }) {
+async function sendToJDownloader(urls, { baseUrl, packageName, passwords, packagePerPage, urlMetadata, pagePasswords, threadUrl = '', autostart = false, fetchImpl = fetch }) {
   if (!baseUrl) throw new Error('JDownloader address is not configured');
   let parsed;
   try {
@@ -1130,6 +1146,12 @@ async function sendToJDownloader(urls, { baseUrl, packageName, passwords, packag
       body.set('package', pkg);
       const pagePw = perPagePasswords ? joinPasswords(perPagePasswords[pageNum]) : passwordStr;
       if (pagePw) body.set('passwords', pagePw);
+      if (autostart) {
+        body.set('autostart', '1');
+        body.set('autoconfirm', '1');
+        body.set('autoStart', '1');
+        body.set('autoConfirm', '1');
+      }
 
       const res = await fetchImpl(endpoint, {
         method: 'POST',
@@ -1152,6 +1174,12 @@ async function sendToJDownloader(urls, { baseUrl, packageName, passwords, packag
   const body = new URLSearchParams({ urls: urls.join('\r\n'), source: 'yt-dlp-gui' });
   if (packageName) body.set('package', packageName);
   if (passwordStr) body.set('passwords', passwordStr);
+  if (autostart) {
+    body.set('autostart', '1');
+    body.set('autoconfirm', '1');
+    body.set('autoStart', '1');
+    body.set('autoConfirm', '1');
+  }
 
   const res = await fetchImpl(endpoint, {
     method: 'POST',
@@ -1275,6 +1303,7 @@ module.exports = {
   classify,
   hostOf,
   isKnownHoster,
+  siteName,
   canonicalUrl,
   crawl,
   cleanUrls,

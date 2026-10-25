@@ -63,8 +63,8 @@ export default function LinkResults({ crawl, onLinksChange, onWatch }) {
   const [selected, setSelected] = useState(() => new Set(
     links.filter((l) => (result.historyCount > 0 ? l.isNew : true)).map((l) => l.url),
   ));
-  const [hostFilter, setHostFilter] = useState('all');
-  const [kindFilter, setKindFilter] = useState('all');
+  const [selectedHosts, setSelectedHosts] = useState(() => new Set());
+  const [selectedKinds, setSelectedKinds] = useState(() => new Set());
   const [statusFilter, setStatusFilter] = useState('all');
   const [checkFilter, setCheckFilter] = useState('all');
   const [hostersOnly, setHostersOnly] = useState(false);
@@ -76,6 +76,24 @@ export default function LinkResults({ crawl, onLinksChange, onWatch }) {
   const [sending, setSending] = useState(false);
   const [checking, setChecking] = useState(false);
   const lastClicked = useRef(null);
+
+  function toggleHost(site) {
+    setSelectedHosts((prev) => {
+      const next = new Set(prev);
+      if (next.has(site)) next.delete(site);
+      else next.add(site);
+      return next;
+    });
+  }
+
+  function toggleKind(kind) {
+    setSelectedKinds((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  }
 
   useEffect(() => savePrefs({ target, packagePerPage }), [target, packagePerPage]);
 
@@ -95,18 +113,18 @@ export default function LinkResults({ crawl, onLinksChange, onWatch }) {
   const anyChecked = links.some((l) => l.check);
   const hosterCount = links.filter((l) => l.hoster).length;
 
-  const isFiltered = hostFilter !== 'all' || kindFilter !== 'all' || statusFilter !== 'all' || checkFilter !== 'all' || hostersOnly || Boolean(search.trim());
+  const isFiltered = selectedHosts.size > 0 || selectedKinds.size > 0 || statusFilter !== 'all' || checkFilter !== 'all' || hostersOnly || Boolean(search.trim());
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return links.filter((l) =>
-      (hostFilter === 'all' || siteName(l.host) === hostFilter)
-      && (kindFilter === 'all' || l.kind === kindFilter)
+      (selectedHosts.size === 0 || selectedHosts.has(siteName(l.host)))
+      && (selectedKinds.size === 0 || selectedKinds.has(l.kind))
       && (statusFilter === 'all' || (statusFilter === 'new' ? l.isNew : !l.isNew))
       && (checkFilter === 'all' || checkState(l) === checkFilter)
       && (!hostersOnly || l.hoster)
       && (!q || l.url.toLowerCase().includes(q) || (l.author || '').toLowerCase().includes(q)));
-  }, [links, hostFilter, kindFilter, statusFilter, checkFilter, hostersOnly, search]);
+  }, [links, selectedHosts, selectedKinds, statusFilter, checkFilter, hostersOnly, search]);
 
   const visibleSelected = useMemo(() => visible.filter((l) => selected.has(l.url)), [visible, selected]);
   const allVisibleSelected = visible.length > 0 && visibleSelected.length === visible.length;
@@ -283,21 +301,21 @@ export default function LinkResults({ crawl, onLinksChange, onWatch }) {
             {hosterCount > 0 && hosterCount < links.length && chip(hostersOnly, () => setHostersOnly((v) => !v), 'File hosts only', hosterCount)}
           </div>
           <div className="chip-row lg-filters">
-            {chip(hostFilter === 'all', () => setHostFilter('all'), 'All hosts', links.length)}
+            {chip(selectedHosts.size === 0, () => setSelectedHosts(new Set()), 'All hosts', links.length)}
             {hosts.map(([site, count]) => {
               const domains = [...(siteDomains.get(site) || [])].sort();
               // A site seen under one domain keeps that domain as its label.
               const label = domains.length === 1 ? domains[0] : site;
               return (
                 <React.Fragment key={site}>
-                  {chip(hostFilter === site, () => setHostFilter(site), label, count, domains.length > 1 ? domains.join(', ') : undefined)}
+                  {chip(selectedHosts.has(site), () => toggleHost(site), label, count, domains.length > 1 ? domains.join(', ') : undefined)}
                 </React.Fragment>
               );
             })}
           </div>
           <div className="chip-row lg-filters">
-            {chip(kindFilter === 'all', () => setKindFilter('all'), 'All types', links.length)}
-            {kinds.map(([kind, count]) => <React.Fragment key={kind}>{chip(kindFilter === kind, () => setKindFilter(kind), KIND_LABELS[kind] || kind, count)}</React.Fragment>)}
+            {chip(selectedKinds.size === 0, () => setSelectedKinds(new Set()), 'All types', links.length)}
+            {kinds.map(([kind, count]) => <React.Fragment key={kind}>{chip(selectedKinds.has(kind), () => toggleKind(kind), KIND_LABELS[kind] || kind, count)}</React.Fragment>)}
           </div>
           {anyChecked && (
             <div className="chip-row lg-filters">

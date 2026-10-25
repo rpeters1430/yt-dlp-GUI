@@ -31,6 +31,9 @@ function toApi(row) {
     target: row.target,
     packagePerPage: !!row.package_per_page,
     hostersOnly: !!row.hosters_only,
+    linkTypes: row.link_types || '',
+    autostart: row.autostart !== undefined ? !!row.autostart : true,
+    lastMaxPage: row.last_max_page || 0,
     enabled: !!row.enabled,
     lastCheckedAt: row.last_checked_at,
     lastCrawlId: row.last_crawl_id,
@@ -82,9 +85,11 @@ function toColumns(input, { partial }) {
     if (!WATCH_TARGETS.includes(input.target)) throw new WatchInputError(`target must be one of ${WATCH_TARGETS.join(', ')}`);
     cols.target = input.target;
   }
-  for (const [field, col] of [['packagePerPage', 'package_per_page'], ['hostersOnly', 'hosters_only'], ['enabled', 'enabled']]) {
+  for (const [field, col] of [['packagePerPage', 'package_per_page'], ['hostersOnly', 'hosters_only'], ['autostart', 'autostart'], ['enabled', 'enabled']]) {
     if (input[field] !== undefined) cols[col] = input[field] ? 1 : 0;
   }
+  if (input.linkTypes !== undefined) cols.link_types = String(input.linkTypes || '').trim();
+  if (input.lastMaxPage !== undefined) cols.last_max_page = Math.max(0, parseInt(input.lastMaxPage, 10) || 0);
   return cols;
 }
 
@@ -130,21 +135,44 @@ async function checkWatch(id, { crawlOptions = {} } = {}) {
       url: watch.url,
       mode: isThread ? 'last' : 'follow',
       lastN: watch.last_n,
-      maxPages: watch.last_n,
+      sincePage: watch.last_max_page || 0,
+      maxPages: Math.max(watch.last_n, 25),
       useSavedCookies: true,
       ...crawlOptions,
     }, { watchId: id });
     crawlId = started.id;
     result = await started.promise;
 
-    found = result.links.filter((l) => l.isNew && (!watch.hosters_only || l.hoster));
+    const watchTypes = (watch.link_types || '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+
+    found = result.links.filter((l) => {
+      if (!l.isNew) return false;
+      if (watch.hosters_only && !l.hoster) return false;
+      if (watchTypes.length > 0) {
+        const h = (l.host || '').toLowerCase();
+        const s = (linkGrabber.siteName ? linkGrabber.siteName(l.host) : h).toLowerCase();
+        const matches = watchTypes.some((t) => h.includes(t) || s.includes(t) || t.includes(s) || t.includes(h));
+        if (!matches) return false;
+      }
+      return true;
+    });
+
     if (watch.target === 'none') {
       // Nothing is sent, so nothing reaches the history: compare with the previous check instead.
       const previous = crawls.getStoredResult(watch.last_crawl_id);
       const before = new Set((previous?.links || []).map((l) => linkGrabber.canonicalUrl(l.url)));
       found = found.filter((l) => !before.has(linkGrabber.canonicalUrl(l.url)));
     } else if (found.length) {
-      const sent = await sendLinks({ target: watch.target, urls: found.map((l) => l.url), crawl: result, packagePerPage: !!watch.package_per_page });
+      const sent = await sendLinks({
+        target: watch.target,
+        urls: found.map((l) => l.url),
+        crawl: result,
+        packagePerPage: !!watch.package_per_page,
+        autostart: watch.autostart !== undefined ? !!watch.autostart : true,
+      });
       if (sent.failed.length) error = `${sent.failed.length} link${sent.failed.length === 1 ? '' : 's'} failed to send: ${sent.failed[0]}`;
     }
     if (result.error) error = error || `Stopped early: ${result.error}`;
@@ -155,11 +183,12 @@ async function checkWatch(id, { crawlOptions = {} } = {}) {
   }
 
   const title = watch.title || result?.threadTitle || '';
+  const newMaxPage = Math.max(watch.last_max_page || 0, result?.maxPage || 0);
   db.prepare(`
     UPDATE linkgrabber_watches
-    SET last_checked_at = ?, last_crawl_id = COALESCE(?, last_crawl_id), last_new_count = ?, last_error = ?, title = ?
+    SET last_checked_at = ?, last_crawl_id = COALESCE(?, last_crawl_id), last_new_count = ?, last_error = ?, title = ?, last_max_page = ?
     WHERE id = ?
-  `).run(new Date().toISOString(), result ? crawlId : null, found.length, error, title, id);
+  `).run(new Date().toISOString(), result ? crawlId : null, found.length, error, title, newMaxPage, id);
 
   const named = { ...watch, title };
   if (found.length) notify.threadWatchNewLinks(named, found, TARGET_NAMES[watch.target] || null);

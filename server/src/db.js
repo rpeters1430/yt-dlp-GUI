@@ -127,6 +127,9 @@ CREATE TABLE IF NOT EXISTS linkgrabber_watches (
   target TEXT NOT NULL DEFAULT 'none',
   package_per_page INTEGER NOT NULL DEFAULT 1,
   hosters_only INTEGER NOT NULL DEFAULT 1,
+  link_types TEXT NOT NULL DEFAULT '',
+  autostart INTEGER NOT NULL DEFAULT 1,
+  last_max_page INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL DEFAULT 1,
   last_checked_at TEXT,
   last_crawl_id TEXT,
@@ -179,6 +182,9 @@ function ensureColumn(table, column, definition) {
 // service fills in for older rows.
 ensureColumn('linkgrabber_history', 'canonical', 'TEXT');
 db.exec('CREATE INDEX IF NOT EXISTS idx_linkgrabber_history_canonical ON linkgrabber_history(canonical)');
+ensureColumn('linkgrabber_watches', 'link_types', "TEXT DEFAULT ''");
+ensureColumn('linkgrabber_watches', 'autostart', "INTEGER DEFAULT 1");
+ensureColumn('linkgrabber_watches', 'last_max_page', "INTEGER DEFAULT 0");
 ensureColumn('downloads', 'quality', 'TEXT');
 ensureColumn('downloads', 'container', "TEXT DEFAULT 'mp4'");
 ensureColumn('downloads', 'sub_langs', 'TEXT');
