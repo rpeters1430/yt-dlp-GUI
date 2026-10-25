@@ -72,6 +72,7 @@ export default function LinkResults({ crawl, onLinksChange, onWatch }) {
   const [groupByPost, setGroupByPost] = useState(hasPosts);
   const [target, setTarget] = useState(prefs.target || 'queue');
   const [packagePerPage, setPackagePerPage] = useState(prefs.packagePerPage ?? true);
+  const [autostart, setAutostart] = useState(prefs.autostart ?? true);
   const [onlySendFiltered, setOnlySendFiltered] = useState(true);
   const [sending, setSending] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -183,7 +184,7 @@ export default function LinkResults({ crawl, onLinksChange, onWatch }) {
     if (urlsToSend.length === 0) return;
     setSending(true);
     try {
-      const res = await api.sendLinks({ target, crawlId: crawl.id, urls: urlsToSend, packagePerPage });
+      const res = await api.sendLinks({ target, crawlId: crawl.id, urls: urlsToSend, packagePerPage, autostart });
       markSeen(res.seen || []);
       const failed = res.failed || [];
       showToast(`Sent ${res.sent} link${res.sent === 1 ? '' : 's'}${failed.length ? ` · ${failed.length} failed` : ''}`, { error: failed.length > 0 && res.sent === 0 });
@@ -250,7 +251,7 @@ export default function LinkResults({ crawl, onLinksChange, onWatch }) {
 
   const chip = (active, onClick, label, count, title) => (
     <button type="button" className={`chip${active ? ' active' : ''}`} onClick={onClick} title={title}>
-      {label}{count !== undefined && <span className="chip-count">{count}</span>}
+      {active && label !== 'All hosts' && label !== 'All types' && label !== 'All' && label !== 'Any status' ? '✓ ' : ''}{label}{count !== undefined && <span className="chip-count">{count}</span>}
     </button>
   );
 
@@ -410,12 +411,18 @@ export default function LinkResults({ crawl, onLinksChange, onWatch }) {
               {TARGETS.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
             </select>
             {target === 'jdownloader' && (
+              <label className="checkbox-label small" title="Start downloading immediately upon adding to JDownloader">
+                <input type="checkbox" checked={autostart} onChange={(e) => setAutostart(e.target.checked)} />
+                Auto-download
+              </label>
+            )}
+            {target === 'jdownloader' && (
               <label className="checkbox-label small">
                 <input type="checkbox" checked={packagePerPage} onChange={(e) => setPackagePerPage(e.target.checked)} />
                 Package per page
               </label>
             )}
-            <button type="button" onClick={handleSend} disabled={sending || urlsToSend.length === 0}>
+            <button type="button" className="btn-primary" onClick={handleSend} disabled={sending || urlsToSend.length === 0}>
               {sending ? 'Sending…' : `Send ${urlsToSend.length}`}
             </button>
             <button type="button" className="btn-secondary" onClick={handleCopy} disabled={urlsToSend.length === 0}>

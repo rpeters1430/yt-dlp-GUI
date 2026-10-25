@@ -196,22 +196,28 @@ export default function ThreadWatches({ draft, onDraftUsed, onOpenCrawl }) {
 
       {watches && watches.length > 0 && (
         <ul className="lg-cards">
-          {watches.map((w) => (
-            <li key={w.id} className="lg-card">
-              <button type="button" className="lg-card-open lg-card-main" onClick={() => w.lastCrawlId && onOpenCrawl(w.lastCrawlId)} disabled={!w.lastCrawlId}
-                title={w.lastCrawlId ? 'Show the latest check\'s links' : undefined}>
-                <span className="lg-card-title">{w.title || w.url}</span>
-                <span className="muted small">
-                  {intervalLabel(w.intervalMins)}, last {w.lastN} page{w.lastN === 1 ? '' : 's'} + new pages · {targetLabel(w.target)}
-                  {w.linkTypes ? ` · types: ${w.linkTypes}` : (w.hostersOnly ? ' · file hosts only' : '')}
-                  {w.autostart ? ' · auto-download' : ''}
-                </span>
-                <span className="muted small">
-                  {w.checking ? 'Checking now…' : w.lastCheckedAt ? `Checked ${relativeTime(w.lastCheckedAt)}: ${w.lastNewCount ?? 0} new` : 'Not checked yet'}
-                  {!w.enabled ? ' · paused' : ''}
-                </span>
-                {w.lastError && <span className="small lg-error">{w.lastError}</span>}
-              </button>
+          {watches.map((w) => {
+            const statusClass = w.checking ? 'checking' : !w.enabled ? 'paused' : w.lastError ? 'error' : 'ok';
+            return (
+              <li key={w.id} className="lg-card">
+                <button type="button" className="lg-card-open lg-card-main" onClick={() => w.lastCrawlId && onOpenCrawl(w.lastCrawlId)} disabled={!w.lastCrawlId}
+                  title={w.lastCrawlId ? 'Show the latest check\'s links' : undefined}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span className={`watch-status-dot ${statusClass}`} title={w.checking ? 'Checking now' : !w.enabled ? 'Paused' : w.lastError ? 'Error on last check' : 'Active'} />
+                    <span className="lg-card-title">{w.title || w.url}</span>
+                  </div>
+                  <div className="watch-badges">
+                    <span className="watch-badge watch-badge-cadence">{intervalLabel(w.intervalMins)}</span>
+                    <span className="watch-badge">Last {w.lastN} p. + new</span>
+                    <span className="watch-badge">{targetLabel(w.target)}{w.autostart ? ' (Auto)' : ''}</span>
+                    {w.linkTypes ? <span className="watch-badge watch-badge-types">{w.linkTypes}</span> : (w.hostersOnly ? <span className="watch-badge">File hosts</span> : null)}
+                  </div>
+                  <span className="muted small">
+                    {w.checking ? 'Checking now…' : w.lastCheckedAt ? `Checked ${relativeTime(w.lastCheckedAt)}: ${w.lastNewCount ?? 0} new` : 'Not checked yet'}
+                    {!w.enabled ? ' · paused' : ''}
+                  </span>
+                  {w.lastError && <span className="small lg-error">{w.lastError}</span>}
+                </button>
               <span className="lg-card-actions">
                 <label className="checkbox-label small">
                   <input type="checkbox" checked={w.enabled} onChange={(e) => patch(w, { enabled: e.target.checked })} />
@@ -228,7 +234,8 @@ export default function ThreadWatches({ draft, onDraftUsed, onOpenCrawl }) {
                 </button>
               </span>
             </li>
-          ))}
+          );
+        })}
         </ul>
       )}
     </section>

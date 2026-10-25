@@ -97,9 +97,6 @@ export default function NowDownloading({ job, onRemoved }) {
   const pct = Math.min(100, Math.max(0, job.percent || 0));
   const finalizing = live && /finaliz|post-processing|merging|split/i.test(job.stage || '');
   const meta = [job.extractor ? siteName(job.extractor) : null, jobQualityLine(job)].filter(Boolean).join(' · ');
-  const stats = live
-    ? [job.stage, job.speed].filter(Boolean).join(' · ')
-    : [job.stage, smoothedStats.speed, smoothedStats.eta ? `ETA ${smoothedStats.eta}` : null].filter(Boolean).join(' · ');
 
   return (
     <section className="hero">
@@ -114,7 +111,15 @@ export default function NowDownloading({ job, onRemoved }) {
           <div className="hero-meta">{meta}</div>
           <div className="hero-stats">
             <span className="hero-pct">{live ? (elapsed || '0:00') : `${Math.round(pct)}%`}</span>
-            <span className="mono-meta">{stats}</span>
+            <div className="hero-telemetry">
+              {(live ? job.speed : smoothedStats.speed) && (
+                <span className="telemetry-badge speed">{live ? job.speed : smoothedStats.speed}</span>
+              )}
+              {!live && smoothedStats.eta && (
+                <span className="telemetry-badge eta">ETA {smoothedStats.eta}</span>
+              )}
+              {job.stage && <span className="telemetry-stage">{job.stage}</span>}
+            </div>
           </div>
           {!live && <div className="progress"><div style={{ width: `${pct}%` }} /></div>}
           <div className="btn-row">

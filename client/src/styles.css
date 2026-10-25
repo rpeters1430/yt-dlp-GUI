@@ -7,17 +7,17 @@
 :root {
   color-scheme: dark;
 
-  --bg: #07060d;
-  --rail: #0a0914;
+  --bg: #06050b;
+  --rail: #090812;
   --bg-elevated: #0d0c18;      /* surface-1: tray, sections, side panels */
-  --surface: #121029;          /* surface-2: cards, inputs */
-  --surface-hover: #1a1738;    /* surface-3: selected nav, value chips, hover */
-  --surface-active: #221e45;   /* raised: selected segment, secondary button */
-  --segment-track: #07060d;
-  --segment-active: #221e45;
-  --border: #231f45;
-  --border-strong: #3a3470;
-  --border-active: #5d55a8;
+  --surface: #131126;          /* surface-2: cards, inputs */
+  --surface-hover: #1b1736;    /* surface-3: selected nav, value chips, hover */
+  --surface-active: #241f48;   /* raised: selected segment, secondary button */
+  --segment-track: #06050b;
+  --segment-active: #241f48;
+  --border: #1f1b3d;
+  --border-strong: #352f66;
+  --border-active: #5c52a8;
   --log-bg: #04030a;
   --text: #ece9ff;
   --text-2: #cfcbf2;
@@ -152,7 +152,8 @@ body {
 }
 a { color: var(--accent-text); text-decoration: none; }
 a:hover { color: var(--text); }
-.mono, code, kbd, pre { font-family: var(--font-mono); }
+.mono, code, kbd, pre { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.mono-meta { font-variant-numeric: tabular-nums; }
 h1, h2, h3, p { margin: 0; }
 ::selection { background: var(--accent-soft); color: var(--text); }
 

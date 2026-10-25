@@ -255,17 +255,36 @@ button.choice.choice-accent.active:hover { background: var(--accent); border-col
 /* Chips (filters, SponsorBlock categories) */
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
 button.chip {
-  background: transparent;
+  background: var(--surface);
   color: var(--text-2);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-pill);
-  padding: 7px 14px;
-  font-size: 14px;
+  padding: 6px 13px;
+  font-size: 13.5px;
   font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.12s ease-out;
 }
-button.chip:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
-button.chip.active { background: var(--surface-active); border-color: var(--border-active); color: var(--text); }
-.chip .chip-count { color: inherit; opacity: 0.9; }
+button.chip:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); border-color: var(--border-active); }
+button.chip.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+}
+.chip .chip-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+  opacity: 0.95;
+  margin-left: 4px;
+}
 
 /* Switch */
 button.switch {
@@ -1292,7 +1311,19 @@ button.more-by-item:hover:not(:disabled) { background: none; filter: brightness(
 .lg-row .checkbox-label { min-width: 0; flex: 1 1 auto; }
 .lg-url { overflow-wrap: anywhere; font-size: 12.5px; }
 .lg-meta { flex: 0 0 auto; white-space: nowrap; }
-.lg-send { position: sticky; bottom: 0; background: var(--bg-elevated); padding: 12px 0 0; }
+.lg-send {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg-elevated);
+  padding: 14px 16px;
+  border-top: 1px solid var(--border-strong);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  z-index: 5;
+}
 /* Rows off screen skip layout and paint, so a 2,000-link list scrolls smoothly. */
 .lg-row:not(.lg-row-head) { content-visibility: auto; contain-intrinsic-size: auto 40px; }
 .lg-meta { display: flex; gap: 6px; align-items: center; }

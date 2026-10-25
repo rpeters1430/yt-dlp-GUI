@@ -177,7 +177,14 @@ button,
 a.btn,
 a.btn-primary,
 a.btn-ghost,
-a.btn-secondary { transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease; }
+a.btn-secondary {
+  transition: transform 0.12s ease-out, background 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+button:active:not(:disabled),
+a.btn:active,
+a.btn-primary:active {
+  transform: scale(0.98);
+}
 button:not([class]):hover:not(:disabled),
 button.btn-primary:hover:not(:disabled),
 a.btn-primary:hover,
@@ -196,6 +203,19 @@ button.btn-danger:hover:not(:disabled) {
 }
 button.icon-btn:hover:not(:disabled) { color: var(--danger); background: var(--danger-soft); }
 
+.staged-card,
+.stat-card,
+.watch-card,
+.lg-card,
+.rule-card {
+  transition: border-color 0.15s ease-out, background-color 0.15s ease-out, box-shadow 0.15s ease-out;
+}
+.staged-card:hover,
+.watch-card:hover,
+.lg-card:hover {
+  border-color: var(--border-strong);
+}
+
 /* Inputs: terminal fields. */
 input,
 textarea,
@@ -207,7 +227,7 @@ input.command-input,
 input.command-input:focus { background: none; box-shadow: none; }
 
 /* Home: command bar and HUD stats. */
-.command-bar { background: var(--bg-elevated); border-color: var(--border-strong); }
+.command-bar { background: var(--log-bg); border-color: var(--border-strong); }
 .command-bar::before {
   content: '>';
   flex: none;
@@ -217,7 +237,7 @@ input.command-input:focus { background: none; box-shadow: none; }
   color: var(--accent);
   text-shadow: var(--glow-text);
 }
-.command-bar.focused { border-color: var(--accent); box-shadow: var(--glow), inset 0 0 24px rgba(0, 240, 255, 0.06); }
+.command-bar.focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--glow), inset 0 0 24px rgba(0, 240, 255, 0.06); }
 input.command-input { padding-left: 4px; }
 
 .stats-inline { gap: 8px; }
@@ -356,7 +376,108 @@ button.switch.on:hover:not(:disabled) { box-shadow: var(--glow); }
   0%, 100% { box-shadow: 0 0 8px rgba(255, 42, 109, 0.45); }
   50% { box-shadow: 0 0 18px rgba(255, 42, 109, 0.85); }
 }
+@keyframes cyan-pulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(0, 240, 255, 0.4); opacity: 0.85; }
+  50% { box-shadow: 0 0 14px rgba(0, 240, 255, 0.9); opacity: 1; }
+}
 .badge-live { animation: neon-pulse 2s ease-in-out infinite; }
+
+/* Micro badges & Telemetry tags */
+.kbd-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-active);
+  color: var(--text-4);
+  margin-left: 5px;
+  letter-spacing: 0;
+}
+.hero-telemetry {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.telemetry-badge {
+  padding: 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.telemetry-badge.speed {
+  border-color: rgba(0, 240, 255, 0.35);
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+.telemetry-badge.eta {
+  border-color: rgba(185, 140, 255, 0.35);
+  color: var(--neon-violet);
+  background: rgba(185, 140, 255, 0.08);
+}
+.telemetry-stage {
+  color: var(--text-secondary);
+}
+
+/* Watch cards & status dots */
+.watch-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+}
+.watch-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.watch-badge-cadence {
+  border-color: rgba(57, 255, 156, 0.3);
+  color: var(--neon-green);
+  background: rgba(57, 255, 156, 0.08);
+}
+.watch-badge-types {
+  border-color: rgba(0, 240, 255, 0.3);
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+.watch-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+}
+.watch-status-dot.ok {
+  background: var(--neon-green);
+  box-shadow: 0 0 6px rgba(57, 255, 156, 0.6);
+}
+.watch-status-dot.checking {
+  background: var(--neon-cyan);
+  animation: cyan-pulse 1.2s ease-in-out infinite;
+}
+.watch-status-dot.paused {
+  background: var(--text-tertiary);
+}
+.watch-status-dot.error {
+  background: var(--neon-magenta);
+  box-shadow: 0 0 8px rgba(255, 42, 109, 0.7);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .badge-live { animation: none; }
+  .badge-live,
+  .watch-status-dot.checking { animation: none; }
 }

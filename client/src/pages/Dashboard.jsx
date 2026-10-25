@@ -158,8 +158,8 @@ export default function Dashboard() {
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
           />
-          <button type="button" className="btn-ghost btn-sm command-paste" onClick={pasteFromClipboard}>
-            <ClipboardPaste size={14} /> Paste
+          <button type="button" className="btn-ghost btn-sm command-paste" onClick={pasteFromClipboard} title="Paste from clipboard (⌘V / Ctrl+V)">
+            <ClipboardPaste size={14} /> Paste <span className="kbd-badge">⌘V</span>
           </button>
           <button type="submit" className="btn-primary command-go" disabled={!text.trim()}>Analyze</button>
         </form>
