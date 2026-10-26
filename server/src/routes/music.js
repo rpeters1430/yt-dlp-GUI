@@ -14,6 +14,7 @@ const { requireAuth } = require('../auth');
 
 const router = express.Router();
 router.use(requireAuth);
+router.use('/library', require('./musicLibrary'));
 
 // Search for albums or tracks
 router.get('/search', async (req, res) => {

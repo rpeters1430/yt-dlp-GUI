@@ -34,4 +34,27 @@ For a non-Docker installation, install Python 3 and Mutagen (for example `python
 
 ## Limits
 
-Existing libraries are not automatically retagged or renamed. Fingerprint/AcoustID matching, an existing-library metadata editor, automatic quality upgrades and catalog-based release monitoring are future work. Artwork fetch failures are optional; they can produce a correctly tagged file without a cover. This implementation does not guarantee that a YouTube source is the exact master of a selected catalog release.
+Existing files can be reviewed and retagged individually using the Library tab. Automatic renaming, bulk retagging, quality upgrades and catalog-based release monitoring are not included. Artwork fetch failures are optional; they can produce a correctly tagged file without a cover. This implementation does not guarantee that a YouTube source is the exact master of a selected catalog release.
+
+
+## Review existing music
+
+Open **Music → Library** to browse the configured music directory. The browser is bounded to 200 audio files and 3,000 directory entries per request; enter an artist/album subfolder for a large collection. Hidden folders, staging, backups and symlinks are excluded.
+
+Select a file to inspect its current tags. Search MusicBrainz, choose a release and a track, then **Preview changes**. Review the before/after tags and use **Apply reviewed tags** to write only those reviewed changes. Unrelated comments, artwork and other metadata are preserved. Standard MusicBrainz ID3 UFIDs are read correctly. Choosing another release clears obsolete recording identifiers/ISRCs when the selected release does not provide replacements. Existing filenames are never changed.
+
+Previews expire after 24 hours. A changed file or changed music root invalidates the preview. Every apply retains the original audio at `.tag-backups/<review ID>/original.<extension>`. Recent tag reviews provide **Restore original**, which is allowed only while the current file still matches the trusted output revision. Newer external edits are not accepted as this app's output. Updates and restores schedule configured Jellyfin/Plex library refreshes.
+
+Exclude `.tag-backups` as well as `.staging` from media-server scanning. Backups are not deleted automatically; they take space equal to the original files. Remove an old review's backup folder manually only after you no longer need restore.
+
+If a process stops after the file is replaced but before the review database records the result, the review remains `applying` and automatic restore is intentionally unavailable. Inspect the current file and recover the retained original backup manually; the app cannot safely infer whether another editor has changed the new file.
+
+## Optional audio fingerprint identification
+
+Chromaprint's `fpcalc` is included in the Docker image as `libchromaprint-tools`. Native installations must install that package or provide `FPCALC_BIN`.
+
+Expand **Optional audio identification** in the Library tab and enter a free **AcoustID application key**, obtained from https://acoustid.org/new-application. This is the application/client key, not a personal fingerprint-submission user key. Alternatively supply `ACOUSTID_CLIENT_KEY` through the container environment. The API returns only whether a key is configured; it never returns the key itself.
+
+Select a song and press **Identify audio with AcoustID**. The app computes a local fingerprint and sends only that fingerprint and the duration to AcoustID. Requests are serialized at no more than one per 400 ms. It does not upload the music file or submit new fingerprints. Suggested recordings and releases require your selection and the same tag preview/apply workflow. A fingerprint score does not establish an exact release edition or master.
+
+Manual MusicBrainz release selection requires no AcoustID key and works independently of the fingerprint service.

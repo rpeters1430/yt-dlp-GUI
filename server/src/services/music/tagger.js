@@ -1,7 +1,7 @@
 const path = require('path');
 const { spawn } = require('child_process');
 
-function writeVerifiedTags(filepath, metadata, artwork = null) {
+function runTagger(payload) {
   return new Promise((resolve, reject) => {
     const proc = spawn(process.env.PYTHON_BIN || 'python3', [path.join(__dirname, 'tag_audio.py')], {stdio:['pipe','pipe','pipe']});
     let output = '', error = '';
@@ -15,7 +15,14 @@ function writeVerifiedTags(filepath, metadata, artwork = null) {
       if (code !== 0) return reject(new Error(`Music tagging failed: ${error.trim() || `exit ${code}`}`));
       try { resolve(JSON.parse(output)); } catch { reject(new Error('Music tagger returned invalid verification data')); }
     });
-    proc.stdin.end(JSON.stringify({filepath, metadata, artwork:artwork ? {data:artwork.data.toString('base64')} : null}));
+    proc.stdin.end(JSON.stringify(payload));
   });
 }
-module.exports = {writeVerifiedTags};
+function writeVerifiedTags(filepath, metadata, artwork = null, options = {}) {
+  return runTagger({filepath, metadata, artwork:artwork ? {data:artwork.data.toString('base64')} : null,
+    scrub:options.scrub !== false, expectedSha256:options.expectedSha256, clearFields:options.clearFields || []});
+}
+function inspectAudio(filepath, metadata = {}) {
+  return runTagger({operation:'inspect', filepath, metadata});
+}
+module.exports = {writeVerifiedTags, inspectAudio};
