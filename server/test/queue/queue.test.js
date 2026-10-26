@@ -418,3 +418,61 @@ test('removeJob with deleteFile removes the media file, sidecars, and split part
     assert.equal(fs.existsSync(f), false, `${f} should be deleted`);
   }
 });
+
+test('music tag failure retains audio and retry imports it without another download', async t => {
+  const q = loadQueue(t);
+  const music = require('../../src/services/music');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(),'music-retry-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const staged = path.join(dir,'staged.mp3');
+  fs.writeFileSync(staged,'audio');
+  let fail = true;
+  t.mock.method(music,'tagMusicFile',async()=>{
+    if (fail) throw new Error('Tag verification failed');
+    return {verified:true,tagged:true,tags:{title:'Song'},tagger:'test'};
+  });
+  q.state.download = async()=>({filepath:staged});
+  q.queue.init(q.io);
+  const id = q.queue.enqueue(URL_A,{audioOnly:true,optionsJson:{isMusicDownload:true,
+    musicMetadata:{title:'Song'},musicImport:{finalTemplate:path.join(dir,'Library','Song.%(ext)s'),saveCover:false}}});
+  await waitFor(()=>statusOf(q,id)==='failed');
+  assert.equal(q.completed.mock.callCount(),0);
+  assert.equal(q.queue.getJob(id).filepath,staged);
+  assert.equal(fs.existsSync(staged),true);
+  fail = false;
+  q.queue.retryJob(id);
+  await waitFor(()=>statusOf(q,id)==='completed');
+  assert.equal(q.state.downloadCalls.length,1);
+  assert.equal(q.queue.getJob(id).filepath,path.join(dir,'Library','Song.mp3'));
+  assert.equal(fs.existsSync(q.queue.getJob(id).filepath),true);
+  assert.equal(fs.existsSync(staged),false);
+});
+
+test('a music watch cannot bypass verified import when its metadata probe fails', async t => {
+  const q = loadQueue(t);
+  q.state.info = new Error('Metadata unavailable');
+  q.queue.init(q.io);
+  const id = q.queue.enqueue(URL_A,{audioOnly:true,optionsJson:{isMusicDownload:true}});
+  await waitFor(()=>finished(q,id));
+  assert.equal(statusOf(q,id),'failed');
+  assert.equal(q.state.downloadCalls.length,0);
+  assert.equal(q.completed.mock.callCount(),0);
+});
+
+test('a persisted imported checkpoint completes after restart without retagging or redownloading', async t => {
+  const q = loadQueue(t);
+  const music = require('../../src/services/music');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(),'music-imported-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const final = path.join(dir,'Song.mp3');
+  fs.writeFileSync(final,'published audio');
+  const tagger = t.mock.method(music,'tagMusicFile',async()=>{throw new Error('must not retag a published file');});
+  q.state.info = new Error('must not probe again');
+  q.queue.init(q.io);
+  const id = q.queue.enqueue(URL_A,{audioOnly:true,optionsJson:{isMusicDownload:true,musicMetadata:{title:'Song'},musicImportedFile:final}});
+  await waitFor(()=>finished(q,id));
+  assert.equal(statusOf(q,id),'completed');
+  assert.equal(q.queue.getJob(id).filepath,final);
+  assert.equal(q.state.downloadCalls.length,0);
+  assert.equal(tagger.mock.callCount(),0);
+});

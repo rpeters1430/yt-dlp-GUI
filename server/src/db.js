@@ -21,6 +21,15 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS music_batches (
+  id TEXT PRIMARY KEY,
+  expected_count INTEGER NOT NULL,
+  enqueue_errors INTEGER NOT NULL DEFAULT 0,
+  enqueuing INTEGER NOT NULL DEFAULT 1,
+  notified INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS downloads (
   id TEXT PRIMARY KEY,
   url TEXT NOT NULL,

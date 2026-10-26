@@ -34,6 +34,7 @@ import {
   Link as LinkIcon,
   Copy,
 } from 'lucide-react';
+import { musicTrackKey } from '../musicTracks.js';
 import { api } from '../api.js';
 import { useDownloads } from '../context/DownloadsContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
@@ -51,7 +52,7 @@ function parseJobOptions(json) {
 }
 
 function libraryTrackKey(t) {
-  return `${t.artist || ''}|${t.title || ''}`;
+  return `${t.artist || ''}|${t.album || ''}|${t.title || ''}|${t.discNumber || ''}|${t.trackNumber || ''}`;
 }
 
 function formatDuration(sec) {
@@ -63,7 +64,7 @@ function formatDuration(sec) {
 }
 
 const FORMAT_OPTIONS = [
-  { value: 'opus', label: 'OPUS (Highest Quality - YouTube Native ~160k VBR)' },
+  { value: 'opus', label: 'OPUS (Prefer native Opus; quality depends on source)' },
   { value: 'mp3', label: 'MP3 (Universal 320 kbps CBR, Tagged)' },
   { value: 'm4a', label: 'M4A / AAC (Apple Compatible)' },
   { value: 'flac', label: 'FLAC (Transcoded - large file, not native lossless)' },
@@ -73,7 +74,7 @@ const FORMAT_OPTIONS = [
 const QUALITY_OPTIONS_BY_FORMAT = {
   // YouTube's Opus stream is always kept as-is (no re-encode), so there's no bitrate to pick.
   opus: [
-    { value: '0', label: 'Native / Best Quality (Direct stream copy, ~160 kbps VBR)' },
+    { value: '0', label: 'Prefer native Opus (avoid conversion when available)' },
   ],
   mp3: [
     { value: '320k', label: '320 kbps (Highest Quality CBR)' },
@@ -97,6 +98,7 @@ const QUALITY_OPTIONS_BY_FORMAT = {
 };
 
 export default function MusicPage() {
+  const [metadataSource, setMetadataSource] = useState('itunes');
   const [activeTab, setActiveTab] = useState('search'); // 'search' | 'direct' | 'watches' | 'settings'
 
   // Settings
@@ -105,6 +107,9 @@ export default function MusicPage() {
     musicFormat: 'mp3',
     musicQuality: '320k',
     saveCover: true,
+    naming: 'classic',
+    embedArtwork: true,
+    libraryMode: 'standalone',
   });
   const [settingsSavedToast, setSettingsSavedToast] = useState(false);
 
@@ -242,7 +247,7 @@ export default function MusicPage() {
 
   async function handleOpenMatchModal(track) {
     setInspectingTrack(track);
-    setCustomMatchUrl(trackMatches[track.trackNumber]?.youtubeUrl || track.youtubeUrl || '');
+    setCustomMatchUrl(trackMatches[musicTrackKey(track)]?.youtubeUrl || track.youtubeUrl || '');
     setLoadingCandidates(true);
     setMatchCandidates([]);
     try {
@@ -263,7 +268,7 @@ export default function MusicPage() {
     if (!inspectingTrack) return;
     setTrackMatches((prev) => ({
       ...prev,
-      [inspectingTrack.trackNumber]: {
+      [musicTrackKey(inspectingTrack)]: {
         youtubeUrl: candidate.youtubeUrl || candidate.url,
         title: candidate.title,
         uploader: candidate.uploader,
@@ -280,7 +285,7 @@ export default function MusicPage() {
     if (!inspectingTrack || !customMatchUrl.trim()) return;
     setTrackMatches((prev) => ({
       ...prev,
-      [inspectingTrack.trackNumber]: {
+      [musicTrackKey(inspectingTrack)]: {
         youtubeUrl: customMatchUrl.trim(),
         title: customMatchUrl.trim(),
         uploader: 'Custom URL',
@@ -418,7 +423,7 @@ export default function MusicPage() {
     for (const t of songs) {
       const key = libraryTrackKey(t);
       if (!t?.title || key in libraryTracks || tracksToCheck.some((x) => x.key === key)) continue;
-      tracksToCheck.push({ key, artist: t.artist, title: t.title });
+      tracksToCheck.push({ key, artist: t.artist, title: t.title, album:t.album, discNumber:t.discNumber, trackNumber:t.trackNumber, strictVersion:true });
     }
 
     if (albumsToCheck.length === 0 && tracksToCheck.length === 0) return;
@@ -436,7 +441,7 @@ export default function MusicPage() {
             setSelectedTracks((prev) => {
               const next = new Set(prev);
               for (const t of selectedAlbum.tracks) {
-                if (res.tracks[libraryTrackKey(t)]) next.delete(t.trackNumber);
+                if (res.tracks[libraryTrackKey(t)]) next.delete(musicTrackKey(t));
               }
               return next;
             });
@@ -544,7 +549,7 @@ export default function MusicPage() {
     setMatchedArtist(null);
 
     try {
-      const data = await api.searchMusic(q, sType);
+      const data = await api.searchMusic(q, sType, metadataSource);
       setSearchResults(data.results || []);
       setMatchedArtist(data.matchedArtist || null);
 
@@ -640,7 +645,7 @@ export default function MusicPage() {
           year: details.album.releaseYear,
           genre: details.album.genre,
           artwork: details.album.artwork,
-          totalTracks: details.tracks.length,
+          totalTracks: t.totalTracks,
         })),
         audioFormat: downloadFormat,
         audioQuality: downloadQuality,
@@ -686,7 +691,7 @@ export default function MusicPage() {
         </button>
         <div className="tile-title" title={item.name}>{item.name}</div>
         <div className="tile-meta mono-meta">
-          {[item.releaseYear, item.isSingle ? (item.trackCount > 1 ? `EP · ${item.trackCount} songs` : 'Single') : `${item.trackCount} songs`].filter(Boolean).join(' · ')}
+          {[item.source === 'musicbrainz' ? item.artist : null, item.releaseYear, item.country, item.edition, item.isSingle ? (item.trackCount > 1 ? `EP · ${item.trackCount} songs` : 'Single') : `${item.trackCount} songs`].filter(Boolean).join(' · ')}
         </div>
       </div>
     );
@@ -720,8 +725,9 @@ export default function MusicPage() {
       // unticks any it finds once it hears back)
       const missingTrackNums = new Set((data.tracks || [])
         .filter((t) => !libraryTracks[libraryTrackKey(t)])
-        .map((t) => t.trackNumber));
+        .map(musicTrackKey));
       setSelectedTracks(missingTrackNums);
+      setTrackMatches({});
       setSelectedAlbum(data);
     } catch (err) {
       showToast(`Could not load album details: ${err.message}`, 'error');
@@ -742,7 +748,7 @@ export default function MusicPage() {
 
   function selectAllTracks() {
     if (!selectedAlbum?.tracks) return;
-    setSelectedTracks(new Set(selectedAlbum.tracks.map((t) => t.trackNumber)));
+    setSelectedTracks(new Set(selectedAlbum.tracks.map(musicTrackKey)));
   }
 
   function deselectAllTracks() {
@@ -753,7 +759,7 @@ export default function MusicPage() {
   async function handleDownloadAlbum(onlySelected = false, returnToSearch = false) {
     if (!selectedAlbum || !selectedAlbum.tracks) return;
     const tracksToDownload = selectedAlbum.tracks.filter((t) =>
-      onlySelected ? selectedTracks.has(t.trackNumber) : true
+      onlySelected ? selectedTracks.has(musicTrackKey(t)) : true
     );
 
     if (tracksToDownload.length === 0) {
@@ -774,9 +780,9 @@ export default function MusicPage() {
           year: selectedAlbum.album.releaseYear,
           genre: selectedAlbum.album.genre,
           artwork: selectedAlbum.album.artwork,
-          totalTracks: selectedAlbum.tracks.length,
+          totalTracks: t.totalTracks,
           totalDiscs: selectedAlbum.album.totalDiscs || selectedAlbum.tracks[0]?.totalDiscs || 1,
-          youtubeUrl: trackMatches[t.trackNumber]?.youtubeUrl || t.youtubeUrl || null,
+          youtubeUrl: trackMatches[musicTrackKey(t)]?.youtubeUrl || t.youtubeUrl || null,
         })),
         audioFormat: downloadFormat,
         audioQuality: downloadQuality,
@@ -821,12 +827,12 @@ export default function MusicPage() {
       return;
     }
     try {
-      const customMatch = trackMatches[track.trackNumber];
+      const customMatch = trackMatches[musicTrackKey(track)];
       const payload = {
         track: {
           ...track,
           albumArtist: selectedAlbum?.album?.artist || track.artist,
-          totalTracks: selectedAlbum?.tracks?.length || 1,
+          totalTracks: track.totalTracks || null,
           totalDiscs: selectedAlbum?.album?.totalDiscs || track.totalDiscs || 1,
           youtubeUrl: customMatch?.youtubeUrl || track.youtubeUrl || null,
         },
@@ -884,12 +890,15 @@ export default function MusicPage() {
         }
 
         const payload = {
-          tracks: chosenEntries.map((e, idx) => ({
-            title: e.title,
-            artist: directInfo.uploader || 'YouTube Music',
-            album: directInfo.title || 'Playlist',
-            trackNumber: idx + 1,
-            totalTracks: chosenEntries.length,
+          tracks: chosenEntries.map((e) => ({
+            title: e.track || e.title,
+            artist: e.artist || e.uploader || 'Unknown Artist',
+            album: e.album || null,
+            trackNumber: e.trackNumber || null,
+            discNumber:e.discNumber || null,
+            playlistName:directInfo.title,
+            playlistIndex:e.playlistIndex,
+            metadataSource:'extractor',
             youtubeUrl: e.url,
             artwork: e.thumbnail || directInfo.thumbnail,
           })),
@@ -908,8 +917,10 @@ export default function MusicPage() {
       } else {
         const payload = {
           track: {
-            title: directInfo.title,
-            artist: directInfo.uploader || 'YouTube',
+            title: directInfo.track || directInfo.title,
+            artist: directInfo.artist || directInfo.uploader || 'Unknown Artist',
+            album:directInfo.album || null,
+            metadataSource:'extractor',
             trackNumber: 1,
             youtubeUrl: directUrl,
             artwork: directInfo.thumbnail,
@@ -1048,6 +1059,17 @@ export default function MusicPage() {
         <>
           {!selectedAlbum && !selectedArtist && (
             <>
+              <label className="mono-meta">Metadata catalog
+                <select className="select" value={metadataSource} aria-label="Metadata catalog" onChange={e => {
+                  setMetadataSource(e.target.value); setSearchResults([]); setMatchedArtist(null);
+                  setSearchError('');
+                  if (e.target.value === 'musicbrainz') setSearchType('album');
+                }}>
+                  <option value="itunes">Apple catalog</option>
+                  <option value="musicbrainz">MusicBrainz releases (free)</option>
+                </select>
+              </label>
+              {metadataSource === 'musicbrainz' && <p className="mono-meta">Search artist and album, then choose the country, date and edition that match your music.</p>}
               <form className="music-search" onSubmit={handleSearch}>
                 <input
                   type="text"
@@ -1064,7 +1086,7 @@ export default function MusicPage() {
                     setMatchedArtist(null);
                     if (searchQuery.trim()) handleSearch(null, searchQuery, v);
                   }}
-                  options={[{ value: 'artist', label: 'Artists' }, { value: 'album', label: 'Albums' }, { value: 'track', label: 'Songs' }]}
+                  options={metadataSource === 'musicbrainz' ? [{value:'album',label:'Releases'}] : [{ value: 'artist', label: 'Artists' }, { value: 'album', label: 'Albums' }, { value: 'track', label: 'Songs' }]}
                 />
               </form>
               {searching && <p className="empty-line">Searching…</p>}
@@ -1240,7 +1262,7 @@ export default function MusicPage() {
                     </div>
                     <h2 className="album-title">{album.name}</h2>
                     <div className="album-artist">
-                      <button type="button" className="link-plain" onClick={() => handleViewArtist(album.artistId, album.artist)}>{album.artist}</button>
+                      <button type="button" className="link-plain" disabled={!album.artistId} onClick={() => handleViewArtist(album.artistId, album.artist)}>{album.artist}</button>
                       {album.genre ? ` · ${album.genre}` : ''}
                     </div>
                     {jellyfinStatus?.configured && (
@@ -1276,7 +1298,7 @@ export default function MusicPage() {
                       <button
                         type="button"
                         className="text-btn"
-                        onClick={() => setSelectedTracks(new Set(tracks.filter((t) => !libraryTracks[libraryTrackKey(t)]).map((t) => t.trackNumber)))}
+                        onClick={() => setSelectedTracks(new Set(tracks.filter((t) => !libraryTracks[libraryTrackKey(t)]).map(musicTrackKey)))}
                       >
                         Select missing
                       </button>
@@ -1294,8 +1316,8 @@ export default function MusicPage() {
                 <div className="album-body">
                   <div className="tracklist" role="list">
                     {tracks.map((t) => {
-                      const isSelected = selectedTracks.has(t.trackNumber);
-                      const customMatch = trackMatches[t.trackNumber];
+                      const isSelected = selectedTracks.has(musicTrackKey(t));
+                      const customMatch = trackMatches[musicTrackKey(t)];
                       const job = getTrackJobStatus(t.title, t.artist || selectedAlbum?.album?.artist, t.album || selectedAlbum?.album?.name);
                       const inJellyfin = !!libraryTracks[libraryTrackKey(t)];
                       const state = job?.status === 'downloading'
@@ -1307,7 +1329,7 @@ export default function MusicPage() {
                           key={`${t.discNumber || 1}-${t.trackNumber}`}
                           role="listitem"
                           className={`track${isSelected ? ' selected' : ''}${inJellyfin && !isSelected ? ' owned' : ''}`}
-                          onClick={() => toggleTrackSelection(t.trackNumber)}
+                          onClick={() => toggleTrackSelection(musicTrackKey(t))}
                         >
                           <span className={`track-check${isSelected ? ' on' : ''}`} role="checkbox" aria-checked={isSelected} aria-label={`Select ${t.title}`} />
                           <span className="track-num mono">{t.trackNumber}</span>
@@ -1514,7 +1536,7 @@ export default function MusicPage() {
                   color: 'var(--success, #10b981)',
                   lineHeight: 1.4,
                 }}>
-                  ✨ <strong>Highest Quality:</strong> OPUS copies YouTube's native ~160 kbps VBR audio stream directly with zero transcoding loss.
+                  ✨ <strong>Highest Quality:</strong> OPUS copies YouTube's native ~160 kbps VBR audio stream directly with no additional transcoding loss.
                 </div>
               ) : null}
 
@@ -1954,8 +1976,8 @@ export default function MusicPage() {
                 </strong>
                 YouTube encodes all uploaded audio to lossy streams. It does <em>not</em> host FLAC or uncompressed lossless audio.
                 <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
-                  <li><strong>OPUS:</strong> The true highest-quality stream YouTube provides (~160 kbps VBR 48kHz). Extracted directly with <em>zero transcoding loss</em>.</li>
-                  <li><strong>MP3 (320 kbps):</strong> Transcoded from YouTube's Opus stream at maximum bitrate with full ID3v2 tags and cover art for 100% universal player compatibility.</li>
+                  <li><strong>OPUS:</strong> Prefers the available native Opus stream, avoiding conversion where possible with <em>no additional transcoding loss</em>.</li>
+                  <li><strong>MP3 (320 kbps):</strong> Transcoded from YouTube's Opus stream at maximum bitrate with full ID3v2 tags and cover art for broad player compatibility.</li>
                   <li><strong>M4A (AAC):</strong> High compatibility with Apple devices and iTunes.</li>
                   <li><strong>FLAC / WAV:</strong> Re-encodes YouTube's lossy 160k stream into an uncompressed container. It inflates file size by ~10× without restoring lost audio frequencies.</li>
                 </ul>
@@ -1972,6 +1994,20 @@ export default function MusicPage() {
                 </label>
               </div>
 
+              <label>Library management
+                <select className="select" value={settings.libraryMode || 'standalone'} onChange={e => setSettings({...settings, libraryMode:e.target.value})}>
+                  <option value="standalone">Manage tags and library here</option>
+                  <option value="lidarr">Send downloads to Lidarr for import</option>
+                </select>
+              </label>
+              <label>Music naming
+                <select className="select" value={settings.naming || 'classic'} onChange={e => setSettings({...settings, naming:e.target.value})}>
+                  <option value="classic">Artist / Album / 01 - Title</option>
+                  <option value="release">Artist / Album (Year) [Edition] [Release ID] / Disc 01 / 01 - Title</option>
+                </select>
+              </label>
+              <ToggleRow label="Embed album artwork" description="Independent of saving a separate cover image" checked={settings.embedArtwork !== false} onChange={value => setSettings({...settings, embedArtwork:value})} />
+              <p className="mono-meta">Music is tagged with Mutagen and verified before import. Existing files are never replaced automatically. Naming changes apply to new downloads.</p>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10 }}>
                 <button type="submit" className="btn btn-primary">
                   Save Music Settings
@@ -2596,7 +2632,7 @@ export default function MusicPage() {
               </button>
             </div>
 
-            {trackMatches[inspectingTrack.trackNumber] && (
+            {trackMatches[musicTrackKey(inspectingTrack)] && (
               <div style={{
                 marginBottom: 16,
                 padding: '10px 14px',
@@ -2608,7 +2644,7 @@ export default function MusicPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                   <div>
                     <strong style={{ color: 'var(--success)' }}>✓ Custom match active:</strong>{' '}
-                    <span>{trackMatches[inspectingTrack.trackNumber].title}</span>
+                    <span>{trackMatches[musicTrackKey(inspectingTrack)].title}</span>
                   </div>
                   <button
                     type="button"
@@ -2617,7 +2653,7 @@ export default function MusicPage() {
                     onClick={() => {
                       setTrackMatches((prev) => {
                         const copy = { ...prev };
-                        delete copy[inspectingTrack.trackNumber];
+                        delete copy[musicTrackKey(inspectingTrack)];
                         return copy;
                       });
                       showToast(`Reset to auto-match for "${inspectingTrack.title}"`);
@@ -2645,7 +2681,7 @@ export default function MusicPage() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
                   {matchCandidates.map((c, idx) => {
-                    const isSelected = trackMatches[inspectingTrack.trackNumber]?.youtubeUrl === c.youtubeUrl;
+                    const isSelected = trackMatches[musicTrackKey(inspectingTrack)]?.youtubeUrl === c.youtubeUrl;
                     return (
                       <div
                         key={c.id || idx}

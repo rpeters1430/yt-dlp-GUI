@@ -689,3 +689,7 @@ Set `ALLOW_LOCAL_URLS=1` in your environment to permit downloading from internal
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) — the downloader doing all the heavy lifting
 - [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) — static FFmpeg builds
 - [QuickJS-ng](https://github.com/quickjs-ng/quickjs) — JavaScript runtime for YouTube challenge solving
+
+### Standalone music tagging
+
+Music downloads can be tagged and imported without Lidarr using free MusicBrainz metadata, optional Cover Art Archive images, and Mutagen. Select **Music → Settings → Manage tags and library here**, then choose **MusicBrainz releases** in Search. Files are verified before import; failed tagging can be retried without downloading again. Existing Lidarr-enabled installations keep their handoff mode until changed. See [the standalone music guide](docs/standalone-music.md) for setup, naming, dependencies, and limitations.

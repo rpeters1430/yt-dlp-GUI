@@ -141,7 +141,7 @@ export const api = {
   listTwitchJobs: () => request('/twitch/jobs'),
 
   // Music Hub
-  searchMusic: (q, type = 'album') => request(`/music/search?q=${encodeURIComponent(q)}&type=${encodeURIComponent(type)}`),
+  searchMusic: (q, type = 'album', source = 'itunes') => request(`/music/search?q=${encodeURIComponent(q)}&type=${encodeURIComponent(type)}&source=${encodeURIComponent(source)}`),
   getMusicAlbum: (id) => request(`/music/album/${encodeURIComponent(id)}`),
   getMusicArtist: (id) => request(`/music/artist/${encodeURIComponent(id)}`),
   resolveMusicArtistChannel: (name) => request(`/music/artist-channel?name=${encodeURIComponent(name)}`),

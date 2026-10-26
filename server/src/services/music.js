@@ -1,7 +1,6 @@
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { writeVerifiedTags } = require('./music/tagger');
 const ytdlp = require('./ytdlp');
 function getQueue() {
   return require('./queue');
@@ -9,6 +8,8 @@ function getQueue() {
 function getDb() {
   return require('../db');
 }
+const { randomUUID } = require('crypto');
+const { libraryTemplate, renderedPath } = require('./music/library');
 const { resolveMusicDir } = require('./ytdlpPaths');
 
 // Only replacing path separators/reserved characters isn't enough: a name that sanitizes to
@@ -278,7 +279,7 @@ async function getAlbumDetails(collectionId) {
     .sort((a, b) => (a.discNumber || 1) - (b.discNumber || 1) || (a.trackNumber || 0) - (b.trackNumber || 0))
     .map((t, index) => ({
       trackNumber: t.trackNumber || index + 1,
-      totalTracks: songItems.length,
+      totalTracks: songItems.filter(s => (s.discNumber || 1) === (t.discNumber || 1)).length,
       discNumber: t.discNumber || 1,
       totalDiscs,
       title: t.trackName,
@@ -365,7 +366,7 @@ function scoreCandidate(c, artist, title, targetDuration) {
   else if (core && !compactText(cTitle).includes(core)) score -= 60;
   if (cTitle.includes('official audio') || cTitle.includes('original audio')) score += 35;
   if (cTitle.includes('provided to youtube')) score += 40;
-  if (cTitle.includes('remaster')) score += 10;
+  if (cTitle.includes('remaster') && titLower.includes('remaster')) score += 10;
 
   // Music video penalty: music videos often contain sound effects, dialogue, or extended intro scenes
   if (cTitle.includes('music video') || cTitle.includes('official video')) score -= 15;
@@ -422,16 +423,32 @@ async function getMatchCandidates(track, limit = 5) {
   return scored.slice(0, limit);
 }
 
+function isConfidentCandidate(candidate, track) {
+  const title = compactText(candidate.title);
+  const wanted = coreTitle(track.title);
+  const artist = compactText(track.artist);
+  const identity = compactText(`${candidate.uploader || ''} ${candidate.title || ''}`);
+  if (!wanted || !title.includes(wanted) || !artist || !identity.includes(artist)) return false;
+  if (candidate.score < 90) return false;
+  if (track.duration && candidate.duration && Math.abs(track.duration - candidate.duration) > 10) return false;
+  const flags = text => ['live','cover','instrumental','remix','acoustic','remaster','clean','karaoke','slowed','nightcore'].filter(word =>
+    new RegExp(`\\b${word}${word === 'remaster' ? '(?:ed)?' : ''}\\b`, 'i').test(text || ''));
+  return JSON.stringify(flags(candidate.title)) === JSON.stringify(flags(track.title));
+}
+
 async function matchTrackToYouTube(track) {
   const candidates = await getMatchCandidates(track, 5);
   if (candidates.length === 0) {
     throw new Error(`Could not find a YouTube match for "${track.artist || ''} - ${track.title || ''}"`);
   }
   const best = candidates[0];
+  if (!isConfidentCandidate(best, track)) {
+    throw new Error(`No confident source for "${track.title}". Review matches and select the correct audio manually.`);
+  }
   // Close runners-up, tried in turn if the best match won't download (age-restricted,
   // blocked in this country, removed since the search).
   const fallbackUrls = candidates.slice(1)
-    .filter((c) => c.youtubeUrl && c.score > 0 && c.score >= best.score - 60)
+    .filter((c) => c.youtubeUrl && isConfidentCandidate(c, track) && c.score >= best.score - 30)
     .slice(0, 2)
     .map((c) => c.youtubeUrl);
   return {
@@ -492,6 +509,12 @@ async function inspectUrl(url) {
         thumbnail: node.thumbnails?.[0]?.url || node.thumbnail || null,
         url: node.url || node.webpage_url || `https://www.youtube.com/watch?v=${node.id}`,
         uploader: node.uploader || node.channel || null,
+        artist: node.artist || node.creator || null,
+        track: node.track || null,
+        album: node.album || null,
+        trackNumber: node.track_number || null,
+        discNumber: node.disc_number || null,
+        playlistIndex: entries.length + 1,
       });
     }
   }
@@ -501,6 +524,9 @@ async function inspectUrl(url) {
     id: info.id,
     title: info.title,
     uploader: info.uploader || info.channel || null,
+    artist: info.artist || info.creator || null,
+    track: info.track || null,
+    album: info.album || null,
     thumbnail: info.thumbnail || entries[0]?.thumbnail || null,
     isPlaylist: entries.length > 1,
     trackCount: entries.length,
@@ -511,12 +537,12 @@ async function inspectUrl(url) {
 async function saveCoverArt(targetDir, artworkUrl) {
   if (!artworkUrl || !targetDir) return;
   const coverPath = path.join(targetDir, 'cover.jpg');
-  if (fs.existsSync(coverPath)) return;
+  if (fs.existsSync(coverPath) || fs.existsSync(path.join(targetDir, 'cover.png'))) return;
 
   const artwork = await fetchArtwork(artworkUrl);
   if (!artwork || fs.existsSync(coverPath)) return;
   try {
-    fs.writeFileSync(coverPath, artwork.data);
+    fs.writeFileSync(artwork.mime === 'image/png' ? path.join(targetDir, 'cover.png') : coverPath, artwork.data, {flag:'wx'});
   } catch (err) {
     console.error(`[music] Failed to save cover art: ${err.message}`);
   }
@@ -543,24 +569,36 @@ function fetchArtwork(url) {
 
 async function fetchArtworkUncached(url) {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    let current = url;
+    let res;
+    for (let redirects = 0; redirects <= 3; redirects++) {
+      await ytdlp.assertPublicUrlResolved(current);
+      res = await fetch(current, {signal:AbortSignal.timeout(15000), redirect:'manual'});
+      if (![301,302,303,307,308].includes(res.status)) break;
+      const location = res.headers.get('location');
+      await res.body?.cancel();
+      if (!location || redirects === 3) throw new Error('Too many artwork redirects');
+      current = new URL(location, current).href;
+    }
     if (!res.ok) return null;
-    const mime = /png/i.test(res.headers.get('content-type') || '') ? 'image/png' : 'image/jpeg';
-    return { data: Buffer.from(await res.arrayBuffer()), mime };
+    const limit = 8 * 1024 * 1024;
+    if (Number(res.headers.get('content-length')) > limit) throw new Error('Artwork exceeds 8 MiB');
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of res.body) {
+      size += chunk.length;
+      if (size > limit) { await res.body.cancel?.().catch(() => {}); throw new Error('Artwork exceeds 8 MiB'); }
+      chunks.push(chunk);
+    }
+    const data = Buffer.concat(chunks);
+    const png = data.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+    const jpeg = data.subarray(0,3).equals(Buffer.from([255,216,255]));
+    if (!png && !jpeg) throw new Error('Artwork must be JPEG or PNG');
+    return { data, mime:png ? 'image/png' : 'image/jpeg' };
   } catch (err) {
     console.error(`[music] Failed to fetch artwork: ${err.message}`);
     return null;
   }
-}
-
-function runFfmpeg(args) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(ytdlp.getFfmpegBin(), args);
-    let stderr = '';
-    proc.stderr.on('data', (d) => (stderr += d));
-    proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(stderr.trim().split('\n').slice(-3).join(' ') || `ffmpeg exited with code ${code}`))));
-    proc.on('error', reject);
-  });
 }
 
 // Formats that take cover art as an ffmpeg "attached picture" video stream.
@@ -587,10 +625,6 @@ function buildMetadataBlockPicture({ data, mime }) {
   ]).toString('base64');
 }
 
-function escapeFfmetadata(val) {
-  return String(val).replace(/[=;#\\\n]/g, (c) => `\\${c}`);
-}
-
 function buildMusicTags(meta = {}) {
   const tags = {};
   const set = (key, value) => {
@@ -607,62 +641,18 @@ function buildMusicTags(meta = {}) {
   return tags;
 }
 
-// Writes the iTunes-sourced tags and album art into the finished file as one ffmpeg remux.
-// Doing this ourselves after yt-dlp (rather than via ExtractAudio --postprocessor-args or
-// --embed-thumbnail/--embed-metadata) is what makes it reliable: ExtractAudio skips ffmpeg
-// entirely when the download is already in the target format (e.g. native M4A), so its args
-// would never apply, and yt-dlp's own embed steps use the YouTube title/uploader/thumbnail.
-// The original tags are replaced wholesale so YouTube's description/comment/URL don't leak in.
+// Catalog and watch downloads share the same verified, format-aware Mutagen writer.
+// Metadata is applied after extraction, including when yt-dlp keeps native audio unchanged.
 async function tagMusicFile(filepath, meta = {}) {
-  if (!filepath || !fs.existsSync(filepath)) return { tagged: false, artwork: false };
+  if (!filepath || !fs.existsSync(filepath)) throw new Error('Music audio file is missing');
   const ext = path.extname(filepath).slice(1).toLowerCase();
-  if (!TAGGABLE_FORMATS.has(ext)) return { tagged: false, artwork: false };
-
-  const tags = buildMusicTags(meta);
-  const artwork = (ATTACHED_PIC_FORMATS.has(ext) || VORBIS_COMMENT_FORMATS.has(ext))
-    ? await fetchArtwork(meta.artworkUrl)
-    : null;
-  if (artwork && VORBIS_COMMENT_FORMATS.has(ext)) {
-    tags.METADATA_BLOCK_PICTURE = buildMetadataBlockPicture(artwork);
-  }
-
-  const tmpBase = path.join(os.tmpdir(), `music-tag-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  const metaPath = `${tmpBase}.ffmeta`;
-  const coverPath = artwork && ATTACHED_PIC_FORMATS.has(ext) ? `${tmpBase}.${artwork.mime === 'image/png' ? 'png' : 'jpg'}` : null;
-  const tempOut = `${filepath}.tag-tmp.${ext}`;
-
-  const lines = [';FFMETADATA1', ...Object.entries(tags).map(([k, v]) => `${k}=${escapeFfmetadata(v)}`)];
-  fs.writeFileSync(metaPath, `${lines.join('\n')}\n`);
-  if (coverPath) fs.writeFileSync(coverPath, artwork.data);
-
-  const args = ['-y', '-i', filepath, '-f', 'ffmetadata', '-i', metaPath];
-  if (coverPath) args.push('-i', coverPath);
-  args.push('-map', '0:a', '-map_metadata', '1', '-map_chapters', '-1');
-  // Ogg stores its comments per stream, so the stream's own (YouTube) tags must be replaced too.
-  if (VORBIS_COMMENT_FORMATS.has(ext)) args.push('-map_metadata:s:a', '1:g');
-  if (coverPath) {
-    args.push('-map', '2:v', '-disposition:v', 'attached_pic', '-metadata:s:v', 'title=Album cover', '-metadata:s:v', 'comment=Cover (front)');
-  }
-  args.push('-c', 'copy');
-  if (ext === 'mp3') args.push('-id3v2_version', '3');
-  args.push(tempOut);
-
-  try {
-    await runFfmpeg(args);
-    fs.renameSync(tempOut, filepath);
-    return { tagged: true, artwork: !!artwork };
-  } catch (err) {
-    try { fs.unlinkSync(tempOut); } catch (_) {}
-    throw err;
-  } finally {
-    for (const p of [metaPath, coverPath]) {
-      if (p) try { fs.unlinkSync(p); } catch (_) {}
-    }
-  }
+  if (!TAGGABLE_FORMATS.has(ext)) throw new Error(`Unsupported music tag format: ${ext}`);
+  const artwork = meta.embedArtwork === false ? null : await fetchArtwork(meta.artworkUrl);
+  return writeVerifiedTags(filepath, meta, artwork);
 }
 
 function getMusicSettings() {
-  const keys = ['music_folder', 'music_format', 'music_quality', 'music_save_cover'];
+  const keys = ['music_folder', 'music_format', 'music_quality', 'music_save_cover', 'music_naming', 'music_embed_artwork', 'music_library_mode', 'lidarr_enabled'];
   const rows = getDb().prepare(`SELECT key, value FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).all(...keys);
   const map = {};
   for (const r of rows) map[r.key] = r.value;
@@ -674,15 +664,23 @@ function getMusicSettings() {
     musicFormat: map.music_format || 'mp3',
     musicQuality: map.music_quality || '320k',
     saveCover: map.music_save_cover !== '0',
+    naming: map.music_naming || 'classic',
+    embedArtwork: map.music_embed_artwork !== '0',
+    libraryMode: map.music_library_mode || (map.lidarr_enabled === '1' ? 'lidarr' : 'standalone'),
   };
 }
 
-function updateMusicSettings({ musicFolder, musicFormat, musicQuality, saveCover }) {
+function updateMusicSettings({ musicFolder, musicFormat, musicQuality, saveCover, naming, embedArtwork, libraryMode }) {
   const upsert = getDb().prepare(`
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `);
 
+  if (naming !== undefined && !['classic','release'].includes(naming)) throw new Error('Invalid music naming mode');
+  if (libraryMode !== undefined && !['standalone','lidarr'].includes(libraryMode)) throw new Error('Invalid music library mode');
+  if (naming !== undefined) upsert.run('music_naming', naming);
+  if (libraryMode !== undefined) upsert.run('music_library_mode', libraryMode);
+  if (embedArtwork !== undefined) upsert.run('music_embed_artwork', embedArtwork ? '1' : '0');
   if (musicFolder !== undefined) upsert.run('music_folder', String(musicFolder).trim() || ytdlp.MUSIC_DIR || 'Music');
   if (musicFormat !== undefined) upsert.run('music_format', String(musicFormat).trim() || 'mp3');
   if (musicQuality !== undefined) upsert.run('music_quality', String(musicQuality).trim() || '320k');
@@ -699,6 +697,9 @@ async function enqueueMusicDownload({
   saveCover = true,
   extraOptions = {},
   queueImpl = null,
+  naming = 'classic',
+  embedArtwork = true,
+  libraryMode = 'standalone',
 }) {
   let youtubeUrl = track.youtubeUrl;
   let matchedInfo;
@@ -710,30 +711,18 @@ async function enqueueMusicDownload({
 
   const resolvedBaseDir = resolveMusicDir(musicFolder);
 
-  // Group by album artist so "Artist feat. X" tracks stay in the album's folder.
-  const artistDir = sanitizeFilename(track.albumArtist || track.artist || 'Unknown Artist');
-  const albumName = track.album && String(track.album).trim();
-  // A track with no real album (a single) goes straight into the artist folder rather than
-  // an extra "Single" subfolder, matching how album tracks are only nested when there's an
-  // actual album to group them under.
-  const targetDir = albumName
-    ? path.join(resolvedBaseDir, artistDir, sanitizeFilename(albumName))
-    : path.join(resolvedBaseDir, artistDir);
-
-  if (!fs.existsSync(targetDir)) {
-    fs.mkdirSync(targetDir, { recursive: true });
+  const finalTemplate = libraryTemplate(resolvedBaseDir, track, naming);
+  // Lidarr's download-client emulation must see the expected shared incoming folder.
+  // Standalone imports instead stay hidden from media scans until tags are verified.
+  const managed = libraryMode === 'standalone' && !extraOptions.lidarrHash;
+  const stageId = randomUUID();
+  const outputTemplate = managed
+    ? path.join(resolvedBaseDir, '.staging', stageId, 'audio.%(ext)s')
+    : finalTemplate;
+  if (!managed && fs.existsSync(renderedPath(outputTemplate, audioFormat))) {
+    throw new Error('Music download destination already exists; choose a different edition or folder');
   }
-
-  if (saveCover && track.artwork) {
-    saveCoverArt(targetDir, track.artwork).catch(() => {});
-  }
-
-  const discPrefix = track.discNumber > 1 || (track.totalDiscs && track.totalDiscs > 1) ? `${track.discNumber}-` : '';
-  const trackNumStr = String(track.trackNumber || 1).padStart(2, '0');
-  const titleStr = sanitizeFilename(track.title || 'Track');
-  const outputTemplate = path.join(targetDir, `${discPrefix}${trackNumStr} - ${titleStr}.%(ext)s`);
-
-  const albumArtist = track.albumArtist || track.artist;
+  fs.mkdirSync(path.dirname(outputTemplate), {recursive:true});
 
   const activeQueue = queueImpl || getQueue();
   const jobId = activeQueue.enqueue(youtubeUrl, {
@@ -750,18 +739,16 @@ async function enqueueMusicDownload({
       // YouTube title/uploader and the video's thumbnail. queue.js runs tagMusicFile() after
       // the download instead, using the iTunes metadata and album art below.
       isMusicDownload: true,
+      musicSaveCover: saveCover,
+      musicAutoMatched: !!matchedInfo,
+      musicImport: managed ? {finalTemplate, saveCover, batchId:extraOptions.musicBatchId || stageId} : null,
       musicMetadata: {
-        title: track.title,
-        artist: track.artist,
-        albumArtist,
-        album: track.album,
-        trackNumber: track.trackNumber,
-        totalTracks: track.totalTracks,
-        discNumber: track.discNumber,
-        totalDiscs: track.totalDiscs,
+        ...track,
+        albumArtist: track.albumArtist || track.artist,
         year: track.year || track.releaseYear,
-        genre: track.genre,
         artworkUrl: track.artwork,
+        embedArtwork,
+        sourceUrl: youtubeUrl,
       },
     },
   });
@@ -796,4 +783,5 @@ module.exports = {
   updateMusicSettings,
   enqueueMusicDownload,
   sanitizeFilename,
+  isConfidentCandidate,
 };

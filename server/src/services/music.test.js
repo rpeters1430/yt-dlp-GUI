@@ -154,7 +154,7 @@ test('getMatchCandidates and matchTrackToYouTube rank Topic matches first and in
   assert.ok(!match.fallbackUrls.includes('https://www.youtube.com/watch?v=kara1'));
 });
 
-test('tagMusicFile writes ffmetadata tags into MP3 and Opus files via ffmpeg', async (t) => {
+test('tagMusicFile writes and verifies MP3 tags with Mutagen', async (t) => {
   const workDir = fs.mkdtempSync(path.join(testDir, 'tag-'));
   const mp3Path = path.join(workDir, 'sample.mp3');
   execFileSync('ffmpeg', [
@@ -220,7 +220,7 @@ test('enqueueMusicDownload sanitizes path traversal and formats disc-track outpu
   assert.equal(enqueued[0].url, 'https://www.youtube.com/watch?v=wish123');
   assert.equal(enqueued[0].opts.audioOnly, true);
   assert.equal(enqueued[0].opts.container, 'opus');
-  assert.match(enqueued[0].opts.optionsJson.outputTemplate, /Incubus\/Morning View\/2-03 - Wish You Were Here\.%\(ext\)s$/);
+  assert.match(enqueued[0].opts.optionsJson.musicImport.finalTemplate, /Incubus\/Morning View\/2-03 - Wish You Were Here\.%\(ext\)s$/);
   assert.equal(enqueued[0].opts.optionsJson.isMusicDownload, true);
   assert.equal(enqueued[0].opts.optionsJson.musicMetadata.title, 'Wish You Were Here');
 });
@@ -238,8 +238,52 @@ test('inspectUrl rejects private/loopback URLs and flattens playlist entries', a
     ],
   }));
 
+  const dns = require('dns').promises;
+  t.mock.method(dns, 'lookup', async () => [{address:'8.8.8.8', family:4}]);
   const inspected = await inspectUrl('https://www.youtube.com/playlist?list=PL999');
   assert.equal(inspected.isPlaylist, true);
   assert.equal(inspected.trackCount, 2);
   assert.equal(inspected.entries[0].title, 'Track 1');
+});
+
+test('Mutagen round-trips MusicBrainz identifiers and credits in every supported container without changing audio', async () => {
+  for (const [ext, codec] of [['mp3','libmp3lame'],['m4a','aac'],['flac','flac'],['opus','libopus'],['ogg','libvorbis'],['wav','pcm_s16le']]) {
+    const file = path.join(testDir, `rich.${ext}`);
+    execFileSync('ffmpeg', ['-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=0.2','-c:a',codec,file]);
+    const audioHash = () => execFileSync('ffmpeg', ['-v','error','-i',file,'-map','0:a','-c','copy','-f','hash','-'], {encoding:'utf8'}).trim();
+    const before = audioHash();
+    const result = await tagMusicFile(file, {title:'Guest Song', artist:'A feat. B', artists:['A','B'], albumArtist:'A', album:'Album',
+      trackNumber:1, totalTracks:2, discNumber:2, totalDiscs:2, date:'2020-05-02', originalDate:'1999-01-01',
+      musicbrainzReleaseId:'release-id', musicbrainzRecordingId:'recording-id', musicbrainzReleaseTrackId:'release-track-id',
+      musicbrainzArtistIds:['a-id','b-id'], isrc:'USAAA0000001'});
+    assert.equal(result.verified, true, ext);
+    assert.equal(result.tags.musicbrainzRecordingId, 'recording-id', ext);
+    assert.equal(result.tags.musicbrainzReleaseTrackId, 'release-track-id', ext);
+    assert.deepEqual(result.tags.musicbrainzArtistIds, ['a-id','b-id'], ext);
+    assert.equal(result.tags.originalDate, '1999-01-01', ext);
+    assert.equal(audioHash(), before, `${ext} audio packets unchanged`);
+  }
+});
+
+test('automatic matching rejects unrelated or incompatible versions instead of tagging the best bad result', async t => {
+  t.mock.method(ytdlp, 'searchYouTube', async () => [{id:'bad', url:'https://youtube.com/watch?v=bad', title:'Other Song', uploader:'Other - Topic', duration:200}]);
+  await assert.rejects(matchTrackToYouTube({artist:'Wanted',title:'Song',duration:200}), /review|confident/i);
+});
+
+test('album artwork embeds in all containers and invalid artwork cannot alter the audio file', async t => {
+  const pngPath = path.join(testDir,'cover.png');
+  execFileSync('ffmpeg',['-v','error','-y','-f','lavfi','-i','color=c=blue:s=16x16','-frames:v','1',pngPath]);
+  const image = fs.readFileSync(pngPath);
+  t.mock.method(require('dns').promises,'lookup',async()=>[{address:'8.8.8.8',family:4}]);
+  t.mock.method(global,'fetch',async()=>new Response(image,{headers:{'content-type':'image/png'}}));
+  for (const [ext,codec] of [['mp3','libmp3lame'],['m4a','aac'],['flac','flac'],['opus','libopus'],['ogg','libvorbis'],['wav','pcm_s16le']]) {
+    const file = path.join(testDir,`art.${ext}`);
+    execFileSync('ffmpeg',['-v','error','-y','-f','lavfi','-i','sine=duration=0.1','-c:a',codec,file]);
+    const result = await tagMusicFile(file,{title:'Artwork Song',artworkUrl:'https://art.example.org/cover.png'});
+    assert.equal(result.artwork,true,ext);
+  }
+  const file = path.join(testDir,'art.mp3'), original = fs.readFileSync(file);
+  const {writeVerifiedTags} = require('./music/tagger');
+  await assert.rejects(writeVerifiedTags(file,{title:'Changed'},{data:Buffer.from('not an image')}),/Artwork must be/);
+  assert.deepEqual(fs.readFileSync(file),original);
 });

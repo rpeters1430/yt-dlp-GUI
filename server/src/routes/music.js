@@ -1,5 +1,7 @@
 const express = require('express');
 const music = require('../services/music');
+const musicbrainz = require('../services/musicbrainz');
+const musicBatches = require('../services/music/batches');
 const jellyfinSync = require('../services/jellyfinSync');
 const jellyfinMusic = require('../services/jellyfinMusic');
 const db = require('../db');
@@ -24,6 +26,10 @@ router.get('/search', async (req, res) => {
   }
 
   try {
+    if (req.query.source === 'musicbrainz') {
+      if (type !== 'album') return res.status(400).json({error:'MusicBrainz search supports album releases'});
+      return res.json({results:await musicbrainz.searchReleases(query), type:'album'});
+    }
     if (type === 'track' || type === 'song') {
       const results = await music.searchTracks(query, limit);
       res.json({ results, type: 'track' });
@@ -69,7 +75,9 @@ router.get('/artist/:id', async (req, res) => {
 router.get('/album/:id', async (req, res) => {
   const collectionId = req.params.id;
   try {
-    const data = await music.getAlbumDetails(collectionId);
+    const data = String(collectionId).startsWith('mb-')
+      ? await musicbrainz.getRelease(String(collectionId).slice(3))
+      : await music.getAlbumDetails(collectionId);
     res.json(data);
   } catch (err) {
     console.error('[music:album] Error:', err.message);
@@ -157,13 +165,17 @@ router.post('/download', async (req, res) => {
     audioFormat,
     audioQuality,
     musicFolder,
-    saveCover = true,
+    saveCover,
     skipInLibrary = false,
   } = req.body || {};
 
   let items = Array.isArray(tracks) ? tracks : (track ? [track] : []);
   if (items.length === 0) {
     return res.status(400).json({ error: 'At least one track must be specified' });
+  }
+
+  if (items.length > 500 || items.some(item => !item || typeof item !== 'object' || typeof item.title !== 'string' || !item.title.trim())) {
+    return res.status(400).json({error:'Supply up to 500 tracks with non-empty titles'});
   }
 
   // Leave out songs Jellyfin's music library already has. Best-effort: if Jellyfin can't be
@@ -174,7 +186,7 @@ router.post('/download', async (req, res) => {
       const index = await jellyfinMusic.getIndex(jellyfinSync.getSyncConfig());
       if (index) {
         items = items.filter((item) => {
-          const owned = jellyfinMusic.matchTrack(index, { artist: item.artist || item.albumArtist, title: item.title });
+          const owned = jellyfinMusic.matchTrack(index, { artist: item.artist || item.albumArtist, title: item.title, album: item.album, discNumber:item.discNumber, trackNumber:item.trackNumber, strictVersion:true });
           if (owned) skipped.push(item.title);
           return !owned;
         });
@@ -190,6 +202,7 @@ router.post('/download', async (req, res) => {
   const targetFolder = musicFolder || settings.musicFolder || 'Music';
 
   const jobs = [];
+  const musicBatchId = musicBatches.begin(items.length);
   for (const item of items) {
     try {
       const job = await music.enqueueMusicDownload({
@@ -197,7 +210,11 @@ router.post('/download', async (req, res) => {
         audioFormat: targetFormat,
         audioQuality: targetQuality,
         musicFolder: targetFolder,
-        saveCover,
+        saveCover: saveCover ?? settings.saveCover,
+        naming:settings.naming,
+        embedArtwork:settings.embedArtwork,
+        libraryMode:settings.libraryMode,
+        extraOptions:{musicBatchId},
       });
       jobs.push(job);
     } catch (err) {
@@ -206,6 +223,8 @@ router.post('/download', async (req, res) => {
     }
   }
 
+  musicBatches.seal(musicBatchId, jobs.filter(j => j.error).length);
+  musicBatches.notifyIfReady(musicBatchId);
   res.json({ enqueued: jobs.filter((j) => !j.error).length, total: items.length + skipped.length, skipped, jobs });
 });
 
@@ -302,8 +321,8 @@ router.get('/settings', (req, res) => {
 });
 
 router.put('/settings', (req, res) => {
-  const updated = music.updateMusicSettings(req.body || {});
-  res.json(updated);
+  try { res.json(music.updateMusicSettings(req.body || {})); }
+  catch (err) { res.status(400).json({error:err.message}); }
 });
 
 module.exports = router;

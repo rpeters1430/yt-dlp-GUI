@@ -57,7 +57,7 @@ ARG APT_REFRESH=
 # curl, unzip, xz-utils, and gosu are kept so runtime binary updates and optional PUID/PGID
 # privilege dropping work out of the box.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
-    python3 python3-pip ca-certificates build-essential curl unzip xz-utils gosu \
+    python3 python3-pip python3-mutagen ca-certificates build-essential curl unzip xz-utils gosu \
     && pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements-docker.txt \
     && rm /tmp/requirements-docker.txt \
     && rm -rf /var/lib/apt/lists/*
