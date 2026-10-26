@@ -46,8 +46,28 @@ jobs:
       - name: Lint server
         working-directory: server
         run: npm run lint
-      - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y ffmpeg python3-mutagen libchromaprint-tools
+      - name: Check and install media test dependencies
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          start=$SECONDS
+          packages=()
+          command -v ffmpeg >/dev/null 2>&1 || packages+=(ffmpeg)
+          /usr/bin/python3 -c 'import mutagen' 2>/dev/null || packages+=(python3-mutagen)
+          command -v fpcalc >/dev/null 2>&1 || packages+=(libchromaprint-tools)
+          if (("${#packages[@]}" > 0)); then
+            echo "Missing test dependencies: ${packages[*]}"
+            export DEBIAN_FRONTEND=noninteractive
+            sudo timeout --signal=TERM --kill-after=10s 100s apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 update
+            sudo timeout --signal=TERM --kill-after=10s 60s apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 install --no-install-recommends -y "${packages[@]}"
+          else
+            echo "All media test dependencies are already installed; skipping apt."
+          fi
+          ffmpeg -version | head -n 1
+          /usr/bin/python3 -c 'import mutagen; print("mutagen available")'
+          fpcalc -version
+          echo "Media dependency check completed in $((SECONDS - start))s"
       - name: Test server (with coverage report)
         working-directory: server
         run: PYTHON_BIN=/usr/bin/python3 npm run test:coverage
