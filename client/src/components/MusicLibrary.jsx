@@ -1,9 +1,11 @@
 import React, {useCallback,useEffect,useRef,useState} from 'react';
 import {api} from '../api.js';
 import Drawer from './Drawer.jsx';
+import {catalogTrackId} from '../musicCatalog.js';
 
 const show=value=>value==null ? '—' : Array.isArray(value) ? value.join('; ') : String(value);
-export default function MusicLibrary() {
+export default function MusicLibrary({metadataSource='itunes',onCatalogChange}) {
+  const [catalog,setCatalog]=useState(metadataSource);
   const [folder,setFolder]=useState('');
   const [listing,setListing]=useState({files:[],truncated:false});
   const [history,setHistory]=useState([]);
@@ -46,10 +48,11 @@ export default function MusicLibrary() {
       setQuery([info.tags.artist,info.tags.album || info.tags.title].filter(Boolean).join(' '));
     });
   }
-  async function chooseRelease(id,recordingId='') {
+  async function chooseRelease(id,recordingId='',source=catalog) {
     setReview(null);setTrackId('');
-    const data=await api.getMusicAlbum(`mb-${id}`);
-    setRelease(data);
+    const data=await api.getMusicAlbum(source==='musicbrainz' ? `mb-${id}` : id);
+    setCatalog(source);onCatalogChange?.(source);
+    setRelease({...data,catalogSource:source,catalogId:String(id)});
     setTrackId(data.tracks.find(track=>track.musicbrainzRecordingId===recordingId)?.musicbrainzReleaseTrackId || '');
   }
   return <section className="music-library">
@@ -101,23 +104,27 @@ export default function MusicLibrary() {
           {!identified.matches.length && <p>No fingerprint match found. Select a release manually below.</p>}
           {identified.matches.map(match=><div key={match.recordingId} style={{margin:'12px 0'}}>
             <strong>{match.artists.join(', ')} — {match.title}</strong><span className="mono-meta"> · {Math.round(match.score*100)}% match score</span>
-            {match.releases.map(item=><button className="btn" key={item.id} disabled={busy} onClick={()=>run(()=>chooseRelease(item.id,match.recordingId))}>{item.title}</button>)}
+            {match.releases.map(item=><button className="btn" key={item.id} disabled={busy} onClick={()=>run(()=>chooseRelease(item.id,match.recordingId,'musicbrainz'))}>{item.title}</button>)}
             <button className="text-btn" disabled={busy} onClick={()=>setQuery([...match.artists,match.title].join(' '))}>Use in release search</button>
           </div>)}
         </div>}
         <h3>Choose release and track</h3>
-        <form onSubmit={event=>{event.preventDefault();run(async()=>{setReleases((await api.searchMusic(query,'album','musicbrainz')).results || []);setReview(null);});}}>
-          <input className="input" aria-label="Search MusicBrainz releases" value={query} onChange={event=>setQuery(event.target.value)} disabled={busy}/>
+        <label>Metadata catalog <select className="select" value={catalog} disabled={busy} onChange={event=>{
+          const source=event.target.value;setCatalog(source);onCatalogChange?.(source);
+          setReleases([]);setRelease(null);setReview(null);setTrackId('');
+        }}><option value="itunes">Apple catalog</option><option value="musicbrainz">MusicBrainz releases</option></select></label>
+        <form onSubmit={event=>{event.preventDefault();run(async()=>{setReleases((await api.searchMusic(query,'album',catalog)).results || []);setReview(null);});}}>
+          <input className="input" aria-label="Search catalog releases" value={query} onChange={event=>setQuery(event.target.value)} disabled={busy}/>
           <button className="btn" disabled={busy || !query.trim()}>Search releases</button>
         </form>
-        <div style={{display:'grid',gap:6,margin:'10px 0'}}>{releases.map(item=><button className="btn" disabled={busy} key={item.id} onClick={()=>run(()=>chooseRelease(item.musicbrainzReleaseId))}>{[item.artist,item.name,item.releaseYear,item.country,item.edition].filter(Boolean).join(' · ')}</button>)}</div>
+        <div style={{display:'grid',gap:6,margin:'10px 0'}}>{releases.map(item=><button className="btn" disabled={busy} key={item.id} onClick={()=>run(()=>chooseRelease(catalog==='musicbrainz' ? item.musicbrainzReleaseId : item.id))}>{[item.artist,item.name,item.releaseYear,item.country,item.edition].filter(Boolean).join(' · ')}</button>)}</div>
         {release && <>
           <p><strong>{release.album.artist} — {release.album.name}</strong> · {release.album.releaseYear} {release.album.country} {release.album.edition}</p>
           <label>Track <select className="select" style={{maxWidth:'100%'}} value={trackId} disabled={busy} onChange={event=>{setTrackId(event.target.value);setReview(null);}}>
             <option value="">Choose the correct track</option>
-            {release.tracks.map(track=><option key={track.musicbrainzReleaseTrackId} value={track.musicbrainzReleaseTrackId}>Disc {track.discNumber} · {track.trackNumber} · {track.artist} — {track.title}</option>)}
+            {release.tracks.map(track=><option key={catalogTrackId(track,release.catalogSource)} value={catalogTrackId(track,release.catalogSource)}>Disc {track.discNumber} · {track.trackNumber} · {track.artist} — {track.title}</option>)}
           </select></label>
-          <button className="btn btn-primary" disabled={busy || !trackId} onClick={()=>run(async()=>setReview(await api.previewMusicTags({path:selected,releaseId:release.album.musicbrainzReleaseId,releaseTrackId:trackId})))}>Preview changes</button>
+          <button className="btn btn-primary" disabled={busy || !trackId} onClick={()=>run(async()=>setReview(await api.previewMusicTags({path:selected,releaseId:release.catalogId,releaseTrackId:trackId,source:release.catalogSource})))}>Preview changes</button>
         </>}
         {review && <>
           <h3>Proposed changes</h3>

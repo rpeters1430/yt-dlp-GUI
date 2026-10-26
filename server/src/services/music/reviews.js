@@ -56,10 +56,11 @@ function createReviews({db,root,getRelease}) {
     if (await hashFile(location.file)!==revision) throw conflict('Music file changed while reading; inspect it again');
     return {...result,path:relative,revision};
   }
-  async function preview({path:relative,releaseId,releaseTrackId}) {
-    const release=await getRelease(releaseId);
-    const track=release.tracks.find(t=>t.musicbrainzReleaseTrackId===releaseTrackId);
-    if (!track) throw new Error('Choose a track from the selected MusicBrainz release');
+  async function preview({path:relative,releaseId,releaseTrackId,source='musicbrainz'}) {
+    if (!['itunes','musicbrainz'].includes(source)) throw new Error('Unsupported music metadata catalog');
+    const release=await getRelease(releaseId,source);
+    const track=release.tracks.find(t=>(source==='itunes' ? t.catalogTrackId : t.musicbrainzReleaseTrackId)===releaseTrackId);
+    if (!track) throw new Error('Choose a track from the selected catalog release');
     const current=await inspect(relative,track);
     const location=await resolve(relative);
     const clearFields=ID_FIELDS.filter(field=>current.tags[field]!=null && !current.proposed[field]);

@@ -41,7 +41,7 @@ Existing files can be reviewed and retagged individually using the Library tab. 
 
 Open **Music → Library** to browse the configured music directory. The browser is bounded to 200 audio files and 3,000 directory entries per request; enter an artist/album subfolder for a large collection. Hidden folders, staging, backups and symlinks are excluded.
 
-Select a file to inspect its current tags. Search MusicBrainz, choose a release and a track, then **Preview changes**. Review the before/after tags and use **Apply reviewed tags** to write only those reviewed changes. Unrelated comments, artwork and other metadata are preserved. Standard MusicBrainz ID3 UFIDs are read correctly. Choosing another release clears obsolete recording identifiers/ISRCs when the selected release does not provide replacements. Existing filenames are never changed.
+Select a file to inspect its current tags. Choose Apple catalog or MusicBrainz, select a release and a track, then **Preview changes**. Apple lookups and previews do not require MusicBrainz. Apple track IDs are kept separate from MusicBrainz identifiers. Review the before/after tags and use **Apply reviewed tags** to write only those reviewed changes. Unrelated comments, artwork and other metadata are preserved. Standard MusicBrainz ID3 UFIDs are read correctly. Choosing another release clears obsolete recording identifiers/ISRCs when the selected release does not provide replacements. Existing filenames are never changed.
 
 Previews expire after 24 hours. A changed file or changed music root invalidates the preview. Every apply retains the original audio at `.tag-backups/<review ID>/original.<extension>`. Recent tag reviews provide **Restore original**, which is allowed only while the current file still matches the trusted output revision. Newer external edits are not accepted as this app's output. Updates and restores schedule configured Jellyfin/Plex library refreshes.
 
@@ -57,4 +57,4 @@ Expand **Optional audio identification** in the Library tab and enter a free **A
 
 Select a song and press **Identify audio with AcoustID**. The app computes a local fingerprint and sends only that fingerprint and the duration to AcoustID. Requests are serialized at no more than one per 400 ms. It does not upload the music file or submit new fingerprints. Suggested recordings and releases require your selection and the same tag preview/apply workflow. A fingerprint score does not establish an exact release edition or master.
 
-Manual MusicBrainz release selection requires no AcoustID key and works independently of the fingerprint service.
+Manual Apple/MusicBrainz release selection requires no AcoustID key and works independently of the fingerprint service.
