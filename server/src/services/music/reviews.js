@@ -63,11 +63,14 @@ function createReviews({db,root,getRelease}) {
     if (!track) throw new Error('Choose a track from the selected catalog release');
     const current=await inspect(relative,track);
     const location=await resolve(relative);
-    const clearFields=ID_FIELDS.filter(field=>current.tags[field]!=null && !current.proposed[field]);
-    const proposed={...current.proposed,...Object.fromEntries(clearFields.map(field=>[field,null]))};
-    const changes=Object.entries(proposed).filter(([field,value])=>JSON.stringify(current.tags[field]??null)!==JSON.stringify(value)).map(([field,value])=>({field,before:current.tags[field]??null,after:value}));
+    const proposed=current.proposed;
+    const changes=[...new Set([...Object.keys(current.tags),...Object.keys(proposed)])].map(field=>{
+      const before=current.tags[field]??null, after=proposed[field]??null;
+      return {field,before,after,replaceable:after!==null,clearable:true,
+        action:after===null || (before!==null && (ID_FIELDS.includes(field) || field==='genre')) || JSON.stringify(before)===JSON.stringify(after) ? 'keep' : 'replace'};
+    });
     const id=randomUUID();
-    const payload={path:relative,root:location.base,revision:current.revision,metadata:track,clearFields,changes};
+    const payload={path:relative,root:location.base,revision:current.revision,metadata:proposed,changes};
     db.prepare('INSERT INTO music_tag_reviews (id,payload_json,created_at) VALUES (?,?,?)').run(id,JSON.stringify(payload),Date.now());
     return {id,path:relative,changes,artworkPreserved:current.artwork,expiresAt:Date.now()+24*60*60*1000};
   }
@@ -98,7 +101,32 @@ function createReviews({db,root,getRelease}) {
     if (!create && (await fs.promises.lstat(file)).isSymbolicLink()) throw conflict('Backup file must not be a symlink');
     return file;
   }
-  async function apply(id) {
+  async function apply(id, choices = {}) {
+    if (!choices || typeof choices!=='object' || Array.isArray(choices)) throw new Error('Invalid tag choices');
+    const preview=getReview(id).payload;
+    // Reviews made before field selection was supported must be generated again.
+    if (!preview.changes.every(change=>change.action)) throw conflict('Create a fresh preview to choose fields');
+    const fields=new Map(preview.changes.map(change=>[change.field,change]));
+    for (const [field,action] of Object.entries(choices)) {
+      const change=fields.get(field);
+      if (!change || !['keep','replace','clear'].includes(action) || (action==='replace' && !change.replaceable) || (action==='clear' && !change.clearable)) throw new Error('Invalid tag choice for '+field);
+    }
+    const metadata={}, clearFields=[];
+    for (const change of preview.changes) {
+      const action=choices[change.field] || change.action;
+      if (action==='replace') metadata[change.field]=change.after;
+      if (action==='clear') clearFields.push(change.field);
+    }
+    // Rebuild a shared number/total field without changing a kept sibling.
+    for (const [number,total] of [['trackNumber','totalTracks'],['discNumber','totalDiscs']]) {
+      if ([number,total].some(field=>field in metadata || clearFields.includes(field))) {
+        for (const field of [number,total]) {
+          if (!(field in metadata) && !clearFields.includes(field) && fields.get(field)?.before!=null) metadata[field]=fields.get(field).before;
+        }
+        if (!(number in metadata) && total in metadata) throw new Error('Clear the associated total when clearing its number');
+      }
+    }
+
     return withFile(id,async(row,location)=>{
       if (row.status!=='ready') throw conflict('Review is not ready or has already been applied');
       if (Date.now()-row.created_at>24*60*60*1000) throw conflict('Preview expired; inspect the file again');
@@ -110,7 +138,7 @@ function createReviews({db,root,getRelease}) {
         await fs.promises.copyFile(location.file,backup,fs.constants.COPYFILE_EXCL);
         await fs.promises.chmod(backup,location.stat.mode & 0o777);
         if (await hashFile(backup)!==row.payload.revision) throw conflict('Music file changed during backup; no tags written');
-        const result=await tagger.writeVerifiedTags(location.file,row.payload.metadata,null,{scrub:false,expectedSha256:row.payload.revision,clearFields:row.payload.clearFields});
+        const result=await tagger.writeVerifiedTags(location.file,metadata,null,{scrub:false,expectedSha256:row.payload.revision,clearFields,selectedFields:Object.keys(metadata)});
         const revision=result.revision;
         if (!revision || await hashFile(location.file)!==revision) throw conflict('Music file changed after tagging; original backup retained');
         db.prepare("UPDATE music_tag_reviews SET status='applied', after_sha256=?, error=NULL WHERE id=?").run(revision,id);

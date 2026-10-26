@@ -1,10 +1,15 @@
 import React, {useCallback,useEffect,useRef,useState} from 'react';
 import {api} from '../api.js';
 import Drawer from './Drawer.jsx';
+import MusicTagChanges, {reviewChoices} from './MusicTagChanges.jsx';
 import {catalogTrackId} from '../musicCatalog.js';
 
 const show=value=>value==null ? '—' : Array.isArray(value) ? value.join('; ') : String(value);
 export default function MusicLibrary({metadataSource='itunes',onCatalogChange}) {
+  const [checked,setChecked]=useState([]);
+  const [albumFiles,setAlbumFiles]=useState([]);
+  const [mapping,setMapping]=useState({});
+  const [albumReviews,setAlbumReviews]=useState([]);
   const [catalog,setCatalog]=useState(metadataSource);
   const [folder,setFolder]=useState('');
   const [listing,setListing]=useState({files:[],truncated:false});
@@ -40,8 +45,9 @@ export default function MusicLibrary({metadataSource='itunes',onCatalogChange}) 
   }
   async function refreshHistory(){setHistory(await api.musicTagHistory());}
   const close=useCallback(()=>{if(!busyRef.current){setSelected(null);setReview(null);setInspection(null);}},[]);
-  function open(file) {
+  function open(file, files=[]) {
     run(async()=>{
+      setAlbumFiles(files);setMapping({});setAlbumReviews([]);
       setSelected(file.path);setInspection(null);setRelease(null);setReleases([]);setTrackId('');setReview(null);setIdentified(null);
       const info=await api.inspectMusicFile(file.path);
       setInspection(info);
@@ -49,7 +55,7 @@ export default function MusicLibrary({metadataSource='itunes',onCatalogChange}) 
     });
   }
   async function chooseRelease(id,recordingId='',source=catalog) {
-    setReview(null);setTrackId('');
+    setReview(null);setTrackId('');setMapping({});setAlbumReviews([]);
     const data=await api.getMusicAlbum(source==='musicbrainz' ? `mb-${id}` : id);
     setCatalog(source);onCatalogChange?.(source);
     setRelease({...data,catalogSource:source,catalogId:String(id)});
@@ -60,13 +66,14 @@ export default function MusicLibrary({metadataSource='itunes',onCatalogChange}) 
     <p className="mono-meta">Inspect existing music, choose the correct release, and review tag changes before applying. Original files are backed up for restore. Filenames stay unchanged.</p>
     {!selected && error && <div className="notice notice-danger" role="alert">{error}</div>}
     {!selected && message && <p role="status">{message}</p>}
-    <form className="toolbar" onSubmit={event=>{event.preventDefault();run(async()=>setListing(await api.listMusicFiles(folder)));}}>
+    <form className="toolbar" onSubmit={event=>{event.preventDefault();run(async()=>{setListing(await api.listMusicFiles(folder));setChecked([]);});}}>
       <input className="input" aria-label="Music subfolder" placeholder="Subfolder, for example Artist/Album (blank for library)" value={folder} onChange={event=>setFolder(event.target.value)} disabled={busy}/>
       <button className="btn btn-primary" disabled={busy} type="submit">{busy?'Working…':'Browse'}</button>
     </form>
     {listing.truncated && <p className="notice">Showing a bounded selection. Enter an artist or album subfolder to see more files.</p>}
+    <button className="btn" disabled={busy || checked.length<2 || checked.length>50} onClick={()=>open({path:checked[0]},checked)}>Review selected album files ({checked.length}/50)</button>
     <div className="library-file-list" style={{display:'grid',gap:6,margin:'12px 0'}}>
-      {listing.files.map(file=><button className="btn" style={{textAlign:'left',whiteSpace:'normal',overflowWrap:'anywhere'}} key={file.path} disabled={busy} onClick={()=>open(file)}>{file.path}</button>)}
+      {listing.files.map(file=><div key={file.path} style={{display:'flex',gap:8}}><input type="checkbox" aria-label={`Select ${file.path}`} disabled={busy} checked={checked.includes(file.path)} onChange={event=>setChecked(event.target.checked?[...checked,file.path]:checked.filter(item=>item!==file.path))}/><button className="btn" style={{textAlign:'left',whiteSpace:'normal',overflowWrap:'anywhere'}} key={file.path} disabled={busy} onClick={()=>open(file)}>{file.path}</button></div>)}
       {!busy && listing.files.length===0 && <p>No supported music files found in this folder.</p>}
     </div>
     <details style={{margin:'20px 0'}}>
@@ -91,7 +98,7 @@ export default function MusicLibrary({metadataSource='itunes',onCatalogChange}) 
     </details>
     <Drawer open={!!selected} onClose={close} label="Review music metadata">
       <h2>Review music tags</h2>
-      <p style={{overflowWrap:'anywhere'}}>{selected}</p>
+      <p style={{overflowWrap:'anywhere'}}>{albumFiles.length?`${albumFiles.length} selected album files`:selected}</p>
       {busy && <p role="status">Working…</p>}
       {error && <div className="notice notice-danger" role="alert">{error}</div>}
       {message && <p role="status">{message}</p>}
@@ -111,7 +118,7 @@ export default function MusicLibrary({metadataSource='itunes',onCatalogChange}) 
         <h3>Choose release and track</h3>
         <label>Metadata catalog <select className="select" value={catalog} disabled={busy} onChange={event=>{
           const source=event.target.value;setCatalog(source);onCatalogChange?.(source);
-          setReleases([]);setRelease(null);setReview(null);setTrackId('');
+          setReleases([]);setRelease(null);setReview(null);setTrackId('');setMapping({});setAlbumReviews([]);
         }}><option value="itunes">Apple catalog</option><option value="musicbrainz">MusicBrainz releases</option></select></label>
         <form onSubmit={event=>{event.preventDefault();run(async()=>{setReleases((await api.searchMusic(query,'album',catalog)).results || []);setReview(null);});}}>
           <input className="input" aria-label="Search catalog releases" value={query} onChange={event=>setQuery(event.target.value)} disabled={busy}/>
@@ -120,18 +127,47 @@ export default function MusicLibrary({metadataSource='itunes',onCatalogChange}) 
         <div style={{display:'grid',gap:6,margin:'10px 0'}}>{releases.map(item=><button className="btn" disabled={busy} key={item.id} onClick={()=>run(()=>chooseRelease(catalog==='musicbrainz' ? item.musicbrainzReleaseId : item.id))}>{[item.artist,item.name,item.releaseYear,item.country,item.edition].filter(Boolean).join(' · ')}</button>)}</div>
         {release && <>
           <p><strong>{release.album.artist} — {release.album.name}</strong> · {release.album.releaseYear} {release.album.country} {release.album.edition}</p>
-          <label>Track <select className="select" style={{maxWidth:'100%'}} value={trackId} disabled={busy} onChange={event=>{setTrackId(event.target.value);setReview(null);}}>
+          {!albumFiles.length && <><label>Track <select className="select" style={{maxWidth:'100%'}} value={trackId} disabled={busy} onChange={event=>{setTrackId(event.target.value);setReview(null);}}>
             <option value="">Choose the correct track</option>
             {release.tracks.map(track=><option key={catalogTrackId(track,release.catalogSource)} value={catalogTrackId(track,release.catalogSource)}>Disc {track.discNumber} · {track.trackNumber} · {track.artist} — {track.title}</option>)}
           </select></label>
-          <button className="btn btn-primary" disabled={busy || !trackId} onClick={()=>run(async()=>setReview(await api.previewMusicTags({path:selected,releaseId:release.catalogId,releaseTrackId:trackId,source:release.catalogSource})))}>Preview changes</button>
+          <button className="btn btn-primary" disabled={busy || !trackId} onClick={()=>run(async()=>setReview(await api.previewMusicTags({path:selected,releaseId:release.catalogId,releaseTrackId:trackId,source:release.catalogSource})))}>Preview changes</button></>}
+        </>}
+        {release && albumFiles.length>0 && <>
+          <h3>Match album files to tracks</h3>
+          <p>Choose the exact track for each file, then review every file before applying. Each file has its own backup and restore entry.</p>
+          {albumFiles.map(file=><label key={file} style={{display:'block',margin:'12px 0',overflowWrap:'anywhere'}}>{file}<select className="select" style={{maxWidth:'100%'}} disabled={busy} value={mapping[file] || ''} onChange={event=>{setMapping({...mapping,[file]:event.target.value});setAlbumReviews([]);}}>
+            <option value="">Choose track</option>{release.tracks.map(track=><option key={catalogTrackId(track,release.catalogSource)} value={catalogTrackId(track,release.catalogSource)}>Disc {track.discNumber} · {track.trackNumber} · {track.title}</option>)}
+          </select></label>)}
+          <button className="btn btn-primary" disabled={busy || albumFiles.some(file=>!mapping[file]) || new Set(Object.values(mapping)).size!==albumFiles.length} onClick={()=>run(async()=>{
+            const previews=[];
+            for(const file of albumFiles){
+              const saved=albumReviews.find(item=>item.path===file && item.applied);
+              previews.push(saved || await api.previewMusicTags({path:file,releaseId:release.catalogId,releaseTrackId:mapping[file],source:release.catalogSource}));
+            }
+            setAlbumReviews(previews);
+          })}>Preview album changes</button>
+          {albumReviews.map(item=><section key={item.id}><h4 style={{overflowWrap:'anywhere'}}>{item.path} {item.applied?'· Saved':''}</h4>
+            {item.error && <p role="alert">{item.error}</p>}
+            <MusicTagChanges review={item} busy={busy || item.applied} onChange={updated=>setAlbumReviews(items=>items.map(old=>old.id===updated.id?updated:old))}/>
+          </section>)}
+          {albumReviews.length>0 && <button className="btn btn-primary" disabled={busy || albumReviews.some(item=>item.error) || albumReviews.every(item=>item.applied)} onClick={()=>run(async()=>{
+            const results=[];
+            for(const item of albumReviews){
+              if(item.applied){results.push(item);continue;}
+              try{await api.applyMusicTags(item.id,reviewChoices(item));results.push({...item,applied:true,error:''});}
+              catch(err){results.push({...item,error:err.message});}
+              setAlbumReviews([...results,...albumReviews.slice(results.length)]);
+            }
+            await refreshHistory();setMessage(`${results.filter(item=>item.applied).length} of ${results.length} files saved. If a file failed, preview album changes again before applying. Saved files are skipped.`);
+          })}>Apply reviewed album tags</button>}
         </>}
         {review && <>
           <h3>Proposed changes</h3>
-          <div style={{overflowX:'auto'}}><table><thead><tr><th>Tag</th><th>Current</th><th>Proposed</th></tr></thead><tbody>{review.changes.map(change=><tr key={change.field}><td>{change.field}</td><td style={{overflowWrap:'anywhere'}}>{show(change.before)}</td><td style={{overflowWrap:'anywhere'}}>{show(change.after)}</td></tr>)}</tbody></table></div>
+          <MusicTagChanges review={review} onChange={setReview} busy={busy}/>
           {!review.changes.length && <p>These tags already match the selected release.</p>}
-          <p className="mono-meta">Unrelated tags and embedded artwork are preserved. A backup is retained. If the file changes, this preview cannot be applied.</p>
-          <button className="btn btn-primary" disabled={busy || !review.changes.length} onClick={()=>run(async()=>{await api.applyMusicTags(review.id);setInspection(await api.inspectMusicFile(selected));setReview(null);await refreshHistory();setMessage('Tags verified and saved. You can restore the original from Recent tag reviews.');})}>Apply reviewed tags</button>
+          <p className="mono-meta">Choose Keep current, Replace with catalog, or Clear tag for each field. Existing identifiers and genre are kept by default. Embedded artwork and unrelated tags are preserved. A backup is retained. If the file changes, this preview cannot be applied.</p>
+          <button className="btn btn-primary" disabled={busy || !review.changes.length} onClick={()=>run(async()=>{await api.applyMusicTags(review.id,reviewChoices(review));setInspection(await api.inspectMusicFile(selected));setReview(null);await refreshHistory();setMessage('Tags verified and saved. You can restore the original from Recent tag reviews.');})}>Apply reviewed tags</button>
         </>}
       </>}
     </Drawer>

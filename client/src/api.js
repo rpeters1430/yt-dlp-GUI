@@ -143,7 +143,7 @@ export const api = {
   listMusicFiles: (folder = '') => request(`/music/library/files?folder=${encodeURIComponent(folder)}`),
   inspectMusicFile: (path) => request('/music/library/inspect', {method:'POST',body:JSON.stringify({path})}),
   previewMusicTags: (payload) => request('/music/library/preview', {method:'POST',body:JSON.stringify(payload)}),
-  applyMusicTags: (id) => request(`/music/library/reviews/${encodeURIComponent(id)}/apply`, {method:'POST'}),
+  applyMusicTags: (id, choices = {}) => request(`/music/library/reviews/${encodeURIComponent(id)}/apply`, {method:'POST',body:JSON.stringify({choices})}),
   restoreMusicTags: (id) => request(`/music/library/reviews/${encodeURIComponent(id)}/restore`, {method:'POST'}),
   musicTagHistory: () => request('/music/library/reviews'),
   identifyMusicFile: (path) => request('/music/library/identify', {method:'POST',body:JSON.stringify({path})}),

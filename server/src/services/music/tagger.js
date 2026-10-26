@@ -20,7 +20,7 @@ function runTagger(payload) {
 }
 function writeVerifiedTags(filepath, metadata, artwork = null, options = {}) {
   return runTagger({filepath, metadata, artwork:artwork ? {data:artwork.data.toString('base64')} : null,
-    scrub:options.scrub !== false, expectedSha256:options.expectedSha256, clearFields:options.clearFields || []});
+    scrub:options.scrub !== false, expectedSha256:options.expectedSha256, clearFields:options.clearFields || [], selectedFields:options.selectedFields});
 }
 function inspectAudio(filepath, metadata = {}) {
   return runTagger({operation:'inspect', filepath, metadata});
