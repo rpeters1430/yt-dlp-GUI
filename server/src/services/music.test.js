@@ -287,3 +287,76 @@ test('album artwork embeds in all containers and invalid artwork cannot alter th
   await assert.rejects(writeVerifiedTags(file,{title:'Changed'},{data:Buffer.from('not an image')}),/Artwork must be/);
   assert.deepEqual(fs.readFileSync(file),original);
 });
+
+test('inspection is read-only, preservation keeps unrelated tags, and a stale revision blocks writes', async () => {
+  const file = path.join(testDir,'inspect.mp3');
+  execFileSync('ffmpeg',['-v','error','-y','-f','lavfi','-i','sine=duration=0.2','-metadata','title=Original','-metadata','comment=Keep me',file]);
+  const {inspectAudio,writeVerifiedTags} = require('./music/tagger');
+  const before = fs.readFileSync(file);
+  const inspection = await inspectAudio(file,{title:'New Title'});
+  assert.equal(inspection.tags.title,'Original');
+  assert.equal(inspection.proposed.title,'New Title');
+  assert.deepEqual(fs.readFileSync(file),before);
+  await assert.rejects(writeVerifiedTags(file,{title:'Wrong'},null,{expectedSha256:'0'.repeat(64),scrub:false}),/changed/i);
+  assert.deepEqual(fs.readFileSync(file),before);
+  await writeVerifiedTags(file,{title:'New Title'},null,{scrub:false});
+  const raw = JSON.parse(execFileSync('ffprobe',['-v','quiet','-show_format','-of','json',file],{encoding:'utf8'}));
+  assert.equal(raw.format.tags.comment,'Keep me');
+});
+
+test('standard MusicBrainz UFID recording IDs are inspected and explicitly cleared',async()=>{
+  const file=path.join(testDir,'ufid.mp3');
+  execFileSync('ffmpeg',['-v','error','-y','-f','lavfi','-i','sine=duration=0.2',file]);
+  execFileSync(process.env.PYTHON_BIN || 'python3',['-c',"import sys; from mutagen.mp3 import MP3; from mutagen.id3 import UFID; a=MP3(sys.argv[1]); a.add_tags() if a.tags is None else None; a.tags.add(UFID(owner='http://musicbrainz.org',data=b'old-recording-id')); a.save()",file]);
+  const {inspectAudio,writeVerifiedTags}=require('./music/tagger');
+  assert.equal((await inspectAudio(file)).tags.musicbrainzRecordingId,'old-recording-id');
+  await writeVerifiedTags(file,{title:'New title'},null,{scrub:false,clearFields:['musicbrainzRecordingId']});
+  assert.equal((await inspectAudio(file)).tags.musicbrainzRecordingId,undefined);
+});
+
+test('preservation mode keeps comments and embedded artwork across all supported containers',async()=>{
+  const png=path.join(testDir,'preserve-cover.png');
+  execFileSync('ffmpeg',['-v','error','-y','-f','lavfi','-i','color=c=green:s=16x16','-frames:v','1',png]);
+  const artwork={data:fs.readFileSync(png)}, {inspectAudio,writeVerifiedTags}=require('./music/tagger');
+  for(const [ext,codec] of [['mp3','libmp3lame'],['m4a','aac'],['flac','flac'],['opus','libopus'],['ogg','libvorbis'],['wav','pcm_s16le']]) {
+    const file=path.join(testDir,`preserve.${ext}`);
+    execFileSync('ffmpeg',['-v','error','-y','-f','lavfi','-i','sine=duration=0.2','-c:a',codec,'-metadata','comment=Keep this comment',file]);
+    await writeVerifiedTags(file,{title:'Original'},artwork,{scrub:false});
+    await writeVerifiedTags(file,{title:'Changed'},null,{scrub:false});
+    const info=await inspectAudio(file);
+    assert.equal(info.tags.title,'Changed',ext);
+    assert.equal(info.artwork,true,ext);
+    const raw=JSON.parse(execFileSync('ffprobe',['-v','quiet','-show_format','-show_streams','-of','json',file],{encoding:'utf8'}));
+    const comments=[raw.format?.tags,...(raw.streams || []).filter(stream=>stream.codec_type==='audio').map(stream=>stream.tags)].flatMap(tags=>Object.entries(tags || {}).filter(([key])=>key.toLowerCase()==='comment').map(([,value])=>value));
+    assert.ok(comments.includes('Keep this comment'),ext);
+  }
+});
+
+test('the final revision check catches an external edit during output hashing',async()=>{
+  const file=path.join(testDir,'hash-window.mp3');
+  execFileSync('ffmpeg',['-v','error','-y','-f','lavfi','-i','sine=duration=0.2',file]);
+  const revision=require('crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  const helper=path.join(__dirname,'music','tag_audio.py');
+  const script=`import importlib.util,sys
+sys.dont_write_bytecode=True
+spec=importlib.util.spec_from_file_location('tag_audio',sys.argv[1])
+m=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+source=sys.argv[2]
+original=m.digest_file
+def digest(filename):
+    result=original(filename)
+    if filename!=source:
+        with open(source,'ab') as f: f.write(b'external edit during hashing')
+    return result
+m.digest_file=digest
+try:
+    m.main({'filepath':source,'metadata':{'title':'Changed'},'expectedSha256':sys.argv[3],'scrub':False})
+except ValueError as error:
+    assert 'changed' in str(error).lower()
+else:
+    raise AssertionError('External edit was overwritten')
+`;
+  execFileSync(process.env.PYTHON_BIN || 'python3',['-c',script,helper,file,revision]);
+  assert.ok(fs.readFileSync(file).includes(Buffer.from('external edit during hashing')));
+});

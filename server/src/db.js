@@ -21,6 +21,15 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS music_tag_reviews (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'ready',
+  payload_json TEXT NOT NULL,
+  after_sha256 TEXT,
+  error TEXT,
+  created_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS music_batches (
   id TEXT PRIMARY KEY,
   expected_count INTEGER NOT NULL,

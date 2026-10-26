@@ -47,7 +47,7 @@ jobs:
         working-directory: server
         run: npm run lint
       - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y ffmpeg python3-mutagen
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y ffmpeg python3-mutagen libchromaprint-tools
       - name: Test server (with coverage report)
         working-directory: server
         run: PYTHON_BIN=/usr/bin/python3 npm run test:coverage

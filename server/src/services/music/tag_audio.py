@@ -4,6 +4,7 @@ Write to a sibling copy, verify requested tags after reopening, then atomically 
 Never re-encode or modify the original on failure. No network access in this helper.
 """
 import base64
+import hashlib
 import json
 import os
 import shutil
@@ -109,7 +110,7 @@ def write_tags(audio, values):
 
 def read_tags(audio):
     result = {}
-    tags = audio.tags
+    tags = audio.tags or {}
     for field, (frame, atom, comment) in FIELDS.items():
         if is_id3(audio):
             key = frame if frame.startswith('T') and len(frame) == 4 else 'TXXX:' + frame
@@ -121,6 +122,10 @@ def read_tags(audio):
             vals = tags.get(comment, [])
         if vals:
             result[field] = vals if field in ARRAYS else str(vals[0])
+    if is_id3(audio):
+        recording = tags.get('UFID:http://musicbrainz.org')
+        if recording is not None:
+            result['musicbrainzRecordingId'] = recording.data.decode('utf-8', errors='replace')
     for field, total, frame, atom, comment in [('trackNumber', 'totalTracks', 'TRCK', 'trkn', 'tracknumber'), ('discNumber', 'totalDiscs', 'TPOS', 'disk', 'discnumber')]:
         if is_id3(audio):
             vals = str(tags.get(frame, '')).split('/')
@@ -160,6 +165,8 @@ def write_artwork(audio, art):
 
 
 def has_artwork(audio):
+    if audio.tags is None:
+        return False
     if is_id3(audio):
         return bool(audio.tags.getall('APIC'))
     if isinstance(audio, MP4):
@@ -169,11 +176,43 @@ def has_artwork(audio):
     return bool(audio.tags.get('metadata_block_picture'))
 
 
+def digest_file(filename):
+    result = hashlib.sha256()
+    with open(filename, 'rb') as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b''):
+            result.update(chunk)
+    return result.hexdigest()
+
+
+def clear_fields(audio, fields):
+    for field in fields:
+        if field not in FIELDS:
+            raise ValueError('Unsupported field to clear: ' + field)
+        frame, atom, comment = FIELDS[field]
+        if is_id3(audio):
+            audio.tags.delall(frame if frame.startswith('T') and len(frame) == 4 else 'TXXX:' + frame)
+            if field == 'musicbrainzRecordingId':
+                audio.tags.delall('UFID:http://musicbrainz.org')
+        elif isinstance(audio, MP4):
+            audio.tags.pop(atom, None)
+        else:
+            audio.tags.pop(comment, None)
+
+
 def main(payload):
     source = payload['filepath']
     ext = os.path.splitext(source)[1].lower()
     if ext not in {'.mp3', '.m4a', '.flac', '.opus', '.ogg', '.wav'}:
         raise ValueError('Unsupported music format: ' + ext)
+    if payload.get('operation') == 'inspect':
+        audio = mutagen.File(source)
+        if audio is None or audio.info.length <= 0:
+            raise ValueError('File contains no readable audio')
+        return {'tags': read_tags(audio), 'artwork': has_artwork(audio), 'duration': audio.info.length,
+                'proposed': expected_tags(payload.get('metadata', {})), 'format': ext[1:]}
+    expected_hash = payload.get('expectedSha256')
+    if expected_hash and digest_file(source) != expected_hash:
+        raise ValueError('Audio file changed since preview; inspect it again')
     fd, temporary = tempfile.mkstemp(prefix='.music-tags-', suffix=ext, dir=os.path.dirname(source))
     os.close(fd)
     try:
@@ -187,6 +226,7 @@ def main(payload):
             audio.tags.clear()
             if isinstance(audio, FLAC):
                 audio.clear_pictures()
+        clear_fields(audio, payload.get('clearFields', []))
         expected = expected_tags(payload.get('metadata', {}))
         write_tags(audio, expected)
         if payload.get('artwork'):
@@ -197,14 +237,19 @@ def main(payload):
         for key, value in expected.items():
             if tags.get(key) != value:
                 raise ValueError('Tag verification failed for ' + key)
+        if any(field in tags for field in payload.get('clearFields', []) if field not in expected):
+            raise ValueError('Tag clearing verification failed')
         artwork = has_artwork(verified)
         if payload.get('artwork') and not artwork:
             raise ValueError('Artwork verification failed')
         with open(temporary, 'rb') as handle:
             os.fsync(handle.fileno())
+        published_revision = digest_file(temporary)
+        if expected_hash and digest_file(source) != expected_hash:
+            raise ValueError('Audio file changed during tagging; original retained')
         os.replace(temporary, source)
         return {'tagged': True, 'verified': True, 'artwork': artwork, 'tags': tags,
-                'duration': verified.info.length, 'tagger': 'Mutagen ' + mutagen.version_string}
+                'duration': verified.info.length, 'revision': published_revision, 'tagger': 'Mutagen ' + mutagen.version_string}
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)

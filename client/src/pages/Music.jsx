@@ -40,6 +40,7 @@ import { useDownloads } from '../context/DownloadsContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import Art from '../components/Art.jsx';
 import Drawer from '../components/Drawer.jsx';
+import MusicLibrary from '../components/MusicLibrary.jsx';
 import { Segmented, ToggleRow } from '../components/DownloadOptionsFields.jsx';
 
 // Key for looking up a song in the Jellyfin library check results.
@@ -1023,6 +1024,7 @@ export default function MusicPage() {
           {[
             ['search', 'Search'],
             ['direct', 'Direct URL'],
+            ['library', 'Library'],
             ['watches', 'Watches'],
             ['lidarr', lidarrWanted.totalRecords > 0 ? `Lidarr · ${lidarrWanted.totalRecords}` : 'Lidarr'],
             ['settings', 'Settings'],
@@ -1054,6 +1056,8 @@ export default function MusicPage() {
           <Link to="/" className="text-btn">View on Home</Link>
         </div>
       )}
+
+      {activeTab === 'library' && <MusicLibrary />}
 
       {activeTab === 'search' && (
         <>

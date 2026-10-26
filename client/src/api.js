@@ -140,6 +140,16 @@ export const api = {
   saveTwitchSettings: (payload) => request('/twitch/settings', { method: 'POST', body: JSON.stringify(payload) }),
   listTwitchJobs: () => request('/twitch/jobs'),
 
+  listMusicFiles: (folder = '') => request(`/music/library/files?folder=${encodeURIComponent(folder)}`),
+  inspectMusicFile: (path) => request('/music/library/inspect', {method:'POST',body:JSON.stringify({path})}),
+  previewMusicTags: (payload) => request('/music/library/preview', {method:'POST',body:JSON.stringify(payload)}),
+  applyMusicTags: (id) => request(`/music/library/reviews/${encodeURIComponent(id)}/apply`, {method:'POST'}),
+  restoreMusicTags: (id) => request(`/music/library/reviews/${encodeURIComponent(id)}/restore`, {method:'POST'}),
+  musicTagHistory: () => request('/music/library/reviews'),
+  identifyMusicFile: (path) => request('/music/library/identify', {method:'POST',body:JSON.stringify({path})}),
+  musicFingerprintSettings: () => request('/music/library/fingerprint/settings'),
+  saveMusicFingerprintSettings: (clientKey) => request('/music/library/fingerprint/settings', {method:'PUT',body:JSON.stringify({clientKey})}),
+
   // Music Hub
   searchMusic: (q, type = 'album', source = 'itunes') => request(`/music/search?q=${encodeURIComponent(q)}&type=${encodeURIComponent(type)}&source=${encodeURIComponent(source)}`),
   getMusicAlbum: (id) => request(`/music/album/${encodeURIComponent(id)}`),
