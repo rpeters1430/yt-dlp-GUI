@@ -196,7 +196,8 @@ def clear_fields(audio, fields):
         elif isinstance(audio, MP4):
             audio.tags.pop(atom, None)
         else:
-            audio.tags.pop(comment, None)
+            if comment in audio.tags:
+                del audio.tags[comment]
 
 
 def main(payload):
