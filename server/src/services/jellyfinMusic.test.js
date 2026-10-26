@@ -80,3 +80,13 @@ test('getIndex pulls albums and songs through the API and caches them', async (t
   await jellyfinMusic.getIndex(cfg);
   assert.equal(calls.length, 4, 'invalidate forces a rebuild');
 });
+
+test('strict download checks keep studio/live versions and album editions distinct', () => {
+  assert.equal(jellyfinMusic.matchTrack(index,{artist:'The Beatles',title:'Come Together (Live)',strictVersion:true}),null);
+  assert.equal(jellyfinMusic.matchTrack(index,{artist:'The Beatles',title:'Come Together',album:'Other Album',strictVersion:true}),null);
+  assert.equal(jellyfinMusic.matchTrack(index,{artist:'The Beatles',title:'Come Together',album:'Abbey Road',strictVersion:true}).id,'t1');
+});
+
+test('strict missing-track checks do not confuse a repeated title on another disc', () => {
+  assert.equal(jellyfinMusic.matchTrack(index,{artist:'The Beatles', title:'Come Together', album:'Abbey Road', discNumber:2, trackNumber:1, strictVersion:true}),null);
+});

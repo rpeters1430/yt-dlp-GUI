@@ -121,6 +121,7 @@ function init(socketIo) {
     } catch (_) {}
   }
   db.prepare("UPDATE downloads SET status = 'queued', pid = NULL WHERE status = 'downloading'").run();
+  require('./music/batches').recover();
   processNext();
 }
 
@@ -434,33 +435,64 @@ async function runJob(job) {
     // if the probe fails, in which case resolveDownloadOptions falls back to a URL guess.
     let caps = null;
     try {
-      appendLog(`Resolving metadata...`);
-      updateJob(job.id, { stage: 'Fetching metadata…', log: logLines.join('\n') });
-      // Reuses the Analyze dialog's probe when the job was enqueued right after it.
-      const info = await ytdlp.getInfo(job.url, { reuseRecent: true });
-      title = info.title || null;
-      thumbnail = info.thumbnail || null;
-      extractor = info.extractor || null;
-      videoId = info.id || null;
-      nfoInfo = {
-        title,
-        description: info.description || '',
-        uploader: info.uploader || info.channel || null,
-        uploadDate: info.upload_date || null,
-        duration: info.duration || null,
-        tags: info.tags || info.categories || [],
-        thumbnailUrl: thumbnail,
-        videoId,
-        sourceUrl: info.webpage_url || job.url,
-        channelUrl: info.channel_url || null,
-        channelId: info.channel_id || null,
-      };
-      caps = siteProfiles.getCapabilities(info, job.url);
-      appendLog(`Metadata: "${title || 'Unknown'}" (${extractor || 'extractor'}) [ID: ${videoId || 'unknown'}]`);
-      appendLog(`Site profile: ${caps.site.name}${caps.site.id === 'generic' ? ' (generic rules)' : ''}`);
-      for (const warning of caps.warnings) appendLog(`WARNING: ${warning}`);
-      updateJob(job.id, { title, thumbnail, extractor, video_id: videoId, stage: 'Ready to download', log: logLines.join('\n') });
+      if ((extraOptions.musicImportedFile && fs.existsSync(extraOptions.musicImportedFile)) || (extraOptions.musicStagedFile && fs.existsSync(extraOptions.musicStagedFile))) {
+        appendLog('Reusing staged audio; retrying music tagging/import without downloading again');
+      } else {
+        appendLog(`Resolving metadata...`);
+        updateJob(job.id, { stage: 'Fetching metadata…', log: logLines.join('\n') });
+        // Reuses the Analyze dialog's probe when the job was enqueued right after it.
+        const info = await ytdlp.getInfo(job.url, { reuseRecent: true });
+        title = info.title || null;
+        thumbnail = info.thumbnail || null;
+        extractor = info.extractor || null;
+        videoId = info.id || null;
+        nfoInfo = {
+          title,
+          description: info.description || '',
+          uploader: info.uploader || info.channel || null,
+          uploadDate: info.upload_date || null,
+          duration: info.duration || null,
+          tags: info.tags || info.categories || [],
+          thumbnailUrl: thumbnail,
+          videoId,
+          sourceUrl: info.webpage_url || job.url,
+          channelUrl: info.channel_url || null,
+          channelId: info.channel_id || null,
+        };
+        if (extraOptions.isMusicDownload && !extraOptions.musicMetadata) {
+          // Watches retain extractor-supplied music fields. Never invent catalog identities.
+          const music = require('./music');
+          const settings = music.getMusicSettings();
+          extraOptions.musicMetadata = {
+            title:info.track || info.title, artist:info.artist || info.creator || info.uploader || 'Unknown Artist',
+            albumArtist:info.album_artist || info.artist || info.creator || info.uploader || 'Unknown Artist',
+            album:info.album || null, trackNumber:info.track_number || null, discNumber:info.disc_number || null,
+            date:info.release_date ? String(info.release_date).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3') : null,
+            genre:info.genre, sourceUrl:job.url, metadataSource:'extractor', embedArtwork:settings.embedArtwork,
+            artworkUrl:info.thumbnail,
+          };
+          if (settings.libraryMode === 'standalone') {
+            const {libraryTemplate} = require('./music/library');
+            const {resolveMusicDir} = require('./ytdlpPaths');
+            const watch = job.watch_id ? db.prepare('SELECT music_folder FROM watches WHERE id = ?').get(job.watch_id) : null;
+            const base = resolveMusicDir(watch?.music_folder || settings.musicFolder);
+            extraOptions.musicImport = {finalTemplate:libraryTemplate(base, extraOptions.musicMetadata, settings.naming), saveCover:settings.saveCover};
+            extraOptions.outputTemplate = path.join(base, '.staging', job.id, 'audio.%(ext)s');
+            fs.mkdirSync(path.dirname(extraOptions.outputTemplate), {recursive:true});
+            downloadOptions.outputTemplate = extraOptions.outputTemplate;
+            downloadOptions.embedMetadata = false;
+            downloadOptions.embedThumbnail = false;
+          }
+          updateJob(job.id, {options_json:JSON.stringify(extraOptions)});
+        }
+        caps = siteProfiles.getCapabilities(info, job.url);
+        appendLog(`Metadata: "${title || 'Unknown'}" (${extractor || 'extractor'}) [ID: ${videoId || 'unknown'}]`);
+        appendLog(`Site profile: ${caps.site.name}${caps.site.id === 'generic' ? ' (generic rules)' : ''}`);
+        for (const warning of caps.warnings) appendLog(`WARNING: ${warning}`);
+        updateJob(job.id, { title, thumbnail, extractor, video_id: videoId, stage: 'Ready to download', log: logLines.join('\n') });
+      }
     } catch (e) {
+      if (extraOptions.isMusicDownload && !extraOptions.musicMetadata) throw e;
       // The download would hit the exact same wall with the same cookies/IP, so don't spend
       // another round-trip (and another flagged request) on it.
       if (ytdlp.isBotCheckError(e.message)) {
@@ -530,7 +562,11 @@ async function runJob(job) {
 
     let result;
     try {
-      result = await runDownload(resolvedOptions);
+      result = extraOptions.musicImportedFile && fs.existsSync(extraOptions.musicImportedFile)
+        ? {filepath:extraOptions.musicImportedFile}
+        : extraOptions.musicStagedFile && fs.existsSync(extraOptions.musicStagedFile)
+        ? {filepath:extraOptions.musicStagedFile}
+        : await runDownload(resolvedOptions);
     } catch (e) {
       // A subtitle track that can't be fetched (usually YouTube rate-limiting caption
       // requests with HTTP 429) fails the whole yt-dlp run before the video is downloaded.
@@ -562,14 +598,37 @@ async function runJob(job) {
       }
     }
 
-    if (result.filepath && extraOptions.musicMetadata) {
-      try {
-        updateJob(job.id, { stage: 'Tagging…' });
-        const music = require('./music');
-        const tagged = await music.tagMusicFile(result.filepath, extraOptions.musicMetadata);
-        if (tagged.tagged) appendLog(`Tagged music file${tagged.artwork ? ' and embedded album art' : ''}`);
-      } catch (e) {
-        appendLog(`WARNING: Couldn't write music tags/artwork (audio kept): ${e.message}`);
+    if (extraOptions.musicMetadata && !(extraOptions.musicImportedFile && fs.existsSync(extraOptions.musicImportedFile))) {
+      if (!result.filepath) throw new Error('Music download produced no audio file to tag');
+      // Persist before tagging so retries and restarts reuse the saved audio.
+      extraOptions.musicStagedFile = result.filepath;
+      updateJob(job.id, {options_json:JSON.stringify(extraOptions), filepath:result.filepath});
+      updateJob(job.id, {stage:'Tagging and verifying…'});
+      const music = require('./music');
+      const tagged = await music.tagMusicFile(result.filepath, extraOptions.musicMetadata);
+      if (!tagged.verified) throw new Error('Music tags could not be verified');
+      if (extraOptions.musicAutoMatched && extraOptions.musicMetadata.duration && Math.abs(tagged.duration - extraOptions.musicMetadata.duration) > 10) {
+        throw new Error('Downloaded music duration differs from the catalog; review the source before importing');
+      }
+      if (!getJob(job.id)) return;
+      appendLog(`Verified music tags with ${tagged.tagger}${tagged.artwork ? ' and embedded album art' : ''}`);
+      if (extraOptions.musicImport) {
+        updateJob(job.id, {stage:'Importing music…'});
+        const {renderedPath, importTrack} = require('./music/library');
+        const destination = renderedPath(extraOptions.musicImport.finalTemplate, path.extname(result.filepath).slice(1));
+        const staged = result.filepath;
+        const imported = await importTrack(staged, destination, {
+          sourceUrl:job.url, metadata:extraOptions.musicMetadata,
+          verification:tagged, downloadedAt:new Date().toISOString(),
+        });
+        result.filepath = imported.filepath;
+        delete extraOptions.musicStagedFile;
+        extraOptions.musicImportedFile = result.filepath;
+        updateJob(job.id, {options_json:JSON.stringify(extraOptions), filepath:result.filepath});
+        try { fs.unlinkSync(staged); fs.rmdirSync(path.dirname(staged)); } catch (_) {}
+      }
+      if (extraOptions.musicImport?.saveCover || (!extraOptions.musicImport && extraOptions.musicSaveCover !== false && extraOptions.musicMetadata.artworkUrl)) {
+        await music.saveCoverArt(path.dirname(result.filepath), extraOptions.musicMetadata.artworkUrl);
       }
     }
 
@@ -652,6 +711,10 @@ async function runJob(job) {
       }
     }
 
+    if (extraOptions.musicBatchId) require('./music/batches').notifyIfReady(extraOptions.musicBatchId);
+
+    // Batch music scans wait for every requested track, including slow tracks still queued.
+    if (!extraOptions.musicBatchId) {
     // Trigger debounced Jellyfin library scan so newly downloaded media shows up automatically
     try {
       const syncConfig = jellyfinSync.getSyncConfig();
@@ -660,6 +723,8 @@ async function runJob(job) {
       }
     } catch (e) {
       console.error(`[queue] [job:${job.id}] Jellyfin library scan schedule failed: ${e.message}`);
+    }
+
     }
 
     // Playlist sync waits until the library scan above has had time to find the file, and
@@ -671,7 +736,7 @@ async function runJob(job) {
     // Same two steps for Plex: a debounced library refresh, then a delayed playlist sync.
     try {
       const plexConfig = plexSync.getPlexConfig();
-      if (plexSync.isConfigured(plexConfig)) {
+      if (plexSync.isConfigured(plexConfig) && !extraOptions.musicBatchId) {
         plexSync.scheduleLibraryScan();
         if (job.watch_id && plexConfig.syncEnabled) plexSync.scheduleWatchSync(job.watch_id);
       }
@@ -680,7 +745,7 @@ async function runJob(job) {
     }
 
     // Trigger Lidarr auto-import scan for completed music downloads
-    if (extraOptions.isMusicDownload && result.filepath) {
+    if (extraOptions.isMusicDownload && result.filepath && !extraOptions.musicImport && !extraOptions.musicBatchId) {
       try {
         const lidarr = require('./lidarr');
         lidarr.notifyDownloadComplete(job, result, extraOptions);

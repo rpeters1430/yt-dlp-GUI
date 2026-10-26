@@ -201,7 +201,7 @@ function listSidecars(filepath) {
   const dir = path.dirname(filepath);
   const ext = path.extname(filepath);
   const base = path.basename(filepath, ext);
-  const names = [`${base}.nfo`, `${base}.jpg`];
+  const names = [`${base}.nfo`, `${base}.jpg`, `${path.basename(filepath)}.source.json`];
   try {
     for (const name of fs.readdirSync(dir)) {
       if (!name.startsWith(`${base}.`) || !SUBTITLE_EXTS.has(path.extname(name).toLowerCase())) continue;

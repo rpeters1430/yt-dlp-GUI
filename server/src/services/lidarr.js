@@ -431,7 +431,7 @@ async function getLidarrAlbumDetails(id) {
   return { album, tracks: selected.map((t) => ({
     title: t.title, artist: artist.artistName, albumArtist: artist.artistName,
     album: album.name, trackNumber: Number(t.trackNumber) || t.absoluteTrackNumber,
-    discNumber: t.mediumNumber || 1, totalDiscs, totalTracks: selected.length,
+    discNumber: t.mediumNumber || 1, totalDiscs, totalTracks: selected.filter(other => (other.mediumNumber || 1) === (t.mediumNumber || 1)).length,
     duration: t.duration ? Math.round(t.duration / 1000) : null,
   })) };
 }

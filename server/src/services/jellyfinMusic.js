@@ -111,11 +111,14 @@ function buildIndex(albumItems, audioItems) {
 }
 
 // The library's copy of a song, matched by title (edition noise ignored) and any shared artist.
-function matchTrack(index, { artist, title }) {
+function matchTrack(index, { artist, title, album, discNumber, trackNumber, strictVersion = false }) {
   if (!index || !title) return null;
   const wanted = artistKeys(artist);
   const candidates = index.tracksByBase.get(baseName(title)) || [];
-  return candidates.find((t) => artistsOverlap(wanted, t.artists)) || null;
+  return candidates.find((t) => artistsOverlap(wanted, t.artists)
+    && (!strictVersion || (normText(t.name) === normText(title) && (!album || normText(t.album) === normText(album))
+      && (!discNumber || Number(t.discNumber) === Number(discNumber))
+      && (!trackNumber || Number(t.trackNumber) === Number(trackNumber))))) || null;
 }
 
 function matchAlbum(index, { artist, album }) {
