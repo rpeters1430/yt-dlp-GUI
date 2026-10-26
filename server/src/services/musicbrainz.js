@@ -1,30 +1,6 @@
 // Public, read-only metadata API. Never infer a release ID from a fuzzy name match.
-const BASE = 'https://musicbrainz.org/ws/2/';
-const USER_AGENT = 'yt-dlp-GUI/1.0 (https://github.com/rpeters1430/yt-dlp-GUI)';
-const cache = new Map();
-let requests = Promise.resolve();
-let lastRequest = 0;
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-function request(resource, params = {}) {
-  const url = new URL(resource, BASE);
-  for (const [key, value] of Object.entries({...params, fmt:'json'})) url.searchParams.set(key, value);
-  const key = url.href;
-  const entry = cache.get(key);
-  if (entry && entry.expires > Date.now()) return entry.promise;
-  const promise = requests.then(async () => {
-    await sleep(Math.max(0, 1100 - (Date.now() - lastRequest)));
-    lastRequest = Date.now();
-    const res = await fetch(url, {headers:{'User-Agent':USER_AGENT, Accept:'application/json'}, signal:AbortSignal.timeout(15000)});
-    if (!res.ok) throw new Error(`MusicBrainz metadata unavailable (HTTP ${res.status}); try again later`);
-    return res.json();
-  });
-  requests = promise.catch(() => {});
-  if (cache.size >= 100) cache.delete(cache.keys().next().value);
-  cache.set(key, {promise, expires:Date.now() + 15 * 60 * 1000});
-  promise.catch(() => { if (cache.get(key)?.promise === promise) cache.delete(key); });
-  return promise;
-}
+const {createMetadataClient,USER_AGENT}=require('./musicbrainzClient');
+const {request}=createMetadataClient();
 
 function credit(items = []) {
   return {
