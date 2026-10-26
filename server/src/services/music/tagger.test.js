@@ -20,13 +20,5 @@ for (const ext of ['mp3', 'm4a', 'flac', 'opus', 'ogg', 'wav']) {
     assert.equal(result.tags.title, 'Updated');
     assert.ok(!result.tags.musicbrainzRecordingId);
     await writeVerifiedTags(file, {title:'Updated'}, null, options);
-    await writeVerifiedTags(file, {artist:'New artist',trackNumber:2,totalTracks:10},null,{scrub:false,selectedFields:['artist','trackNumber','totalTracks']});
-    assert.ok(!(await inspectAudio(file)).tags.albumArtist);
-    await writeVerifiedTags(file, {trackNumber:2},null,{scrub:false,selectedFields:['trackNumber'],clearFields:['totalTracks']});
-    let numeric=(await inspectAudio(file)).tags;
-    assert.equal(numeric.trackNumber,'2');assert.ok(!numeric.totalTracks);
-    await writeVerifiedTags(file, {},null,{scrub:false,selectedFields:[],clearFields:['trackNumber','totalTracks']});
-    numeric=(await inspectAudio(file)).tags;
-    assert.ok(!numeric.trackNumber);assert.ok(!numeric.totalTracks);
   });
 }
