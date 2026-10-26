@@ -11,7 +11,7 @@ const {createFingerprintService}=require('../services/music/fingerprint');
 const {requireAuth}=require('../auth');
 const router=express.Router();
 router.use(requireAuth);
-const reviews=createReviews({db,root:()=>music.getMusicSettings().musicDir,getRelease:id=>musicbrainz.getRelease(id)});
+const reviews=createReviews({db,root:()=>music.getMusicSettings().musicDir,getRelease:(id,source)=>source==='itunes' ? music.getAlbumDetails(id) : musicbrainz.getRelease(id)});
 const loadKey=()=>db.prepare("SELECT value FROM settings WHERE key='music_acoustid_key'").get()?.value || process.env.ACOUSTID_CLIENT_KEY || '';
 const fingerprint=createFingerprintService({loadKey});
 function executable(file) {try {fs.accessSync(file,fs.constants.X_OK);return fs.statSync(file).isFile();} catch {return false;}}

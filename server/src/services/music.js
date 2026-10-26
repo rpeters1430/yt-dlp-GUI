@@ -278,6 +278,8 @@ async function getAlbumDetails(collectionId) {
   const tracks = songItems
     .sort((a, b) => (a.discNumber || 1) - (b.discNumber || 1) || (a.trackNumber || 0) - (b.trackNumber || 0))
     .map((t, index) => ({
+      catalogTrackId: String(t.trackId || `${collectionId}:${t.discNumber || 1}:${t.trackNumber || index + 1}`),
+      metadataSource: 'itunes',
       trackNumber: t.trackNumber || index + 1,
       totalTracks: songItems.filter(s => (s.discNumber || 1) === (t.discNumber || 1)).length,
       discNumber: t.discNumber || 1,

@@ -95,6 +95,7 @@ test('getAlbumDetails requests all multi-disc tracks and rejects truncated metad
   const details = await getAlbumDetails(1);
   assert.equal(details.tracks.length, 60);
   assert.equal(details.tracks[30].discNumber, 2);
+  assert.notEqual(details.tracks[0].catalogTrackId,details.tracks[30].catalogTrackId);
   count = 50;
   await assert.rejects(getAlbumDetails(1), /Album track list incomplete/);
 });

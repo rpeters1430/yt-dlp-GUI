@@ -50,3 +50,23 @@ test('authenticated inspect, preview, apply and restore round-trip the actual or
   assert.deepEqual(fs.readFileSync(file),original);
   assert.equal((await post('/inspect',{path:'../outside.mp3'})).status,400);
 });
+
+test('Apple library previews use Apple track metadata without calling MusicBrainz',async t=>{
+  const {base,tmp}=await setup(t);
+  const fs=require('fs'),path=require('path'),{execFileSync}=require('child_process');
+  const root=path.join(tmp.dir,'music');fs.mkdirSync(root);
+  tmp.db.prepare("INSERT INTO settings (key,value) VALUES ('music_folder',?)").run(root);
+  const file=path.join(root,'song.mp3');
+  execFileSync('ffmpeg',['-v','error','-y','-f','lavfi','-i','sine=duration=0.2','-metadata','title=Old',file]);
+  const mb=t.mock.method(require('../musicbrainz'),'getRelease',async()=>{throw new Error('MusicBrainz must not be called');});
+  const apple=t.mock.method(require('../music'),'getAlbumDetails',async id=>{
+    assert.equal(id,'123');
+    return {tracks:[{title:'Apple title',artist:'Artist',catalogTrackId:'456'}]};
+  });
+  const res=await fetch(base+'/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:'song.mp3',source:'itunes',releaseId:'123',releaseTrackId:'456'})});
+  const body=await res.json();
+  assert.equal(res.status,200,JSON.stringify(body));
+  assert.ok(body.changes.some(change=>change.after==='Apple title'));
+  assert.equal(mb.mock.callCount(),0);
+  assert.equal(apple.mock.callCount(),1);
+});

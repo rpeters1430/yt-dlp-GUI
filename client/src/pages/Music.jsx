@@ -41,6 +41,7 @@ import { useToast } from '../context/ToastContext.jsx';
 import Art from '../components/Art.jsx';
 import Drawer from '../components/Drawer.jsx';
 import MusicLibrary from '../components/MusicLibrary.jsx';
+import {createCatalogRequests} from '../musicCatalog.js';
 import { Segmented, ToggleRow } from '../components/DownloadOptionsFields.jsx';
 
 // Key for looking up a song in the Jellyfin library check results.
@@ -100,6 +101,7 @@ const QUALITY_OPTIONS_BY_FORMAT = {
 
 export default function MusicPage() {
   const [metadataSource, setMetadataSource] = useState('itunes');
+  const catalogRequests=useMemo(()=>createCatalogRequests(),[]);
   const [activeTab, setActiveTab] = useState('search'); // 'search' | 'direct' | 'watches' | 'settings'
 
   // Settings
@@ -536,6 +538,14 @@ export default function MusicPage() {
     };
   }, []);
 
+  function changeMetadataSource(source) {
+    catalogRequests.invalidate();
+    setMetadataSource(source);setSearching(false);setLoadingAlbumId(null);setArtistLoading(false);
+    setSearchResults([]);setMatchedArtist(null);setSearchError('');
+    setSelectedAlbum(null);setSelectedArtist(null);setTrackMatches({});
+    if(source==='musicbrainz')setSearchType('album');
+  }
+
   // Perform search
   async function handleSearch(e, forcedQuery, forcedType) {
     if (e) e.preventDefault();
@@ -543,7 +553,10 @@ export default function MusicPage() {
     const sType = forcedType || searchType;
     if (!q) return;
 
+    const ticket=catalogRequests.start();
+    setLoadingAlbumId(null);setArtistLoading(false);
     setSearching(true);
+    setSearchResults([]);
     setSearchError('');
     setSelectedAlbum(null);
     setSelectedArtist(null);
@@ -551,6 +564,7 @@ export default function MusicPage() {
 
     try {
       const data = await api.searchMusic(q, sType, metadataSource);
+      if(!catalogRequests.isCurrent(ticket))return;
       setSearchResults(data.results || []);
       setMatchedArtist(data.matchedArtist || null);
 
@@ -567,14 +581,16 @@ export default function MusicPage() {
         setSearchError(`No ${sType === 'album' ? 'albums' : sType === 'artist' ? 'artists' : 'tracks'} found for "${q}". Try another search term.`);
       }
     } catch (err) {
-      setSearchError(err.message || 'Search failed');
+      if(catalogRequests.isCurrent(ticket))setSearchError(err.message || 'Search failed');
     } finally {
-      setSearching(false);
+      if(catalogRequests.isCurrent(ticket))setSearching(false);
     }
   }
 
   // View full artist discography
   async function handleViewArtist(artistId, artistName) {
+    const ticket=catalogRequests.start();
+    setLoadingAlbumId(null);setSearching(false);setSelectedArtist(null);
     setArtistLoading(true);
     setSelectedAlbum(null);
     try {
@@ -583,12 +599,14 @@ export default function MusicPage() {
         data = await api.getMusicArtist(artistId);
       } else if (artistName) {
         const searchRes = await api.searchMusic(artistName, 'artist');
+        if(!catalogRequests.isCurrent(ticket))return;
         if (searchRes.results && searchRes.results.length > 0) {
           data = await api.getMusicArtist(searchRes.results[0].id);
         } else {
           throw new Error(`Could not find artist "${artistName}"`);
         }
       }
+      if(!catalogRequests.isCurrent(ticket))return;
       if (data) {
         setSelectedArtist(data);
         setArtistTab('albums');
@@ -596,9 +614,9 @@ export default function MusicPage() {
         setArtistSort('newest');
       }
     } catch (err) {
-      showToast(`Could not load the artist: ${err.message}`, 'error');
+      if(catalogRequests.isCurrent(ticket))showToast(`Could not load the artist: ${err.message}`, 'error');
     } finally {
-      setArtistLoading(false);
+      if(catalogRequests.isCurrent(ticket))setArtistLoading(false);
     }
   }
 
@@ -718,10 +736,13 @@ export default function MusicPage() {
   // View album details
   async function handleSelectAlbum(album) {
     if (loadingAlbumId) return;
+    const ticket=catalogRequests.start();
+    setArtistLoading(false);setSearching(false);
     setLoadingAlbumId(album.id);
     setAlbumDownloadMessage(null);
     try {
       const data = await api.getMusicAlbum(album.id);
+      if(!catalogRequests.isCurrent(ticket))return;
       // Default: select every track not already in Jellyfin (the library check effect
       // unticks any it finds once it hears back)
       const missingTrackNums = new Set((data.tracks || [])
@@ -731,9 +752,9 @@ export default function MusicPage() {
       setTrackMatches({});
       setSelectedAlbum(data);
     } catch (err) {
-      showToast(`Could not load album details: ${err.message}`, 'error');
+      if(catalogRequests.isCurrent(ticket))showToast(`Could not load album details: ${err.message}`, 'error');
     } finally {
-      setLoadingAlbumId(null);
+      if(catalogRequests.isCurrent(ticket))setLoadingAlbumId(null);
     }
   }
 
@@ -1057,18 +1078,14 @@ export default function MusicPage() {
         </div>
       )}
 
-      {activeTab === 'library' && <MusicLibrary />}
+      {activeTab === 'library' && <MusicLibrary metadataSource={metadataSource} onCatalogChange={changeMetadataSource} />}
 
       {activeTab === 'search' && (
         <>
           {!selectedAlbum && !selectedArtist && (
             <>
               <label className="mono-meta">Metadata catalog
-                <select className="select" value={metadataSource} aria-label="Metadata catalog" onChange={e => {
-                  setMetadataSource(e.target.value); setSearchResults([]); setMatchedArtist(null);
-                  setSearchError('');
-                  if (e.target.value === 'musicbrainz') setSearchType('album');
-                }}>
+                <select className="select" value={metadataSource} aria-label="Metadata catalog" onChange={e => changeMetadataSource(e.target.value)}>
                   <option value="itunes">Apple catalog</option>
                   <option value="musicbrainz">MusicBrainz releases (free)</option>
                 </select>
