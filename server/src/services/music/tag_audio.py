@@ -186,6 +186,21 @@ def digest_file(filename):
 
 def clear_fields(audio, fields):
     for field in fields:
+        numeric = {'trackNumber': ('TRCK', 'trkn', 'tracknumber', 'tracktotal'),
+                   'totalTracks': ('TRCK', 'trkn', 'tracknumber', 'tracktotal'),
+                   'discNumber': ('TPOS', 'disk', 'discnumber', 'disctotal'),
+                   'totalDiscs': ('TPOS', 'disk', 'discnumber', 'disctotal')}
+        if field in numeric:
+            frame, atom, number, total = numeric[field]
+            if is_id3(audio):
+                audio.tags.delall(frame)
+            elif isinstance(audio, MP4):
+                audio.tags.pop(atom, None)
+            else:
+                for key in [number, total, 'totaltracks' if total == 'tracktotal' else 'totaldiscs']:
+                    if key in audio.tags:
+                        del audio.tags[key]
+            continue
         if field not in FIELDS:
             raise ValueError('Unsupported field to clear: ' + field)
         frame, atom, comment = FIELDS[field]
@@ -196,7 +211,8 @@ def clear_fields(audio, fields):
         elif isinstance(audio, MP4):
             audio.tags.pop(atom, None)
         else:
-            audio.tags.pop(comment, None)
+            if comment in audio.tags:
+                del audio.tags[comment]
 
 
 def main(payload):
@@ -228,6 +244,8 @@ def main(payload):
                 audio.clear_pictures()
         clear_fields(audio, payload.get('clearFields', []))
         expected = expected_tags(payload.get('metadata', {}))
+        if 'selectedFields' in payload:
+            expected = {key: value for key, value in expected.items() if key in payload['selectedFields']}
         write_tags(audio, expected)
         if payload.get('artwork'):
             write_artwork(audio, payload['artwork'])
