@@ -71,3 +71,52 @@ test('an external edit immediately after helper publication is never trusted for
   await assert.rejects(service.restore(review.id),/Interrupted review/i);
   assert.ok(fs.readFileSync(file).includes(Buffer.from('external edit after publication')));
 });
+
+test('field choices preserve existing identifiers and genre by default and reject arbitrary edits', async t=>{
+  const {file,service}=setup(t);
+  await require('./tagger').writeVerifiedTags(file,{title:'Old title',genre:'Folk Rock',musicbrainzRecordingId:'existing'},null,{scrub:false});
+  const review=await service.preview({path:'Album/Song.mp3',releaseId:'release-id',releaseTrackId:'track-id'});
+  assert.equal(review.changes.find(c=>c.field==='musicbrainzRecordingId').action,'keep');
+  await assert.rejects(service.apply(review.id,{title:'invented'}),/choice/i);
+  await service.apply(review.id,{title:'keep',musicbrainzRecordingId:'clear'});
+  const tags=(await service.inspect('Album/Song.mp3')).tags;
+  assert.equal(tags.title,'Old title');
+  assert.equal(tags.genre,'Folk Rock');
+  assert.ok(!tags.musicbrainzRecordingId);
+});
+test('keeping a field never rewrites it through artist defaults and numeric totals remain intact', async t=>{
+  const {file,service}=setup(t);
+  const tagger=require('./tagger');
+  await tagger.writeVerifiedTags(file,{artist:'Original artist',albumArtist:'Original album artist',trackNumber:7,totalTracks:12,discNumber:2,totalDiscs:3},null,{scrub:false});
+  const review=await service.preview({path:'Album/Song.mp3',releaseId:'release-id',releaseTrackId:'track-id'});
+  const choices=Object.fromEntries(review.changes.map(change=>[change.field,'keep']));
+  choices.artist='replace';choices.trackNumber='replace';
+  await service.apply(review.id,choices);
+  const tags=(await service.inspect('Album/Song.mp3')).tags;
+  assert.equal(tags.artist,'Artist');
+  assert.equal(tags.albumArtist,'Original album artist');
+  assert.equal(tags.trackNumber,'1');assert.equal(tags.totalTracks,'12');
+  assert.equal(tags.discNumber,'2');assert.equal(tags.totalDiscs,'3');
+});
+test('an unavailable catalog field cannot be replaced and unsupported choices are refused', async t=>{
+  const {file,service}=setup(t);
+  await require('./tagger').writeVerifiedTags(file,{genre:'Folk Rock'},null,{scrub:false});
+  const review=await service.preview({path:'Album/Song.mp3',releaseId:'release-id',releaseTrackId:'track-id'});
+  await assert.rejects(service.apply(review.id,{genre:'replace'}),/Invalid tag choice/);
+  await assert.rejects(service.apply(review.id,{unknown:'clear'}),/Invalid tag choice/);
+});
+
+test('clearing a total preserves its number, and clearing a number requires clearing its total', async t=>{
+  const {file,service}=setup(t);
+  await require('./tagger').writeVerifiedTags(file,{trackNumber:7,totalTracks:12},null,{scrub:false});
+  let review=await service.preview({path:'Album/Song.mp3',releaseId:'release-id',releaseTrackId:'track-id'});
+  const keep=Object.fromEntries(review.changes.map(change=>[change.field,'keep']));
+  await assert.rejects(service.apply(review.id,{...keep,trackNumber:'clear'}),/associated total/);
+  await service.apply(review.id,{...keep,totalTracks:'clear'});
+  let tags=(await service.inspect('Album/Song.mp3')).tags;
+  assert.equal(tags.trackNumber,'7');assert.ok(!tags.totalTracks);
+  review=await service.preview({path:'Album/Song.mp3',releaseId:'release-id',releaseTrackId:'track-id'});
+  await service.apply(review.id,{...Object.fromEntries(review.changes.map(change=>[change.field,'keep'])),trackNumber:'clear',totalTracks:'clear'});
+  tags=(await service.inspect('Album/Song.mp3')).tags;
+  assert.ok(!tags.trackNumber);assert.ok(!tags.totalTracks);
+});

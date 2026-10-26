@@ -34,7 +34,7 @@ function refreshLibraries() {
     if(plex.isConfigured(plex.getPlexConfig()))plex.scheduleLibraryScan();
   } catch(err) {console.error(`[music] Tags saved but could not schedule a library refresh: ${err.message}`);}
 }
-router.post('/reviews/:id/apply',action(async req=>{const result=await reviews.apply(req.params.id);refreshLibraries();return result;}));
+router.post('/reviews/:id/apply',action(async req=>{const result=await reviews.apply(req.params.id,req.body?.choices);refreshLibraries();return result;}));
 router.post('/reviews/:id/restore',action(async req=>{const result=await reviews.restore(req.params.id);refreshLibraries();return result;}));
 router.get('/fingerprint/settings',(req,res)=>res.json(status()));
 router.put('/fingerprint/settings',(req,res)=>{

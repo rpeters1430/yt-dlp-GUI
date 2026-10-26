@@ -58,3 +58,15 @@ Expand **Optional audio identification** in the Library tab and enter a free **A
 Select a song and press **Identify audio with AcoustID**. The app computes a local fingerprint and sends only that fingerprint and the duration to AcoustID. Requests are serialized at no more than one per 400 ms. It does not upload the music file or submit new fingerprints. Suggested recordings and releases require your selection and the same tag preview/apply workflow. A fingerprint score does not establish an exact release edition or master.
 
 Manual Apple/MusicBrainz release selection requires no AcoustID key and works independently of the fingerprint service.
+
+### Selective tag updates and album review
+
+In **Music → Library**, a preview shows current and catalog values with a choice for each field:
+
+- **Keep current** leaves the stored tag untouched. Existing genre, ISRC and MusicBrainz IDs default to Keep, including when Apple does not provide a replacement.
+- **Replace with catalog** writes the value from the selected release/track. Missing catalog values cannot be selected as replacements.
+- **Clear tag** explicitly removes the field. Clearing a track/disc number also selects its total for clearing because those values share storage in some formats. Clearing only a total preserves its number.
+
+Review identifiers when changing editions: retained IDs can refer to the old release. The preview does not verify previously stored identifiers. Artwork, comments, lyrics, ratings and ReplayGain remain untouched by this workflow. Preview field names are logical names; the writer maps them to ID3, MP4 atoms or Vorbis comments for the file type. Fresh previews are required for reviews created before field choices were supported.
+
+For an album, browse its subfolder, select 2–50 files with the checkboxes and choose **Review selected album files**. Select a catalog release and map every file to a different track, then **Preview album changes**. Nothing is tagged until **Apply reviewed album tags**. Every file has independent choices, verification, backup and restore history. The operation is sequential, not an atomic album transaction: successful files remain saved if another fails. Correct the cause and preview again before retrying; already saved files are skipped while the current batch remains open. Closing the drawer does not undo saved files; use Recent tag reviews to restore them individually. Existing file names are unchanged.
