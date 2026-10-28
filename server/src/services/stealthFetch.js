@@ -2,8 +2,10 @@ const { spawn } = require('child_process');
 const path = require('path');
 
 const PY_SCRIPT = path.join(__dirname, 'stealthFetch.py');
+const DEFAULT_SOLVER_TIMEOUT_MS = 120000;
+const SOLVER_RESPONSE_GRACE_MS = 30000;
 
-async function solveWithFlareSolverr(solverUrl, targetUrl, cookies, { signal, timeoutMs = 30000 } = {}) {
+async function solveWithFlareSolverr(solverUrl, targetUrl, cookies, { signal, timeoutMs = DEFAULT_SOLVER_TIMEOUT_MS } = {}) {
   const base = String(solverUrl || '').trim().replace(/\/+$/, '');
   if (!base) throw new Error('Solver URL is empty');
   const endpoint = base.endsWith('/v1') ? base : `${base}/v1`;
@@ -24,7 +26,7 @@ async function solveWithFlareSolverr(solverUrl, targetUrl, cookies, { signal, ti
       };
     }),
   };
-  const timeoutSignal = AbortSignal.timeout(timeoutMs + 5000);
+  const timeoutSignal = AbortSignal.timeout(timeoutMs + SOLVER_RESPONSE_GRACE_MS);
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -36,11 +38,16 @@ async function solveWithFlareSolverr(solverUrl, targetUrl, cookies, { signal, ti
   if (data.status !== 'ok' || !data.solution?.response) {
     throw new Error(data.message || 'Solver challenge solving failed');
   }
+  const solutionStatus = Number(data.solution.status ?? 200);
+  if (!Number.isFinite(solutionStatus) || solutionStatus < 200 || solutionStatus >= 300) {
+    throw new Error(`Solver challenge remained blocked (HTTP ${data.solution.status ?? 'unknown'})`);
+  }
   return {
     url: data.solution.url || targetUrl,
     html: data.solution.response,
     cookies: data.solution.cookies || [],
-    status: data.solution.status || 200,
+    userAgent: typeof data.solution.userAgent === 'string' ? data.solution.userAgent : '',
+    status: solutionStatus,
   };
 }
 

@@ -774,7 +774,7 @@ async function fetchPage(url, {
             const solved = await solveWithFlareSolverr(solverUrl, current, cookies, { signal });
             if (solved && solved.html) {
               rememberSolverCookies(cookies, solved.cookies);
-              return { url: solved.url, html: solved.html };
+              return { url: solved.url, html: solved.html, userAgent: solved.userAgent };
             }
           } catch (solverErr) {
             solverFailure = solverErr.message;
@@ -882,6 +882,7 @@ async function crawl({
 
   // 1. Fetch initial page
   const firstPage = await fetchPage(startUrl, fetchOpts);
+  if (firstPage.userAgent) fetchOpts.userAgent = firstPage.userAgent;
   visited.add(firstPage.url);
   visited.add(startUrl);
 
@@ -889,6 +890,7 @@ async function crawl({
   const detectedMaxPage = detectMaxPage(firstPage.html, threadInfo.page, threadInfo.isThread ? threadInfo.baseUrl : '');
 
   function addPage(page, pageNumber) {
+    if (page.userAgent) fetchOpts.userAgent = page.userAgent;
     pages.push({ url: page.url, title: pageTitle(page.html), page: pageNumber });
     const extracted = extractLinks(page.html, page.url, { skipQuotes, skipBots, decodeBase64 });
     for (const pw of (extracted.passwords || [])) {
@@ -950,6 +952,7 @@ async function crawl({
     if (targetPages.includes(threadInfo.page)) addPage(firstPage, threadInfo.page);
     targetPages = targetPages.filter((p) => p !== threadInfo.page);
 
+    let previousPageUrl = firstPage.url;
     for (const pNum of targetPages) {
       if (pages.length >= MAX_PAGES_LIMIT || byKey.size >= MAX_LINKS) break;
       const pageUrl = getThreadPageUrl(threadInfo.baseUrl, pNum);
@@ -957,7 +960,9 @@ async function crawl({
       visited.add(pageUrl);
       try {
         if (delayMs > 0) await delay(delayMs, signal);
-        addPage(await fetchPage(pageUrl, { ...fetchOpts, referer: firstPage.url }), pNum);
+        const page = await fetchPage(pageUrl, { ...fetchOpts, referer: previousPageUrl });
+        addPage(page, pNum);
+        previousPageUrl = page.url;
       } catch (err) {
         error = failed(err);
         break;
@@ -975,16 +980,18 @@ async function crawl({
     };
     let next = sameSiteNext(firstPage.html, firstPage.url);
     let lastPage = threadInfo.page;
+    let previousPageUrl = firstPage.url;
     while (mode !== 'single' && next && pages.length < limit && !visited.has(next)) {
       visited.add(next);
       let page;
       try {
         if (delayMs > 0) await delay(delayMs, signal);
-        page = await fetchPage(next, { ...fetchOpts, referer: page ? page.url : firstPage.url });
+        page = await fetchPage(next, { ...fetchOpts, referer: previousPageUrl });
       } catch (err) {
         error = failed(err);
         break;
       }
+      previousPageUrl = page.url;
       // A thread's own page numbers, so a crawl started on page 27 labels the next one 28.
       const pageNumber = threadInfo.isThread ? parseThreadUrl(page.url).page : pages.length + 1;
       addPage(page, pageNumber);

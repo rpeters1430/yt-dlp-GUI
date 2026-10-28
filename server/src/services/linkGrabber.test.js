@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const http = require('node:http');
 const {
   parseNetscapeCookies,
   parseCookiesContent,
@@ -559,6 +560,52 @@ test('following next links from a later thread page keeps the thread\'s page num
   assert.equal(result.hasMorePages, true);
 });
 
+test('follow-mode requests send the immediately previous page as Referer', async () => {
+  const page1 = 'https://forum.example.com/list';
+  const page2 = 'https://forum.example.com/list?page=2';
+  const page3 = 'https://forum.example.com/list?page=3';
+  const pages = {
+    [page1]: `<link rel="next" href="${page2}">`,
+    [page2]: `<link rel="next" href="${page3}">`,
+    [page3]: '<p>done</p>',
+  };
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push({ url, referer: opts.headers.Referer });
+    return htmlOk(pages[url]);
+  };
+
+  await crawl({ url: page1, mode: 'follow', maxPages: 3, ignoreHistory: true, fetchImpl, assertUrl: async () => {}, delayMs: 0 });
+
+  assert.deepEqual(calls, [
+    { url: page1, referer: undefined },
+    { url: page2, referer: page1 },
+    { url: page3, referer: page2 },
+  ]);
+});
+
+test('numbered thread-page requests send the immediately previous page as Referer', async () => {
+  const thread = 'https://forum.example.com/threads/t.1/';
+  const page2 = `${thread}page-2`;
+  const page3 = `${thread}page-3`;
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push({ url, referer: opts.headers.Referer });
+    const navigation = url === thread
+      ? '<a class="pageNav-page" href="/threads/t.1/page-3">3</a>'
+      : '';
+    return htmlOk(navigation);
+  };
+
+  await crawl({ url: thread, mode: 'all', ignoreHistory: true, fetchImpl, assertUrl: async () => {}, delayMs: 0 });
+
+  assert.deepEqual(calls, [
+    { url: thread, referer: undefined },
+    { url: page2, referer: thread },
+    { url: page3, referer: page2 },
+  ]);
+});
+
 test('sendToAria2 reports which URLs aria2 accepted', async () => {
   const fetchImpl = async () => Response.json({ result: [['gid1'], { faultCode: 1, faultString: 'bad uri' }, ['gid3']] });
   const result = await sendToAria2(['https://a.com/1', 'https://a.com/2', 'https://a.com/3'], { rpcUrl: 'http://nas:6800/jsonrpc', fetchImpl });
@@ -682,6 +729,51 @@ test('cookies a site sets are sent on the rest of the crawl', async () => {
   });
   assert.equal(calls[0].cookie, 'old=1; xf_user=9');
   assert.equal(calls[1].cookie, 'xf_user=9; __ddg8_=abc', 'kept the new cookie, dropped the deleted one, ignored the foreign one');
+});
+
+test('a Solverr clearance cookie and User-Agent are reused on later forum pages', async (t) => {
+  const thread = 'https://forum.example.com/threads/t.1/';
+  const solver = http.createServer(async (req, res) => {
+    for await (const _chunk of req) { /* consume request */ }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      solution: {
+        url: thread,
+        status: 200,
+        response: '<a class="pageNav-page" href="/threads/t.1/page-2">2</a>',
+        cookies: [{ name: 'cf_clearance', value: 'clear', domain: '.forum.example.com', path: '/', secure: true }],
+        userAgent: 'SolverBrowser/1.0',
+      },
+    }));
+  });
+  await new Promise((resolve) => solver.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => solver.close(resolve)));
+
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push({ url, userAgent: opts.headers['User-Agent'], cookie: opts.headers.Cookie });
+    if (url === thread) {
+      return new Response('<title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/x.js"></script>', {
+        status: 403,
+        headers: { 'content-type': 'text/html', server: 'cloudflare' },
+      });
+    }
+    return htmlOk();
+  };
+
+  await crawl({
+    url: thread,
+    mode: 'all',
+    ignoreHistory: true,
+    solverUrl: `http://127.0.0.1:${solver.address().port}`,
+    fetchImpl,
+    assertUrl: async () => {},
+    delayMs: 0,
+  });
+
+  assert.equal(calls[1].userAgent, 'SolverBrowser/1.0');
+  assert.equal(calls[1].cookie, 'cf_clearance=clear');
 });
 
 test('a 403 says which cookies were sent', async () => {
