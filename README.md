@@ -127,6 +127,7 @@ additional image builds. The app's existing overnight tool updates still apply.
 - [File naming](#file-naming)
 - [Notifications](#notifications)
 - [Site cookies](#site-cookies-youtube-twitch-and-others)
+- [Solverr proxy](#solverr-proxy)
 - [Jellyfin integration](#jellyfin-integration)
 - [Plex integration](#plex-integration)
 - [Lidarr integration](#lidarr-integration)
@@ -389,6 +390,18 @@ All configuration variables can be passed via `.env` or the `environment:` block
 | `COOKIE_SECURE` | off | Set to `1` once the app is reachable over HTTPS; restricts the login cookie to HTTPS. |
 | `ALLOW_LOCAL_URLS` | off | Set to `1` to allow URLs pointing at loopback/private/link-local addresses (e.g. `127.0.0.1`, `192.168.x.x`). Only needed to target an internal mirror or service. |
 
+### Solverr proxy
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SOLVERR_PROXY_URL` | unset | Solverr forward proxy, e.g. `http://USER:PASSWORD@solverr:8192`. A URL saved in **Settings → Downloads → Solverr proxy URL** overrides it. |
+| `SOLVERR_PROXY_CA_URL` | unset | Where the entrypoint downloads Solverr's CA at container start, e.g. `http://solverr:8191/proxy-ca.crt`. |
+| `SOLVERR_PROXY_CA_SHA256` | unset | The CA's SHA-256 fingerprint from Solverr's startup log; installation is refused on a mismatch. |
+| `SOLVERR_PROXY_CA_ACTION` | `install` | Set to `remove` (and restart) to take the CA back out of the trust store. |
+| `SOLVERR_PROXY_CA_ATTEMPTS` | `5` | CA download attempts, 3 s apart, while Solverr is still starting. |
+
+See [Solverr proxy](#solverr-proxy) for the full setup.
+
 ### Timeouts & watchdogs
 
 | Variable | Default | Purpose |
@@ -543,6 +556,40 @@ python crawler.py URL --by-page     # '# title - page N' and '# password:' lines
 - A thread that fails in a watchlist is skipped and reported at the end; the rest still run.
 
 All flags are listed in [`crawler/README.md`](crawler/README.md) and with `python crawler.py --help`.
+
+## Solverr proxy
+
+[Solverr](https://github.com/rpeters1430/solverr) can run an authenticated HTTP/HTTPS forward proxy that sends
+requests through its challenge solver, which gets yt-dlp past Cloudflare and similar walls on forum and file-host
+pages. Solverr decrypts HTTPS to do this, so this container has to trust Solverr's CA.
+
+1. Enable the proxy in Solverr (`MITM_ENABLED`, `MITM_PROXY_USERNAME`, `MITM_PROXY_PASSWORD`) and note the CA
+   fingerprint it logs at startup.
+2. Add the proxy and CA settings to this app's service. The container must start as root (the default; `PUID`/`PGID`
+   still work, privileges are dropped after the CA is installed):
+
+   ```yaml
+   services:
+     ytdlp-gui:
+       environment:
+         - SOLVERR_PROXY_URL=http://USER:PASSWORD@solverr:8192
+         - SOLVERR_PROXY_CA_URL=http://solverr:8191/proxy-ca.crt
+         - SOLVERR_PROXY_CA_SHA256=<fingerprint from Solverr startup log>
+   ```
+
+   Put both containers on the same Docker network (or use the NAS's LAN address), and URL-encode special characters
+   in the username or password.
+3. Recreate the container. The entrypoint verifies the fingerprint and installs the CA with
+   `update-ca-certificates`; a failure is logged and the app starts anyway.
+
+**Settings → Downloads → Solverr proxy** turns the proxy on or off, sets or overrides the proxy URL, and shows
+whether it's in use. The app checks every minute whether Solverr answers and only routes yt-dlp through it
+(`--proxy … --compat-options no-certifi`) while it does and the CA is installed, so stopping Solverr never
+breaks downloads: they go direct again. Browser TLS impersonation is skipped while the proxy is in use, since
+Solverr does its own. Never use `--no-check-certificates` to work around a missing CA.
+
+The image also ships `yt-dlp-with-solverr-proxy.sh`, the standalone wrapper from Solverr, for one-off command-line
+use: `docker exec ytdlp-gui yt-dlp-with-solverr-proxy.sh <url>` (as root; it reinstalls the CA first).
 
 ## Scheduled tasks
 

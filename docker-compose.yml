@@ -18,6 +18,11 @@ services:
       # everything under /downloads. Settings → File naming / Music can still override them.
       - VIDEO_DIR=/videos
       - MUSIC_DIR=/music
+      # Optional Solverr forward proxy (see README "Solverr proxy"). The CA is installed at
+      # container start; yt-dlp uses the proxy only while Solverr is reachable.
+      # - SOLVERR_PROXY_URL=http://USER:PASSWORD@solverr:8192
+      # - SOLVERR_PROXY_CA_URL=http://solverr:8191/proxy-ca.crt
+      # - SOLVERR_PROXY_CA_SHA256=<fingerprint from Solverr startup log>
     volumes:
       - ./downloads:/downloads
       - ./videos:/videos
