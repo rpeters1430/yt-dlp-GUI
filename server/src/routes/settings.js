@@ -5,6 +5,7 @@ const { requireAuth } = require('../auth');
 const ytdlp = require('../services/ytdlp');
 const queue = require('../services/queue');
 const outputTemplate = require('../services/outputTemplate');
+const solverrProxy = require('../services/solverrProxy');
 const { SITE_COOKIES, writeSiteCookies, clearSiteCookies, siteCookiesStatus } = require('../services/ytdlpCookies');
 const { COOKIES_FILE } = ytdlp;
 
@@ -25,6 +26,8 @@ const ALLOWED_SETTINGS_KEYS = new Set([
   'download_limit_rate',
   'download_sleep_interval',
   'impersonate_target',
+  'solverr_proxy_mode',
+  'solverr_proxy_url',
 ]);
 
 function saveSetting(key, value) {
@@ -186,6 +189,9 @@ router.get('/', (req, res) => {
   settings.download_limit_rate = settings.download_limit_rate || '';
   settings.download_sleep_interval = parseInt(settings.download_sleep_interval || '0', 10) || 0;
   settings.impersonate_target = settings.impersonate_target || '';
+  settings.solverr_proxy_mode = solverrProxy.MODES.has(settings.solverr_proxy_mode) ? settings.solverr_proxy_mode : 'auto';
+  // The password never leaves the server; PUT accepts the mask back and keeps the stored one.
+  settings.solverr_proxy_url = solverrProxy.maskProxyUrl(settings.solverr_proxy_url || '');
   res.json(settings);
 });
 
@@ -239,6 +245,23 @@ router.put('/', (req, res) => {
     }
   }
 
+  const proxyMode = entries.find(([key]) => key === 'solverr_proxy_mode');
+  if (proxyMode && !solverrProxy.MODES.has(proxyMode[1])) {
+    return res.status(400).json({ error: 'solverr_proxy_mode must be auto or off' });
+  }
+
+  // Blank means "use the SOLVERR_PROXY_URL env var" (or no proxy if that's unset too).
+  const proxyUrl = entries.find(([key]) => key === 'solverr_proxy_url');
+  if (proxyUrl) {
+    proxyUrl[1] = proxyUrl[1] == null ? '' : String(proxyUrl[1]).trim();
+    if (proxyUrl[1]) {
+      const stored = db.prepare("SELECT value FROM settings WHERE key = 'solverr_proxy_url'").get();
+      proxyUrl[1] = solverrProxy.unmaskProxyUrl(proxyUrl[1], stored && stored.value);
+      const proxyError = solverrProxy.validateProxyUrl(proxyUrl[1]);
+      if (proxyError) return res.status(400).json({ error: proxyError });
+    }
+  }
+
   const concurrency = entries.find(([key]) => key === 'max_concurrent_downloads');
   if (concurrency) {
     const n = Number(concurrency[1]);
@@ -257,7 +280,17 @@ router.put('/', (req, res) => {
   tx(entries);
   // A higher limit can start queued downloads right away.
   if (concurrency) queue.processNext();
+  if (proxyMode || proxyUrl) solverrProxy.check();
   res.json({ ok: true });
+});
+
+router.get('/solverr-proxy', (req, res) => {
+  res.json(solverrProxy.getStatus());
+});
+
+// Re-probes the proxy now instead of waiting for the next periodic check.
+router.post('/solverr-proxy/check', async (req, res) => {
+  res.json(await solverrProxy.check());
 });
 
 module.exports = router;

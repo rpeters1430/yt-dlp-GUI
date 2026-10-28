@@ -112,7 +112,11 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack 
     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# Optional Solverr proxy CA installer (run by the entrypoint when SOLVERR_PROXY_CA_URL is set)
+# and a standalone yt-dlp wrapper for `docker exec` use. curl and update-ca-certificates
+# (ca-certificates) are installed above.
+COPY scripts/solverr/install_proxy_ca.sh scripts/solverr/yt-dlp-with-solverr-proxy.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/install_proxy_ca.sh /usr/local/bin/yt-dlp-with-solverr-proxy.sh
 
 COPY server/ ./server/
 COPY --from=client-build /app/client/dist ./client/dist

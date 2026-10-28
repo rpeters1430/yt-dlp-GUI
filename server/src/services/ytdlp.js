@@ -3,6 +3,7 @@ const path = require('path');
 const dns = require('dns');
 const { spawn } = require('child_process');
 const siteProfiles = require('./siteProfiles');
+const solverrProxy = require('./solverrProxy');
 const { DEFAULT_TEMPLATE: DEFAULT_OUTPUT_TEMPLATE } = require('./outputTemplate');
 
 const {
@@ -132,12 +133,17 @@ function impersonateArgs(overrideTarget) {
   return [];
 }
 
+// Through the Solverr proxy the outbound TLS handshake is Solverr's own (it impersonates
+// browsers itself), and curl_cffi ignores --compat-options no-certifi so it would reject
+// Solverr's CA. --impersonate is therefore dropped while the proxy is in use.
 function commonArgs(options = {}) {
+  const proxy = solverrProxy.proxyArgs();
   return [
     ...jsRuntimeArgs(),
     '--remote-components', 'ejs:github',
     '--cache-dir', YTDLP_CACHE_DIR,
-    ...impersonateArgs(options?.impersonate),
+    ...proxy,
+    ...(proxy.length ? [] : impersonateArgs(options?.impersonate)),
     ...cookieArgs(),
     ...ffmpegArgs(),
   ];
@@ -570,6 +576,8 @@ const SECRET_ARG_PATTERNS = [
   /^(Authorization:\s*OAuth\s+).+$/i,
   /(twitch:auth_token=)[^,]+/gi,
   /(twitch:client_id=)[^,]+/gi,
+  // Proxy credentials (--proxy http://user:password@host:port).
+  /(^[a-z][a-z0-9+.-]*:\/\/[^:/@\s]*:)[^@\s]+(?=@)/i,
 ];
 
 function redactSecretArg(arg) {

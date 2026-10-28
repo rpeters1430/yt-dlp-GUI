@@ -69,6 +69,7 @@ linkGrabberWatches.start();
 jellyfinSync.start();
 plexSync.start();
 dependencyUpdater.start();
+require('./services/solverrProxy').start();
 // Reads per-site feature support (e.g. --live-from-start) from the installed yt-dlp.
 require('./services/siteProfiles').refreshYtdlpFacts();
 // Log which JS runtimes yt-dlp can actually use for YouTube, so a missing one shows up in `docker logs`.
