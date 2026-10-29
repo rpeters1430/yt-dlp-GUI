@@ -1,13 +1,13 @@
 # --- Resolve nightly yt-dlp and the latest FFmpeg autobuild ---
 # CI resolves once and passes the same manifest to both architectures. Local
 # builds resolve here; use --no-cache-filter tool-versions to check again.
-FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS tool-versions
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS tool-versions
 ARG TOOL_MANIFEST=
 COPY scripts/ci/resolve-tools.mjs /resolve-tools.mjs
 RUN node /resolve-tools.mjs --manifest-base64 "$TOOL_MANIFEST" --output /out
 
 # --- Build client ---
-FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS client-build
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS client-build
 WORKDIR /app/client
 COPY client/package.json client/package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -18,7 +18,7 @@ RUN npm run build
 # yt-dlp needs an external JS runtime to solve YouTube's JS challenges. QuickJS-ng's `qjs` is
 # built from a pinned, verified release commit and cross-compiled on the build host (so arm64
 # doesn't compile under QEMU) into a static binary for the target architecture.
-FROM --platform=$BUILDPLATFORM node:26-bookworm-slim@sha256:88e480776c6149ff1d098cd304f44bf18057fb5d284a3329b78162d29821e28c AS quickjs-build
+FROM --platform=$BUILDPLATFORM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS quickjs-build
 ARG TARGETARCH
 ARG BUILDARCH
 # Update the version and its tag's commit together.
@@ -42,7 +42,7 @@ RUN set -eux; \
     "${QJS_TRIPLE}-strip" -o /out/qjs /tmp/quickjs/build/qjs
 
 # --- Final image ---
-FROM node:26-bookworm-slim@sha256:88e480776c6149ff1d098cd304f44bf18057fb5d284a3329b78162d29821e28c
+FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9
 
 # The resolved source/archive hashes are also retained for diagnostics.
 COPY --from=tool-versions /out/requirements-docker.txt /tmp/requirements-docker.txt
