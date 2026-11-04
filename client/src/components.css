@@ -854,6 +854,24 @@ button.watch-run-line:hover:not(:disabled) { background: none; color: var(--text
   display: flex;
   flex-direction: column;
 }
+/* The watch menu is portaled to body so cards cannot clip its actions. */
+.watch-menu-pop {
+  position: fixed;
+  right: auto;
+  z-index: 110;
+  min-width: 0;
+  width: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.menu-pop [role="menuitem"] {
+  flex-shrink: 0;
+  white-space: normal;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-2);
+}
 .menu-pop button,
 .menu-pop a {
   justify-content: flex-start;

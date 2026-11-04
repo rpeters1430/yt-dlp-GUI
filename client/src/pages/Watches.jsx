@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MoreHorizontal } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import WatchMenu from '../components/WatchMenu.jsx';
 import { api } from '../api.js';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import WatchModal from '../components/WatchModal.jsx';
@@ -475,54 +475,4 @@ function rulesLine(w) {
   if (w.split_live_chunks) parts.push(`${w.live_chunk_mins || 30}m chunks`);
   if (w.cleanup_exempt) parts.push('kept forever');
   return parts.join(' · ');
-}
-
-function WatchMenu({ watch, plexConfigured, onActivity, onVideos, onEdit, onSyncJellyfin, onSyncPlex, onToggleCleanup, onReset, onDelete, busy }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    function onDoc(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    }
-    function onKey(e) {
-      if (e.key === 'Escape') setOpen(false);
-    }
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
-
-  function run(fn) {
-    setOpen(false);
-    fn();
-  }
-
-  return (
-    <div className="menu" ref={ref}>
-      <button type="button" className="icon-plain" onClick={() => setOpen((v) => !v)} aria-label="More actions" aria-expanded={open}>
-        <MoreHorizontal size={18} />
-      </button>
-      {open && (
-        <div className="menu-pop" role="menu">
-          {onVideos && <button type="button" role="menuitem" onClick={() => run(onVideos)}>Playlist videos</button>}
-          <button type="button" role="menuitem" onClick={() => run(onActivity)}>Activity</button>
-          <button type="button" role="menuitem" onClick={() => run(onEdit)}>Edit settings</button>
-          <a role="menuitem" href={watch.url} target="_blank" rel="noopener noreferrer" onClick={() => setOpen(false)}>Open on YouTube</a>
-          <button type="button" role="menuitem" disabled={busy || !watch.completed_count} onClick={() => run(onSyncJellyfin)}>Sync to Jellyfin</button>
-          {plexConfigured && (
-            <button type="button" role="menuitem" disabled={busy || !watch.completed_count} onClick={() => run(onSyncPlex)}>Sync to Plex</button>
-          )}
-          <button type="button" role="menuitem" onClick={() => run(onToggleCleanup)}>
-            {watch.cleanup_exempt ? 'Allow auto-delete' : 'Keep forever (skip auto-delete)'}
-          </button>
-          <button type="button" role="menuitem" onClick={() => run(onReset)}>Reset history</button>
-          <button type="button" role="menuitem" className="danger" onClick={() => run(onDelete)}>Remove watch</button>
-        </div>
-      )}
-    </div>
-  );
 }
