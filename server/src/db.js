@@ -212,6 +212,7 @@ ensureColumn('downloads', 'is_live', 'INTEGER DEFAULT 0');
 ensureColumn('downloads', 'options_json', 'TEXT');
 ensureColumn('downloads', 'pid', 'INTEGER');
 ensureColumn('downloads', 'stage', 'TEXT');
+ensureColumn('downloads', 'stage_started_at', 'TEXT');
 ensureColumn('downloads', 'live_chunk_mins', 'INTEGER DEFAULT 0');
 ensureColumn('downloads', 'split_parts', 'TEXT');
 ensureColumn('downloads', 'filesize', 'INTEGER');

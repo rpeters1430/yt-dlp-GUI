@@ -476,3 +476,53 @@ test('a persisted imported checkpoint completes after restart without retagging 
   assert.equal(q.state.downloadCalls.length,0);
   assert.equal(tagger.mock.callCount(),0);
 });
+
+test('stage start timestamps persist across progress ticks and reset on a stage change', async (t) => {
+  const q = loadQueue(t);
+  q.queue.init(q.io);
+  let inspect;
+  const gate = deferred();
+  q.state.download = async (_url, _opts, onProgress) => {
+    inspect = onProgress;
+    return gate.promise;
+  };
+  const id = q.queue.enqueue(URL_A);
+  await waitFor(() => inspect);
+  inspect({ percent: 99, stage: 'Embedding metadata…' });
+  const first = q.queue.getJob(id).stage_started_at;
+  assert.ok(first);
+  await new Promise(resolve => setTimeout(resolve, 220));
+  inspect({ percent: 99, stage: 'Embedding metadata…' });
+  assert.equal(q.queue.getJob(id).stage_started_at, first);
+  inspect({ percent: 99, stage: 'Saving final file…' });
+  assert.notEqual(q.queue.getJob(id).stage_started_at, first);
+  gate.resolve({ filepath: '/downloads/video.mp4' });
+  await waitFor(() => finished(q, id));
+});
+
+test('removing a recording waiting to split releases its download slot immediately', async t => {
+  const q = loadQueue(t, { maxConcurrent: 1 });
+  const { processingGate } = require('../../src/services/processingGate');
+  const release = await processingGate.acquire();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nas-cancel-split-'));
+  const source = path.join(dir, 'recording.mp4');
+  fs.writeFileSync(source, 'fixture; FFmpeg boundary is supplied below');
+  q.state.download = async url => ({ filepath: url === URL_A ? source : '/downloads/next.mp4' });
+  q.queue.init(q.io);
+  const id = q.queue.enqueue(URL_A, { optionsJson: { splitLiveChunks: true, liveChunkDuration: 1 } });
+  // Keep the queue and semaphore real; replace the external media-processing boundary.
+  t.mock.method(q.liveSplitter, 'splitRecording', async (_file, _minutes, _log, onStage, _active, signal) => {
+    onStage('Waiting for processing slot — splitting recording…');
+    return processingGate.run(() => ({ split: false }), { signal });
+  });
+  try {
+    await waitFor(() => /Waiting for processing slot/.test(q.queue.getJob(id)?.stage || ''));
+    q.queue.removeJob(id);
+    const next = q.queue.enqueue(URL_B);
+    await waitFor(() => finished(q, next), { label: 'replacement job while the processor remains occupied', timeout: 700 });
+    assert.equal(q.queue.getJob(next).status, 'completed');
+  } finally {
+    release();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

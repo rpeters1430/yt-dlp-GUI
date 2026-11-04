@@ -1,3 +1,5 @@
+import ProcessingStage from './ProcessingStage.jsx';
+import { isProcessingStage } from './processingStage.js';
 import React, { useState } from 'react';
 import { X, ArrowUpToLine, Pause, Play } from 'lucide-react';
 import Art from '../Art.jsx';
@@ -22,13 +24,15 @@ export function UpNextCard({ job, onRemoved }) {
   const elapsed = useLiveElapsed(job);
   const live = isRecording(job);
   const waiting = isWaitingForLive(job);
-  const running = job.status === 'downloading' && !isLiveJob(job);
+  const processing = job.status === 'downloading' && isProcessingStage(job.stage);
+  const running = job.status === 'downloading' && !isLiveJob(job) && !processing;
   const pct = Math.min(100, Math.max(0, job.percent || 0));
   const site = siteName(job.extractor);
-  const finalizing = live && (stopping || /finaliz|post-processing|merging|split/i.test(job.stage || ''));
+  const finalizing = live && (stopping || isProcessingStage(job.stage));
 
   let meta;
-  if (waiting) meta = ['Waiting for live', site, chunkLabel(job)].filter(Boolean).join(' · ');
+  if (processing) meta = 'Processing';
+  else if (waiting) meta = ['Waiting for live', site, chunkLabel(job)].filter(Boolean).join(' · ');
   else if (live) meta = [site, jobQualityLine(job).split(' · ')[0], chunkLabel(job)].filter(Boolean).join(' · ');
   else if (running) meta = [`${Math.round(pct)}%`, job.speed].filter(Boolean).join(' · ');
   else meta = ['Queued', site, jobQualityLine(job).replace(' · ', ' ')].filter(Boolean).join(' · ');
@@ -48,7 +52,7 @@ export function UpNextCard({ job, onRemoved }) {
   return (
     <div className="up-card">
       <Art src={job.thumbnail} className="up-art">
-        {live && <span className="badge badge-live badge-tl">● LIVE {elapsed}</span>}
+        {live && !processing && <span className="badge badge-live badge-tl">● LIVE {elapsed}</span>}
         <button type="button" className="art-x" onClick={() => setConfirm('remove')} aria-label="Remove">
           <X size={13} />
         </button>
@@ -56,6 +60,7 @@ export function UpNextCard({ job, onRemoved }) {
       </Art>
       <div className="up-title">{job.title || job.url}</div>
       <div className="up-meta-row">
+        {job.status === 'downloading' && isProcessingStage(job.stage) && <ProcessingStage job={job} />}
         <span className="mono-meta">{job.status === 'queued' && job.stage && job.stage !== 'Queued' ? job.stage : meta}</span>
         {job.status === 'queued' && !waiting && (
           <button

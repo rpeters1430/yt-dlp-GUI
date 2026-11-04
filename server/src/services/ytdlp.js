@@ -3,6 +3,8 @@ const path = require('path');
 const dns = require('dns');
 const { spawn } = require('child_process');
 const siteProfiles = require('./siteProfiles');
+const nasProcessing = require('./nasProcessing');
+const { processingGate } = require('./processingGate');
 const solverrProxy = require('./solverrProxy');
 const { DEFAULT_TEMPLATE: DEFAULT_OUTPUT_TEMPLATE } = require('./outputTemplate');
 
@@ -587,7 +589,7 @@ function redactSecretArg(arg) {
 function formatCommand(bin, args) {
   return `${bin} ${args
     .map(redactSecretArg)
-    .map((a) => (a.includes(' ') || a.includes('"') ? JSON.stringify(a) : a))
+    .map((a) => (a.includes(' ') || a.includes('"') || a.includes(';') ? JSON.stringify(a) : a))
     .join(' ')}`;
 }
 
@@ -673,20 +675,21 @@ function expectedOutputExt({ audioOnly, container }) {
 // Containers embedThumbnailFromUrl can add an attached picture to.
 const THUMBNAIL_FALLBACK_EXTS = new Set(['mp4', 'm4a', 'mp3']);
 
-function runFfmpegCollect(args) {
+function runFfmpegCollect(args, signal) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(getFfmpegBin(), args);
+    const proc = spawn(getFfmpegBin(), args, { signal });
+    let failure;
     let stderr = '';
     proc.stderr.on('data', (d) => (stderr += d));
-    proc.on('close', (code) => resolve({ code, stderr }));
-    proc.on('error', reject);
+    proc.on('close', (code) => failure ? reject(failure) : resolve({ code, stderr }));
+    proc.on('error', error => { failure = error; });
   });
 }
 
 // Embeds a thumbnail fetched from `thumbnailUrl` into an already-downloaded file as its
 // cover art, mirroring the ffmpeg invocation yt-dlp's own EmbedThumbnail step uses. Used
 // when yt-dlp can't embed the site's preferred thumbnail itself (see resolveDownloadOptions).
-async function embedThumbnailFromUrl(filepath, thumbnailUrl) {
+async function embedThumbnailFromUrl(filepath, thumbnailUrl, { onStage = () => {}, onLog = () => {}, isActive = () => true, signal } = {}) {
   const ext = path.extname(filepath).slice(1).toLowerCase();
   if (!THUMBNAIL_FALLBACK_EXTS.has(ext)) throw new Error(`can't embed a thumbnail into .${ext}`);
   await assertPublicUrlResolved(thumbnailUrl);
@@ -710,7 +713,16 @@ async function embedThumbnailFromUrl(filepath, thumbnailUrl) {
     ];
     if (ext === 'mp3') args.push('-id3v2_version', '3');
     args.push(tempOut);
-    const { code, stderr } = await runFfmpegCollect(args);
+    if (ext === 'mp4' || ext === 'm4a') args.splice(args.length - 1, 0, '-movflags', '+faststart');
+    const { code, stderr } = await processingGate.run(() => {
+      if (!isActive()) throw new Error('Download removed before artwork processing');
+      return runFfmpegCollect(args, signal);
+    }, {
+      signal,
+      onWait: () => onStage('Waiting for processing slot — embedding artwork…'),
+      onStart: () => onStage('Embedding artwork…'),
+      onFinish: seconds => onLog(`[processing] Embedding artwork finished in ${seconds.toFixed(1)}s`),
+    });
     if (code !== 0) throw new Error(stderr.trim().split('\n').slice(-2).join(' ') || `ffmpeg exited with code ${code}`);
     fs.renameSync(tempOut, filepath);
   } finally {
@@ -807,13 +819,16 @@ function buildDownloadArgs(url, rawOptions = {}) {
   // only covers direct callers, and uses the same byte-capped default.
   const targetOutput = outputTemplate || `${VIDEO_DIR}/${DEFAULT_OUTPUT_TEMPLATE}`;
 
+  const work = nasProcessing.workingPaths(targetOutput, options);
   const args = [
+    ...nasProcessing.pluginArgs(options),
+    ...work.args,
     '--newline',
     '--progress',
     ...commonArgs(options),
     '--progress-template', PROGRESS_TEMPLATE,
-    '--progress-template', 'postprocess:YTDLP_POSTPROCESS %(progress._percent_str)s',
-    '-o', targetOutput,
+    '--progress-template', 'postprocess:YTDLP_STAGE %(progress.postprocessor)s|%(progress.status)s',
+    '-o', work.output,
     '--print', 'after_move:FILEPATH %(filepath)s',
     // The planned output path, printed before downloading starts. --print implies --quiet, so
     // there are no "[download] Destination:" lines; without this a recording the user stops
@@ -1078,7 +1093,7 @@ function stopDownload(jobId, { abort = false } = {}) {
   userStoppedJobs.add(jobId);
   console.log(`[ytdlp] Requesting graceful stop for job ${jobId}`);
   onProgress && onProgress({ stage: 'Finalizing recording…', percent: 99, speed: null, eta: null });
-  if (active.streamEnded) {
+  if (active.streamEnded || active.processing) {
     // Nothing is left to record, and interrupting yt-dlp now would abort the merge or
     // SponsorBlock pass and lose the file. Let it finish; the busy check below still
     // terminates it if it has actually hung.
@@ -1108,19 +1123,25 @@ function escalateStop(jobId, active, stopRequestedAt, cpuBaseline = null, busyNo
   if (activeProcesses.get(jobId) !== active) return;
   const { proc, onLog } = active;
   const cpu = readProcessGroupCpuTicks(proc.pid);
+  const ioBytes = readProcessGroupIoBytes(proc.pid);
   const waitedMs = Date.now() - stopRequestedAt;
+  if (active.waitingForProcessing && waitedMs < STOP_MAX_WAIT_MS) {
+    active.stopTimers.push(setTimeout(() => escalateStop(jobId, active, stopRequestedAt), BUSY_SAMPLE_WINDOW_MS));
+    return;
+  }
   if (cpu == null && waitedMs < STOP_GRACE_MS) {
     // No /proc (Windows): can't tell busy from hung, so fall back to the plain grace period.
     active.stopTimers.push(setTimeout(() => escalateStop(jobId, active, stopRequestedAt), STOP_GRACE_MS - waitedMs));
     return;
   }
   if (cpu != null && waitedMs < STOP_MAX_WAIT_MS) {
-    if (cpuBaseline == null || isBusyCpuDelta(cpu - cpuBaseline.ticks, Date.now() - cpuBaseline.at)) {
+    if (cpuBaseline == null || isBusyCpuDelta(cpu - cpuBaseline.ticks, Date.now() - cpuBaseline.at)
+      || (ioBytes != null && cpuBaseline.ioBytes != null && ioBytes > cpuBaseline.ioBytes)) {
       if (cpuBaseline != null && !busyNoted) {
         busyNoted = true;
         onLog && onLog('Still finalizing the recording (yt-dlp/FFmpeg busy) — waiting for it to finish');
       }
-      const baseline = { ticks: cpu, at: Date.now() };
+      const baseline = { ticks: cpu, ioBytes, at: Date.now() };
       active.stopTimers.push(setTimeout(
         () => escalateStop(jobId, active, stopRequestedAt, baseline, busyNoted),
         BUSY_SAMPLE_WINDOW_MS,
@@ -1194,6 +1215,22 @@ function readProcessGroupCpuTicks(pgid, procRoot = '/proc') {
   return total;
 }
 
+function readProcessGroupIoBytes(pgid, procRoot = '/proc') {
+  try {
+    let total = 0;
+    for (const entry of fs.readdirSync(procRoot)) {
+      if (!/^\d+$/.test(entry)) continue;
+      try {
+        const stat = fs.readFileSync(path.join(procRoot, entry, 'stat'), 'utf8');
+        if (Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[2]) !== pgid) continue;
+        const io = fs.readFileSync(path.join(procRoot, entry, 'io'), 'utf8');
+        for (const match of io.matchAll(/^(?:rchar|wchar):\s*(\d+)/gm)) total += Number(match[1]);
+      } catch (_) {}
+    }
+    return total;
+  } catch (_) { return null; }
+}
+
 function isBusyCpuDelta(deltaTicks, windowMs) {
   return deltaTicks >= (windowMs / 1000) * CLOCK_TICKS_PER_SEC * BUSY_MIN_CPU_SHARE;
 }
@@ -1245,6 +1282,8 @@ function getDownloadIdleTimeoutMs(url, options = {}, timeouts = {}) {
 async function download(url, options = {}, onProgress, onLog) {
   // Queue items may wait before starting, so validate DNS again at dispatch time.
   await assertPublicUrlResolved(url);
+  nasProcessing.prepareWorkDirectory(options.outputTemplate || `${VIDEO_DIR}/${DEFAULT_OUTPUT_TEMPLATE}`, options);
+  const coordinator = nasProcessing.enabled() ? await processingGate.listen() : null;
   const args = buildDownloadArgs(url, options);
   const commandStr = formatCommand(YTDLP_BIN, args);
   const jobId = options.jobId ? `job:${options.jobId}` : 'download';
@@ -1264,7 +1303,9 @@ async function download(url, options = {}, onProgress, onLog) {
     // a private console/process group for the targeted CTRL+BREAK sent by stopDownload().
     let proc;
     try {
-      proc = spawnYtdlp(args, { detached: true, windowsHide: process.platform === 'win32' });
+      proc = spawnYtdlp(args, { detached: true, windowsHide: process.platform === 'win32',
+        env: { ...process.env, ...(coordinator ? { YTDLP_GUI_PROCESSING_GATE: `${coordinator.port}:${coordinator.token}` } : {}) },
+      });
     } catch (e) {
       return reject(e);
     }
@@ -1288,6 +1329,8 @@ async function download(url, options = {}, onProgress, onLog) {
     // watchdog first fires, then used to tell a busy-but-quiet process from a hung one.
     let cpuBaseline = null;
     let quietWorkNoted = false;
+    let waitingForProcessing = false;
+    let processingStep = null;
     function armIdleTimer(delayMs) {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(onIdle, delayMs);
@@ -1301,21 +1344,26 @@ async function download(url, options = {}, onProgress, onLog) {
         armIdleTimer(idleTimeoutMs);
         return;
       }
+      if (waitingForProcessing) {
+        armIdleTimer(BUSY_SAMPLE_WINDOW_MS);
+        return;
+      }
       const quietMs = Date.now() - lastOutputAt;
       const cpu = readProcessGroupCpuTicks(proc.pid);
+      const ioBytes = readProcessGroupIoBytes(proc.pid);
       if (cpu != null && quietMs < DOWNLOAD_MAX_QUIET_MS) {
         if (cpuBaseline == null) {
-          cpuBaseline = { ticks: cpu, at: Date.now() };
+          cpuBaseline = { ticks: cpu, ioBytes, at: Date.now() };
           armIdleTimer(BUSY_SAMPLE_WINDOW_MS);
           return;
         }
         const windowMs = Date.now() - cpuBaseline.at;
-        if (isBusyCpuDelta(cpu - cpuBaseline.ticks, windowMs)) {
+        if (isBusyCpuDelta(cpu - cpuBaseline.ticks, windowMs) || (ioBytes != null && cpuBaseline.ioBytes != null && ioBytes > cpuBaseline.ioBytes)) {
           if (!quietWorkNoted) {
             quietWorkNoted = true;
             onLog && onLog(`No output for ${Math.round(quietMs / 60000)} min, but yt-dlp/FFmpeg is still working (likely post-processing) — waiting`);
           }
-          cpuBaseline = { ticks: cpu, at: Date.now() };
+          cpuBaseline = { ticks: cpu, ioBytes, at: Date.now() };
           armIdleTimer(Math.min(idleTimeoutMs, DOWNLOAD_MAX_QUIET_MS - quietMs));
           return;
         }
@@ -1341,22 +1389,7 @@ async function download(url, options = {}, onProgress, onLog) {
     const isMultiFormat = !options.audioOnly && (!options.formatSelector || options.formatSelector.includes('+'));
     let currentPass = 1;
     let highestPassPercent = 0;
-    let postprocessSample = null;
     let streamEnded = false;
-
-    function estimatePostprocessEta(percent) {
-      const now = Date.now();
-      const previous = postprocessSample;
-      postprocessSample = { percent, at: now };
-      if (!previous || percent <= previous.percent || now <= previous.at) return null;
-      const percentPerSecond = (percent - previous.percent) / ((now - previous.at) / 1000);
-      if (!Number.isFinite(percentPerSecond) || percentPerSecond <= 0) return null;
-      const seconds = Math.ceil((100 - percent) / percentPerSecond);
-      if (seconds < 60) return `${seconds}s`;
-      const minutes = Math.ceil(seconds / 60);
-      if (minutes < 60) return `${minutes}m`;
-      return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-    }
 
     function reportProgress(rawPercent, speed, eta, explicitStage, globalPercent = false) {
       if (Number.isNaN(rawPercent)) return;
@@ -1419,6 +1452,8 @@ async function download(url, options = {}, onProgress, onLog) {
         if (!trimmed) continue;
 
         if (trimmed.startsWith('YTDLP_PROGRESS')) {
+          const active = options.jobId && activeProcesses.get(options.jobId);
+          if (active) active.processing = false;
           if (idleTimeoutMs == null && options.waitForLive) {
             idleTimeoutMs = LIVE_DOWNLOAD_IDLE_TIMEOUT_MS;
             onLog && onLog('Broadcast is live — recording started');
@@ -1433,12 +1468,35 @@ async function download(url, options = {}, onProgress, onLog) {
           continue;
         }
 
-        if (trimmed.startsWith('YTDLP_POSTPROCESS')) {
-          const rest = trimmed.replace('YTDLP_POSTPROCESS', '').trim();
-          const percent = parseFloat(rest.replace('%', '').trim());
-          if (!Number.isNaN(percent)) {
-            const eta = estimatePostprocessEta(percent);
-            reportProgress(Math.min(99, 90 + percent * 0.09), null, eta, 'Post-processing recording…', true);
+        if (trimmed.startsWith('YTDLP_NAS ')) {
+          let event;
+          try { event = JSON.parse(trimmed.slice('YTDLP_NAS '.length)); } catch (_) { continue; }
+          const names = { Merger: 'Merging streams', Metadata: 'Embedding metadata', EmbedSubtitle: 'Embedding subtitles',
+            ModifyChapters: 'Applying SponsorBlock cuts', EmbedThumbnail: 'Embedding artwork', MoveFiles: 'Saving final file',
+            ExtractAudio: 'Extracting audio' };
+          const name = names[event.stage] || `Processing ${event.stage || 'video'}`;
+          if (event.event === 'waiting' || event.event === 'started') {
+            waitingForProcessing = event.event === 'waiting';
+            const active = options.jobId && activeProcesses.get(options.jobId);
+            if (active) {
+              active.waitingForProcessing = waitingForProcessing;
+              active.processing = true;
+            }
+            processingStep = event.stage;
+            reportProgress(99, null, null, waitingForProcessing ? `Waiting for processing slot — ${name.toLowerCase()}…` : `${name}…`, true);
+          } else if (event.event === 'finished') {
+            waitingForProcessing = false;
+            onLog && onLog(`[processing] ${name} finished in ${Number(event.seconds || 0).toFixed(1)}s`);
+          } else if (event.event === 'combined') {
+            onLog && onLog('[processing] Metadata was embedded during the merge; skipped a separate full-file rewrite');
+          }
+          continue;
+        }
+        if (trimmed.startsWith('YTDLP_STAGE ')) {
+          const [name, status] = trimmed.slice('YTDLP_STAGE '.length).split('|');
+          if (status === 'started' && name !== 'NasOptimizer') {
+            onLog && onLog(`[processing] ${name} started`);
+            reportProgress(99, null, null, `Post-processing: ${name}…`, true);
           }
           continue;
         }
@@ -1536,7 +1594,9 @@ async function download(url, options = {}, onProgress, onLog) {
         userStoppedJobs.delete(options.jobId);
       }
       if (wasAborted) {
-        if (!finalFilepath && filepath) cleanupPartialFiles(filepath);
+        if (!finalFilepath && filepath) {
+          if (!nasProcessing.clearFailedWorkDirectory(options.outputTemplate || `${VIDEO_DIR}/${DEFAULT_OUTPUT_TEMPLATE}`, options)) cleanupPartialFiles(filepath);
+        }
         return reject(new Error('Download aborted by user'));
       }
       if (timedOut) {
@@ -1556,9 +1616,14 @@ async function download(url, options = {}, onProgress, onLog) {
         let errMsg = errSummary || `yt-dlp exited with code ${code}`;
         // The leftover fragments would keep the disk full and fail every download after this
         // one, so a disk-full failure removes them instead of keeping them for a resume.
-        if (filepath && looksLikeDiskFull(stderr, path.dirname(filepath))) {
-          cleanupPartialFiles(filepath);
-          errMsg = `Out of disk space: removed the partial files for this download. ${errMsg}`;
+        const work = nasProcessing.workingPaths(options.outputTemplate || `${VIDEO_DIR}/${DEFAULT_OUTPUT_TEMPLATE}`, options);
+        if (filepath && looksLikeDiskFull(stderr, work.directory || path.dirname(filepath))) {
+          if (work.directory && processingStep === 'MoveFiles') {
+            errMsg = `Out of disk space saving to the library: completed work files retained for retry. ${errMsg}`;
+          } else {
+            if (!nasProcessing.clearFailedWorkDirectory(options.outputTemplate || `${VIDEO_DIR}/${DEFAULT_OUTPUT_TEMPLATE}`, options)) cleanupPartialFiles(filepath);
+            errMsg = `Out of disk space: removed the partial files for this download. ${errMsg}`;
+          }
         }
         console.error(`[${jobId}] Failed with exit code ${code}: ${errMsg}`);
         onLog && onLog(`[failed] Exit code ${code}: ${errMsg}`);
@@ -1579,6 +1644,7 @@ async function download(url, options = {}, onProgress, onLog) {
         console.log(`[${jobId}] Completed successfully -> ${filepath || 'unknown destination'}`);
         onLog && onLog(`[completed] Successfully saved: ${filepath || ''}`);
       }
+      if (finalFilepath) nasProcessing.cleanupEmptyWorkDirectory(options.outputTemplate || `${VIDEO_DIR}/${DEFAULT_OUTPUT_TEMPLATE}`, options);
       resolve({ filepath, command: commandStr, stoppedByUser, completedWithErrors });
     });
 

@@ -10,6 +10,8 @@ const ROUTES = path.join(__dirname, '..', '..', 'src', 'routes', 'downloads');
 // fakes the session cookie by handing requireAuth the session a real login would create.
 async function startApp(t, { signedIn = true } = {}) {
   const q = loadQueue(t);
+  // Router tests use fake downloads; keep the public-host preflight offline and deterministic.
+  t.mock.method(require('dns').promises, 'lookup', async () => [{ address: '93.184.216.34', family: 4 }]);
   q.queue.init(q.io);
   const userId = q.db.prepare("INSERT INTO users (username, password_hash) VALUES ('admin', 'x')").run().lastInsertRowid;
 

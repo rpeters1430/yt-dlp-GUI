@@ -390,6 +390,46 @@ All configuration variables can be passed via `.env` or the `environment:` block
 | `COOKIE_SECURE` | off | Set to `1` once the app is reachable over HTTPS; restricts the login cookie to HTTPS. |
 | `ALLOW_LOCAL_URLS` | off | Set to `1` to allow URLs pointing at loopback/private/link-local addresses (e.g. `127.0.0.1`, `192.168.x.x`). Only needed to target an internal mirror or service. |
 
+### NAS post-processing
+
+Large videos can require several complete reads and writes even when FFmpeg copies the
+codecs without re-encoding. The bundled NAS postprocessor coordinates disk-heavy work
+across downloads, scheduled/live jobs, artwork embedding, final moves and recording
+splitting. Downloads remain concurrent; heavy processing defaults to one operation at a time.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MAX_CONCURRENT_POSTPROCESSORS` | `1` | Concurrent heavy processing operations, clamped to 1–4. Start with 1 on HDD storage. |
+| `NAS_POSTPROCESSING` | enabled | Set to `0` to disable the bundled yt-dlp optimizer integration. |
+| `YTDLP_WORK_DIR` | unset | Optional absolute container path to SSD working storage for ordinary VOD downloads. Bind-mount the SSD here. Live/wait-for-live captures retain their original paths for safe stop/recovery. |
+
+For compatible MP4 downloads, metadata is embedded during the stream merge, eliminating a
+separate full-file rewrite. Subtitle, chapter, SponsorBlock, custom postprocessor argument,
+and later-splitting cases retain yt-dlp's existing pipeline. Known intermediate MP4 passes
+skip fast-start relocation only when a later metadata rewrite will perform it. Final MP4
+fast-start is preserved. Selected media codecs and quality are unchanged.
+
+Active jobs show the processing stage and elapsed time from a persisted stage timestamp,
+which survives reconnects. Logs record actual processing durations. Waiting for a processing
+permit does not trigger the idle watchdog; low-CPU jobs with measurable I/O activity also
+receive the existing busy-job grace period. A percentage or ETA is not fabricated for
+postprocessors that only provide stage boundaries.
+
+An optional work directory must have room for source streams and their merged output;
+known source sizes receive an early space check. Final files still go to the selected library
+folder. Cross-filesystem transfers copy into a temporary file beside the destination, publish only
+a complete copy, and use the processing gate. A failed final transfer preserves the source
+for retry and leaves an existing destination intact.
+Empty per-job work directories are removed after success; nonempty partials remain available
+for retries of the same job. This does not eliminate every pass for complex jobs or split
+recordings. Actual speed gains depend on disk load, sizes and selected features.
+
+Plugin integration tests (requires yt-dlp and FFmpeg in the test environment):
+
+```bash
+python3 -m unittest discover -s server/test/python -v
+```
+
 ### Solverr proxy
 
 | Variable | Default | Purpose |
