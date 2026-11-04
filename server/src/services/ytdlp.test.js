@@ -744,3 +744,33 @@ test('impersonateArgs and commonArgs support browser TLS impersonation setting',
   db.prepare("INSERT INTO settings (key, value) VALUES ('impersonate_target', '') ON CONFLICT(key) DO UPDATE SET value = ''").run();
 });
 
+
+test('NAS optimization is bundled with conservative metadata fusion eligibility', () => {
+  const { buildDownloadArgs } = require('./ytdlp');
+  const args = buildDownloadArgs('https://www.youtube.com/watch?v=abc123', { embedMetadata: true });
+  assert.ok(args.includes('--plugin-dirs'));
+  assert.ok(args.includes('default'), 'retain installed extractor and postprocessor plugins');
+  assert.ok(args.includes('YTDLP_STAGE') || args.some(arg => arg.startsWith('postprocess:YTDLP_STAGE')));
+  assert.ok(args.includes('NasOptimizer:fuse=true;when=pre_process'));
+  const plain = buildDownloadArgs('https://www.youtube.com/watch?v=abc123', {});
+  assert.ok(!plain.includes('Merger+ffmpeg_o:-movflags -faststart'));
+  const complex = buildDownloadArgs('https://www.youtube.com/watch?v=abc123', { embedMetadata: true, sponsorblockRemove: 'sponsor' });
+  assert.ok(complex.includes('NasOptimizer:fuse=false;when=pre_process'));
+});
+
+test('VOD work directories preserve the final destination without absolute output bypass', () => {
+  const { buildDownloadArgs } = require('./ytdlp');
+  const previous = process.env.YTDLP_WORK_DIR;
+  process.env.YTDLP_WORK_DIR = '/scratch';
+  try {
+    const args = buildDownloadArgs('https://www.youtube.com/watch?v=abc123', { jobId: 'test-job', outputTemplate: '/videos/Channel/%(title)s.%(ext)s' });
+    assert.equal(args[args.indexOf('-o') + 1], 'videos/Channel/%(title)s.%(ext)s');
+    assert.ok(args.includes('home:/'));
+    assert.ok(args.includes('temp:/scratch/test-job'));
+    const live = buildDownloadArgs('https://www.youtube.com/watch?v=abc123', { isLive: true });
+    assert.ok(!live.some(arg => arg.startsWith('temp:')));
+  } finally {
+    if (previous === undefined) delete process.env.YTDLP_WORK_DIR;
+    else process.env.YTDLP_WORK_DIR = previous;
+  }
+});

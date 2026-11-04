@@ -68,6 +68,11 @@ jobs:
           /usr/bin/python3 -c 'import mutagen; print("mutagen available")'
           fpcalc -version
           echo "Media dependency check completed in $((SECONDS - start))s"
+      - name: Test NAS postprocessor with yt-dlp and FFmpeg
+        run: |
+          python3 -m venv /tmp/nas-postprocessor-tests
+          /tmp/nas-postprocessor-tests/bin/pip install --pre 'yt-dlp[default]'
+          /tmp/nas-postprocessor-tests/bin/python -m unittest discover -s server/test/python -v
       - name: Test server (with coverage report)
         working-directory: server
         run: PYTHON_BIN=/usr/bin/python3 npm run test:coverage

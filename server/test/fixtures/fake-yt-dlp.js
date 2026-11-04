@@ -11,7 +11,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 if (scenario.onSigint) {
   process.on('SIGINT', () => {
     if (scenario.onSigint.out) process.stdout.write(`${scenario.onSigint.out}\n`);
-    process.exit(scenario.onSigint.exit ?? 1);
+    if (!scenario.onSigint.hold) process.exit(scenario.onSigint.exit ?? 1);
   });
 }
 

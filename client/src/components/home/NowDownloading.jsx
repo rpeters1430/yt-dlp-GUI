@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Art from '../Art.jsx';
+import ProcessingStage from './ProcessingStage.jsx';
+import { isProcessingStage } from './processingStage.js';
 import JobLog from '../JobLog.jsx';
 import ConfirmDialog from '../ConfirmDialog.jsx';
 import { api } from '../../api.js';
@@ -95,33 +97,34 @@ export default function NowDownloading({ job, onRemoved }) {
 
   const live = isRecording(job);
   const pct = Math.min(100, Math.max(0, job.percent || 0));
-  const finalizing = live && /finaliz|post-processing|merging|split/i.test(job.stage || '');
+  const processing = isProcessingStage(job.stage);
+  const finalizing = live && processing;
   const meta = [job.extractor ? siteName(job.extractor) : null, jobQualityLine(job)].filter(Boolean).join(' · ');
 
   return (
     <section className="hero">
       <div className="hero-row">
         <Art src={job.thumbnail} className="hero-art" label="video thumbnail">
-          {live && <span className="badge badge-live badge-tl">● LIVE {elapsed}</span>}
-          {!live && <div className="art-progress"><div style={{ width: `${pct}%` }} /></div>}
+          {live && !processing && <span className="badge badge-live badge-tl">● LIVE {elapsed}</span>}
+          {!live && !processing && <div className="art-progress"><div style={{ width: `${pct}%` }} /></div>}
         </Art>
         <div className="hero-info">
-          <div className="eyebrow">{live ? 'NOW RECORDING' : 'NOW DOWNLOADING'}</div>
+          <div className="eyebrow">{processing ? 'PROCESSING' : live ? 'NOW RECORDING' : 'NOW DOWNLOADING'}</div>
           <h2 className="hero-title">{job.title || job.url}</h2>
           <div className="hero-meta">{meta}</div>
           <div className="hero-stats">
-            <span className="hero-pct">{live ? (elapsed || '0:00') : `${Math.round(pct)}%`}</span>
+            <span className="hero-pct">{processing ? 'Processing' : live ? (elapsed || '0:00') : `${Math.round(pct)}%`}</span>
             <div className="hero-telemetry">
-              {(live ? job.speed : smoothedStats.speed) && (
+              {!processing && (live ? job.speed : smoothedStats.speed) && (
                 <span className="telemetry-badge speed">{live ? job.speed : smoothedStats.speed}</span>
               )}
-              {!live && smoothedStats.eta && (
+              {!processing && !live && smoothedStats.eta && (
                 <span className="telemetry-badge eta">ETA {smoothedStats.eta}</span>
               )}
-              {job.stage && <span className="telemetry-stage">{job.stage}</span>}
+              {job.stage && <ProcessingStage job={job} />}
             </div>
           </div>
-          {!live && <div className="progress"><div style={{ width: `${pct}%` }} /></div>}
+          {!live && !processing && <div className="progress"><div style={{ width: `${pct}%` }} /></div>}
           <div className="btn-row">
             <button type="button" className="btn-ghost" onClick={() => setShowLog((v) => !v)} aria-expanded={showLog}>
               Command &amp; log

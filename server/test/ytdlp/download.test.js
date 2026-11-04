@@ -12,7 +12,9 @@ const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-download-'));
 process.env.YTDLP_BIN = path.join(__dirname, '..', 'fixtures', 'fake-yt-dlp.js');
 process.env.CONFIG_DIR = path.join(sandbox, 'config');
 process.env.DOWNLOAD_DIR = path.join(sandbox, 'downloads');
-process.env.DOWNLOAD_IDLE_TIMEOUT_MS = '400';
+// The child is a local fake: these tests must never depend on external DNS.
+test.mock.method(require('dns').promises, 'lookup', async () => [{ address: '93.184.216.34', family: 4 }]);
+process.env.DOWNLOAD_IDLE_TIMEOUT_MS = '2500'; // Allow fixture startup while FFmpeg tests run concurrently.
 process.env.DOWNLOAD_MAX_QUIET_MS = '1'; // skip the CPU-busy grace period
 const ytdlp = require('../../src/services/ytdlp');
 const db = require('../../src/db');
@@ -81,20 +83,16 @@ test('handles carriage-return updates, thread prefixes and native [download] lin
   assert.equal(progress[3].speed, '2.00MiB/s');
 });
 
-test('post-processing ticks map onto 90–99% with an estimated ETA', async () => {
-  const { promise, progress } = run({
-    steps: [
-      { out: 'YTDLP_POSTPROCESS 0.0%' },
-      { sleep: 50 },
-      { out: 'YTDLP_POSTPROCESS 50.0%' },
-      { out: 'FILEPATH /x/v.mp4' },
-    ],
-  });
+test('standard stage boundaries identify processing without inventing an ETA', async () => {
+  const { promise, progress } = run({ steps: [
+    { out: 'YTDLP_STAGE Metadata|started' },
+    { out: 'YTDLP_STAGE Metadata|finished' },
+    { out: 'FILEPATH /x/v.mp4' },
+  ] });
   await promise;
-  assert.deepEqual(progress.map((p) => p.percent), [90, 94.5]);
-  assert.equal(progress[0].stage, 'Post-processing recording…');
+  assert.equal(progress.length, 1);
+  assert.equal(progress[0].stage, 'Post-processing: Metadata…');
   assert.equal(progress[0].eta, null);
-  assert.match(progress[1].eta, /^\d+s$/);
 });
 
 test('a non-zero exit rejects with the de-duplicated error output', async () => {
@@ -157,6 +155,7 @@ test('a missing binary rejects instead of hanging', async () => {
   // Spawn errors arrive asynchronously; point at a path that doesn't exist via a fresh load.
   const { spawnSync } = require('child_process');
   const script = `
+    process.env.ALLOW_LOCAL_URLS = '1';
     process.env.YTDLP_BIN = ${JSON.stringify(path.join(sandbox, 'no-such-yt-dlp'))};
     process.env.CONFIG_DIR = ${JSON.stringify(path.join(sandbox, 'config2'))};
     const ytdlp = require(${JSON.stringify(require.resolve('../../src/services/ytdlp'))});
@@ -166,4 +165,147 @@ test('a missing binary rejects instead of hanging', async () => {
   `;
   const out = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000 });
   assert.match(out.stdout, /REJECTED ENOENT/);
+});
+
+test('named processing boundaries clear download ETA and log real stage duration', async () => {
+  const { promise, progress, logs } = run({ steps: [
+    { out: 'YTDLP_NAS {"event":"waiting","stage":"Metadata"}' },
+    { out: 'YTDLP_NAS {"event":"started","stage":"Metadata"}' },
+    { out: 'YTDLP_NAS {"event":"finished","stage":"Metadata","seconds":12.3}' },
+    { out: 'YTDLP_NAS {"event":"combined","stage":"Metadata"}' },
+    { out: 'FILEPATH /x/video.mp4' },
+  ] });
+  await promise;
+  assert.equal(progress[0].stage, 'Waiting for processing slot — embedding metadata…');
+  assert.equal(progress[1].stage, 'Embedding metadata…');
+  assert.ok(progress.every(p => p.eta === null && p.speed === null));
+  assert.ok(logs.some(line => line.includes('finished in 12.3s')));
+  assert.ok(logs.some(line => line.includes('skipped a separate full-file rewrite')));
+});
+
+test('waiting for a shared processing permit does not trigger the idle watchdog', async () => {
+  const { promise } = run({ steps: [
+    { out: 'YTDLP_NAS {"event":"waiting","stage":"Merger"}' },
+    { sleep: 3500 },
+    { out: 'YTDLP_NAS {"event":"started","stage":"Merger"}' },
+    { out: 'FILEPATH /x/video.mp4' },
+  ] });
+  assert.equal((await promise).filepath, '/x/video.mp4');
+});
+
+test('a gracefully stopped recording can keep waiting for its processing permit', async t => {
+  const { promise, progress, jobId } = run({
+    steps: [{ out: 'YTDLP_NAS {"event":"waiting","stage":"Merger"}' }], hang: true,
+    onSigint: { hold: true },
+  }, { isLive: true });
+  while (progress.length === 0) await new Promise(resolve => setTimeout(resolve, 10));
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const kill = t.mock.method(process, 'kill');
+  try {
+    ytdlp.stopDownload(jobId);
+    t.mock.timers.tick(31 * 60 * 1000);
+    t.mock.timers.tick(60 * 1000);
+    assert.ok(!kill.mock.calls.some(call => call.arguments[1] === 'SIGTERM'), 'queued merge must survive graceful-stop escalation');
+  } finally {
+    ytdlp.stopDownload(jobId, { abort: true });
+    t.mock.timers.reset();
+    await assert.rejects(promise, /aborted/);
+  }
+});
+
+test('disk-full failures in a work directory preserve existing home files', async t => {
+  const previous = process.env.YTDLP_WORK_DIR;
+  const work = path.join(sandbox, 'ssd');
+  process.env.YTDLP_WORK_DIR = work;
+  t.after(() => {
+    if (previous === undefined) delete process.env.YTDLP_WORK_DIR;
+    else process.env.YTDLP_WORK_DIR = previous;
+  });
+  const home = path.join(sandbox, 'existing.mp4');
+  fs.writeFileSync(home, 'existing completed video');
+  const { promise, jobId } = run({ steps: [{ out: `DESTFILE ${home}` }, { err: 'ERROR: No space left on device' }], exit: 1 });
+  const directory = path.join(work, jobId);
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, 'stream.mp4.part'), 'partial');
+  await assert.rejects(promise, /Out of disk space/);
+  assert.ok(fs.existsSync(home), 'existing home video must survive scratch failure');
+  assert.equal(fs.readFileSync(home, 'utf8'), 'existing completed video');
+  assert.equal(fs.existsSync(directory), false, 'only the per-job temporary files are cleared');
+});
+
+test('stop escalation treats disk I/O as work even when the process uses little CPU', async t => {
+  let pid;
+  const { promise, progress, jobId } = run({
+    steps: [{ out: 'YTDLP_NAS {"event":"started","stage":"Merger"}' }], hang: true,
+    onSigint: { hold: true },
+  }, { isLive: true, onSpawn: value => { pid = value; } });
+  while (progress.length === 0) await new Promise(resolve => setTimeout(resolve, 10));
+  const read = fs.readFileSync;
+  let bytes = 0;
+  t.mock.method(fs, 'readFileSync', function (file, ...args) {
+    if (String(file) === `/proc/${pid}/io`) return `rchar: ${bytes}\nwchar: ${bytes}\n`;
+    const result = read.call(this, file, ...args);
+    if (String(file) !== `/proc/${pid}/stat`) return result;
+    const end = result.lastIndexOf(')');
+    const fields = result.slice(end + 2).split(' ');
+    for (const index of [11, 12, 13, 14]) fields[index] = '0';
+    return result.slice(0, end + 2) + fields.join(' ');
+  });
+  const kill = t.mock.method(process, 'kill');
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  try {
+    ytdlp.stopDownload(jobId);
+    t.mock.timers.tick(31 * 60 * 1000);
+    bytes = 8192;
+    t.mock.timers.tick(60 * 1000);
+    assert.ok(!kill.mock.calls.some(call => call.arguments[1] === 'SIGTERM'), 'active file I/O must prevent idle termination');
+  } finally {
+    ytdlp.stopDownload(jobId, { abort: true });
+    t.mock.timers.reset();
+    await assert.rejects(promise, /aborted/);
+  }
+});
+
+test('failed final transfer retains work files for retry and never deletes existing home output', async t => {
+  const previous = process.env.YTDLP_WORK_DIR;
+  const work = path.join(sandbox, 'transfer-work');
+  process.env.YTDLP_WORK_DIR = work;
+  t.after(() => {
+    if (previous === undefined) delete process.env.YTDLP_WORK_DIR;
+    else process.env.YTDLP_WORK_DIR = previous;
+  });
+  const home = path.join(sandbox, 'transfer-existing.mp4');
+  fs.writeFileSync(home, 'previous video');
+  const { promise, jobId } = run({ steps: [
+    { out: `DESTFILE ${home}` },
+    { out: 'YTDLP_NAS {"event":"started","stage":"MoveFiles"}' },
+    { err: 'ERROR: No space left on device' },
+  ], exit: 1 });
+  const source = path.join(work, jobId, 'completed.mp4');
+  fs.mkdirSync(path.dirname(source), { recursive: true });
+  fs.writeFileSync(source, 'completed video to retry');
+  await assert.rejects(promise, /completed work files retained for retry/);
+  assert.equal(fs.readFileSync(home, 'utf8'), 'previous video');
+  assert.equal(fs.readFileSync(source, 'utf8'), 'completed video to retry');
+});
+
+test('aborting staged work cleans only the job workspace', async t => {
+  const previous = process.env.YTDLP_WORK_DIR;
+  const work = path.join(sandbox, 'aborted-work');
+  process.env.YTDLP_WORK_DIR = work;
+  t.after(() => {
+    if (previous === undefined) delete process.env.YTDLP_WORK_DIR;
+    else process.env.YTDLP_WORK_DIR = previous;
+  });
+  const home = path.join(sandbox, 'abort-existing.mp4');
+  fs.writeFileSync(home, 'previous video');
+  const { promise, progress, jobId } = run({ steps: [{ out: `DESTFILE ${home}` }], heartbeat: true });
+  const directory = path.join(work, jobId);
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, 'partial.part'), 'partial');
+  while (progress.length === 0) await new Promise(resolve => setTimeout(resolve, 10));
+  ytdlp.stopDownload(jobId, { abort: true });
+  await assert.rejects(promise, /aborted/);
+  assert.equal(fs.readFileSync(home, 'utf8'), 'previous video');
+  assert.equal(fs.existsSync(directory), false);
 });

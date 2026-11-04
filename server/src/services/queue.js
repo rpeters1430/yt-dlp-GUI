@@ -68,6 +68,7 @@ function getMaxConcurrent() {
 
 let io = null;
 let activeCount = 0;
+const postprocessControllers = new Map();
 
 function isQueuePaused() {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'queue_paused'").get();
@@ -327,6 +328,10 @@ function notifyWatchItem(job) {
 }
 
 function updateJob(id, fields) {
+  if (fields.stage !== undefined) {
+    const current = db.prepare('SELECT stage FROM downloads WHERE id = ?').get(id);
+    if (current && fields.stage !== current.stage) fields = { ...fields, stage_started_at: new Date().toISOString() };
+  }
   const keys = Object.keys(fields);
   if (keys.length === 0) return;
   const setClause = keys.map((k) => `${k} = ?`).join(', ');
@@ -349,7 +354,10 @@ const WAIT_FOR_LIVE_SQL = "(CASE WHEN json_valid(options_json) THEN json_extract
 // picked up twice by overlapping processNext() calls.
 function startJob(job, usesSlot) {
   if (usesSlot) activeCount++;
-  runJob(job).finally(() => {
+  const controller = new AbortController();
+  postprocessControllers.set(job.id, controller);
+  runJob(job, controller.signal).finally(() => {
+    postprocessControllers.delete(job.id);
     if (usesSlot) activeCount--;
     processNext();
   });
@@ -374,7 +382,7 @@ function processNext() {
   for (const job of next) startJob(job, true);
 }
 
-async function runJob(job) {
+async function runJob(job, signal) {
   const logLines = [];
   function appendLog(line) {
     const timestamp = new Date().toISOString().substring(11, 19);
@@ -485,6 +493,7 @@ async function runJob(job) {
           }
           updateJob(job.id, {options_json:JSON.stringify(extraOptions)});
         }
+        downloadOptions.estimatedSize = info.filesize || info.filesize_approx || null;
         caps = siteProfiles.getCapabilities(info, job.url);
         appendLog(`Metadata: "${title || 'Unknown'}" (${extractor || 'extractor'}) [ID: ${videoId || 'unknown'}]`);
         appendLog(`Site profile: ${caps.site.name}${caps.site.id === 'generic' ? ' (generic rules)' : ''}`);
@@ -531,6 +540,7 @@ async function runJob(job) {
     let lastLogSave = Date.now();
     let lastProgressSave = 0;
     let lastPercent = -1;
+    let lastStage = null;
 
     const runDownload = (opts) => ytdlp.download(
       job.url,
@@ -538,8 +548,9 @@ async function runJob(job) {
       (progress) => {
         const now = Date.now();
         const percentChanged = Math.abs((progress.percent || 0) - lastPercent) >= 1;
-        if (now - lastProgressSave >= 200 || percentChanged || (progress.percent || 0) >= 100) {
+        if (now - lastProgressSave >= 200 || percentChanged || progress.stage !== lastStage || (progress.percent || 0) >= 100) {
           lastProgressSave = now;
+          lastStage = progress.stage;
           lastPercent = progress.percent || 0;
           const updatePayload = {
             percent: progress.percent,
@@ -591,7 +602,10 @@ async function runJob(job) {
     if (resolvedOptions.thumbnailFallbackUrl && result.filepath) {
       try {
         updateJob(job.id, { stage: 'Embedding thumbnail…' });
-        await ytdlp.embedThumbnailFromUrl(result.filepath, resolvedOptions.thumbnailFallbackUrl);
+        await ytdlp.embedThumbnailFromUrl(result.filepath, resolvedOptions.thumbnailFallbackUrl, {
+          onStage: stage => updateJob(job.id, { stage, speed: null, eta: null }),
+          onLog: appendLog, isActive: () => !!getJob(job.id), signal,
+        });
         appendLog('Embedded fallback thumbnail');
       } catch (e) {
         appendLog(`WARNING: Couldn't embed fallback thumbnail (video kept): ${e.message}`);
@@ -649,7 +663,7 @@ async function runJob(job) {
         appendLog(`[split] Splitting live stream recording into ${liveChunkDuration}-minute chunks…`);
         splitResult = await liveSplitter.splitRecording(result.filepath, liveChunkDuration, (line) => {
           appendLog(`[split] ${line}`);
-        });
+        }, stage => updateJob(job.id, { stage, speed: null, eta: null }), () => !!getJob(job.id), signal);
         if (splitResult.split && splitResult.files?.length > 1) {
           result.filepath = splitResult.files[0];
           result.splitParts = splitResult.files;
@@ -668,6 +682,7 @@ async function runJob(job) {
       appendLog(`[split] WARNING: Skipped chunk splitting — the finished recording file wasn't found${result.filepath ? ` (${result.filepath})` : ''}`);
     }
 
+    if (!getJob(job.id)) return;
     const completionMsg = result.splitParts && result.splitParts.length > 1
       ? `Live stream recording completed (split into ${result.splitParts.length} chunks) -> ${result.filepath}`
       : result.stoppedByUser
@@ -809,6 +824,7 @@ function stopJob(id) {
 
 function removeJob(id, { deleteFile = false } = {}) {
   const job = getJobSummary(id);
+  postprocessControllers.get(id)?.abort();
   ytdlp.stopDownload(id, { abort: true });
   if (deleteFile && job && job.filepath) {
     require('./cleanup').removeMediaFiles(id, job.filepath, job.split_parts);

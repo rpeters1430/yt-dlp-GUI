@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const ytdlp = require('./ytdlp');
+const { processingGate } = require('./processingGate');
 
 function getFfprobeBin() {
   const dir = ytdlp.getFfmpegDir();
@@ -98,7 +99,7 @@ function probeDuration(filepath) {
  * @param {Function} [onLog] Logging callback
  * @returns {Promise<{ split: boolean, files: string[], duration: number|null, reason?: string, error?: string }>}
  */
-async function splitRecording(filepath, chunkDurationMins, onLog = () => {}) {
+async function splitRecording(filepath, chunkDurationMins, onLog = () => {}, onStage = () => {}, isActive = () => true, signal) {
   if (!filepath || !fs.existsSync(filepath)) {
     throw new Error(`File does not exist: ${filepath}`);
   }
@@ -138,20 +139,25 @@ async function splitRecording(filepath, chunkDurationMins, onLog = () => {}) {
     pattern,
   ];
 
-  const exitCode = await new Promise((resolve) => {
-    const proc = spawn(getFfmpegBin(), args);
+  const exitCode = await processingGate.run(() => new Promise((resolve) => {
+    if (!isActive()) return resolve(-1);
+    const proc = spawn(getFfmpegBin(), args, { signal });
     let stderr = '';
     proc.stderr.on('data', (d) => { stderr += d; });
     proc.on('close', (code) => {
       if (code !== 0) {
         onLog(`[warning] FFmpeg segmenting warning: ${stderr.trim().split('\n').slice(-2).join(' ')}`);
       }
-      resolve(code);
+      resolve(code == null ? -1 : code);
     });
     proc.on('error', (err) => {
       onLog(`[error] FFmpeg spawn error: ${err.message}`);
-      resolve(-1);
     });
+  }), {
+    signal,
+    onWait: () => onStage('Waiting for processing slot — splitting recording…'),
+    onStart: () => onStage('Splitting recording…'),
+    onFinish: seconds => onLog(`Splitting finished in ${seconds.toFixed(1)}s`),
   });
 
   if (exitCode !== 0) {
