@@ -51,7 +51,8 @@ async function solveWithFlareSolverr(solverUrl, targetUrl, cookies, { signal, ti
   };
 }
 
-function fetchWithCurlCffi(targetUrl, { headers = {}, cookies = [], signal, timeout = 25 } = {}) {
+// `proxy` ({ url, caFile }) routes the request through the Solverr MITM proxy, trusting its CA.
+function fetchWithCurlCffi(targetUrl, { headers = {}, cookies = [], signal, timeout = 25, proxy = null } = {}) {
   return new Promise((resolve, reject) => {
     const py = spawn('python', [PY_SCRIPT], { windowsHide: true });
     let stdout = '';
@@ -89,6 +90,7 @@ function fetchWithCurlCffi(targetUrl, { headers = {}, cookies = [], signal, time
       headers,
       cookies,
       timeout,
+      ...(proxy?.url ? { proxy: proxy.url, ca_file: proxy.caFile } : {}),
     }));
     py.stdin.end();
   });

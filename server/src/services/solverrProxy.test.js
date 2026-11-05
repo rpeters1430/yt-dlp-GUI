@@ -1,8 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const http = require('http');
 const net = require('net');
 const os = require('os');
+const tls = require('tls');
 const path = require('path');
 
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'solverr-proxy-'));
@@ -68,6 +70,58 @@ test('only adds proxy args while reachable with the CA installed', async () => {
   setSetting('solverr_proxy_mode', 'off');
   assert.deepEqual(solverrProxy.proxyArgs(), []);
   assert.ok(ytdlp.commonArgs().includes('--impersonate'));
+});
+
+test('Link Grabber fetches tunnel through the proxy with credentials while it is active', async () => {
+  const target = http.createServer((req, res) => res.end('from-target'));
+  await new Promise((resolve) => target.listen(0, '127.0.0.1', resolve));
+  const targetPort = target.address().port;
+
+  const tunnels = [];
+  const proxy = http.createServer((req, res) => res.writeHead(405).end());
+  proxy.on('connect', (req, clientSocket, head) => {
+    tunnels.push({ target: req.url, auth: req.headers['proxy-authorization'] });
+    const [host, p] = req.url.split(':');
+    const upstream = net.connect(Number(p), host, () => {
+      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      upstream.write(head);
+      upstream.pipe(clientSocket);
+      clientSocket.pipe(upstream);
+    });
+    upstream.on('error', () => clientSocket.destroy());
+    clientSocket.on('error', () => upstream.destroy());
+  });
+  await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+  const proxyPort = proxy.address().port;
+  const proxyUrl = `http://user:p%40ss@127.0.0.1:${proxyPort}`;
+
+  try {
+    fs.writeFileSync(process.env.SOLVERR_PROXY_CA_FILE, tls.rootCertificates[0]);
+    setSetting('solverr_proxy_mode', 'auto');
+    setSetting('solverr_proxy_url', proxyUrl);
+    await solverrProxy.check();
+    assert.equal(solverrProxy.isActive(), true);
+    assert.deepEqual(solverrProxy.curlProxyOptions(), { url: proxyUrl, caFile: process.env.SOLVERR_PROXY_CA_FILE });
+
+    const res = await solverrProxy.proxiedFetch(`http://127.0.0.1:${targetPort}/page`);
+    assert.equal(await res.text(), 'from-target');
+    assert.equal(tunnels.length, 1);
+    assert.equal(tunnels[0].target, `127.0.0.1:${targetPort}`);
+    assert.equal(tunnels[0].auth, `Basic ${Buffer.from('user:p@ss').toString('base64')}`);
+
+    // Turned off in Settings: straight to the site, no tunnel.
+    setSetting('solverr_proxy_mode', 'off');
+    assert.equal(solverrProxy.curlProxyOptions(), null);
+    const direct = await solverrProxy.proxiedFetch(`http://127.0.0.1:${targetPort}/page`);
+    assert.equal(await direct.text(), 'from-target');
+    assert.equal(tunnels.length, 1);
+  } finally {
+    solverrProxy.stop();
+    proxy.closeAllConnections();
+    target.closeAllConnections();
+    proxy.close();
+    target.close();
+  }
 });
 
 test('falls back to a direct connection when the proxy is unreachable', async () => {

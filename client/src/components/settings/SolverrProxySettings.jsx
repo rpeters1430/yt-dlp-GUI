@@ -7,11 +7,11 @@ import { SettingRow } from './DownloadsSettings.jsx';
 
 function statusText(status) {
   if (!status) return 'Checking…';
-  if (status.mode === 'off') return 'Off: yt-dlp connects directly';
+  if (status.mode === 'off') return 'Off: yt-dlp and Link Grabber connect directly';
   if (!status.url) return 'No proxy URL set';
   if (!status.caInstalled) return 'Solverr CA not installed in this container (set SOLVERR_PROXY_CA_URL and SOLVERR_PROXY_CA_SHA256, then restart)';
-  if (!status.reachable) return `Solverr unreachable${status.error ? ` (${status.error})` : ''}: yt-dlp connects directly`;
-  return 'Active: yt-dlp downloads go through Solverr';
+  if (!status.reachable) return `Solverr unreachable${status.error ? ` (${status.error})` : ''}: yt-dlp and Link Grabber connect directly`;
+  return 'Active: yt-dlp downloads and Link Grabber page fetches go through Solverr';
 }
 
 export default function SolverrProxySettings() {
@@ -69,7 +69,7 @@ export default function SolverrProxySettings() {
     <>
       <SettingRow
         label="Solverr proxy"
-        description={`Route yt-dlp through a Solverr forward proxy to get past Cloudflare and other challenge walls, whenever it's reachable. ${statusText(status)}`}
+        description={`Route yt-dlp and Link Grabber page fetches through a Solverr forward proxy to get past Cloudflare and other challenge walls, whenever it's reachable. ${statusText(status)}`}
       >
         <button type="button" className="btn-ghost btn-sm" onClick={recheck} disabled={busy} title="Check the proxy now">
           <RefreshCw size={13} /> Check

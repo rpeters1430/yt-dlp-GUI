@@ -1,5 +1,6 @@
 const fs = require('fs');
 const net = require('net');
+const tls = require('tls');
 
 // Optional Solverr HTTP/HTTPS forward proxy. Solverr decrypts HTTPS so its challenge solver can
 // handle Cloudflare and friends, which means yt-dlp must trust Solverr's CA: the container
@@ -98,6 +99,53 @@ function proxyArgs() {
   return ['--proxy', getProxyUrl(), '--compat-options', 'no-certifi'];
 }
 
+// Link Grabber page fetches use undici's fetch with a ProxyAgent. Node doesn't read the system
+// trust store, so the Solverr CA is added to the bundled roots for TLS to the target sites.
+let agentCache = { key: null, agent: null };
+
+function createAgent(url) {
+  const { ProxyAgent } = require('undici');
+  const parsed = new URL(url);
+  const opts = {
+    uri: `${parsed.protocol}//${parsed.host}`,
+    requestTls: { ca: [...tls.rootCertificates, fs.readFileSync(CA_FILE, 'utf8')] },
+  };
+  if (parsed.username || parsed.password) {
+    const creds = `${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password)}`;
+    opts.token = `Basic ${Buffer.from(creds).toString('base64')}`;
+  }
+  return new ProxyAgent(opts);
+}
+
+// The undici dispatcher for the active proxy, or null while it isn't active. Rebuilt when the
+// proxy URL changes or the CA file is reinstalled.
+function dispatcher() {
+  if (!isActive()) return null;
+  const url = getProxyUrl();
+  let caStamp;
+  try { caStamp = String(fs.statSync(CA_FILE).mtimeMs); } catch { return null; }
+  const key = `${url}|${caStamp}`;
+  if (agentCache.key !== key) {
+    const old = agentCache.agent;
+    agentCache = { key, agent: createAgent(url) };
+    if (old) old.close().catch(() => {});
+  }
+  return agentCache.agent;
+}
+
+// Drop-in for fetch(): goes through Solverr while the proxy is active, direct otherwise.
+function proxiedFetch(url, init = {}) {
+  const agent = dispatcher();
+  if (!agent) return fetch(url, init);
+  return require('undici').fetch(url, { ...init, dispatcher: agent });
+}
+
+// Options for the curl_cffi fallback, or null while the proxy isn't active.
+function curlProxyOptions() {
+  if (!isActive()) return null;
+  return { url: getProxyUrl(), caFile: CA_FILE };
+}
+
 function probe(url) {
   return new Promise((resolve) => {
     let parsed;
@@ -130,8 +178,8 @@ async function runCheck() {
   const nowActive = isActive();
   if (wasActive !== nowActive) {
     console.log(nowActive
-      ? `[solverr] Routing yt-dlp through Solverr proxy ${maskProxyUrl(url)}`
-      : '[solverr] Solverr proxy unavailable; yt-dlp connects directly');
+      ? `[solverr] Routing yt-dlp and Link Grabber through Solverr proxy ${maskProxyUrl(url)}`
+      : '[solverr] Solverr proxy unavailable; yt-dlp and Link Grabber connect directly');
   }
   return getStatus();
 }
@@ -166,6 +214,8 @@ function start() {
 function stop() {
   if (timer) clearInterval(timer);
   timer = null;
+  if (agentCache.agent) agentCache.agent.close().catch(() => {});
+  agentCache = { key: null, agent: null };
 }
 
 module.exports = {
@@ -178,6 +228,9 @@ module.exports = {
   getProxyUrl,
   isActive,
   proxyArgs,
+  dispatcher,
+  proxiedFetch,
+  curlProxyOptions,
   check,
   getStatus,
   start,
