@@ -24,7 +24,14 @@ def main():
 
         timeout = int(data.get("timeout", 25))
         impersonate = data.get("impersonate", "chrome124")
-        resp = requests.get(url, headers=headers, cookies=cookies, impersonate=impersonate, timeout=timeout)
+        kwargs = {}
+        proxy = data.get("proxy")
+        if proxy:
+            # Solverr re-signs HTTPS with its own CA, so trust that CA for this request.
+            kwargs["proxy"] = proxy
+            if data.get("ca_file"):
+                kwargs["verify"] = data["ca_file"]
+        resp = requests.get(url, headers=headers, cookies=cookies, impersonate=impersonate, timeout=timeout, **kwargs)
         set_cookies = []
         for k, v in resp.cookies.items():
             set_cookies.append({"name": k, "value": v})

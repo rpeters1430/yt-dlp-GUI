@@ -628,6 +628,10 @@ whether it's in use. The app checks every minute whether Solverr answers and onl
 breaks downloads: they go direct again. Browser TLS impersonation is skipped while the proxy is in use, since
 Solverr does its own. Never use `--no-check-certificates` to work around a missing CA.
 
+Link Grabber page fetches follow the same rule: while the proxy is active they tunnel through it, trusting Solverr's
+CA, as does the curl_cffi fallback. This is separate from the Link Grabber's **Challenge Solver** URL, which calls
+Solverr's FlareSolverr-style `/v1` API when a page is still blocked.
+
 The image also ships `yt-dlp-with-solverr-proxy.sh`, the standalone wrapper from Solverr, for one-off command-line
 use: `docker exec ytdlp-gui yt-dlp-with-solverr-proxy.sh <url>` (as root; it reinstalls the CA first).
 

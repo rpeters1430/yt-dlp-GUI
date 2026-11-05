@@ -8,6 +8,7 @@ const path = require('path');
 const cheerio = require('cheerio');
 const db = require('../db');
 const ytdlp = require('./ytdlp');
+const solverrProxy = require('./solverrProxy');
 const { COOKIES_FILE, CRAWLER_COOKIES_FILE, CONFIG_DIR } = require('./ytdlpPaths');
 const { solveWithFlareSolverr, fetchWithCurlCffi, testSolverConnection } = require('./stealthFetch');
 
@@ -737,7 +738,7 @@ async function requestWithRetry(url, init, { fetchImpl, retryBaseMs, signal }) {
 
 // Follows redirects by hand so every hop passes the SSRF guard and gets only its own cookies.
 async function fetchPage(url, {
-  cookies, fetchImpl = fetch, assertUrl = ytdlp.assertPublicUrlResolved, userAgent, retryBaseMs = RETRY_BASE_MS, signal, solverUrl, referer,
+  cookies, fetchImpl = solverrProxy.proxiedFetch, assertUrl = ytdlp.assertPublicUrlResolved, userAgent, retryBaseMs = RETRY_BASE_MS, signal, solverUrl, referer,
 }) {
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -782,7 +783,7 @@ async function fetchPage(url, {
           }
         }
         try {
-          const stealth = await fetchWithCurlCffi(current, { headers, cookies, signal });
+          const stealth = await fetchWithCurlCffi(current, { headers, cookies, signal, proxy: solverrProxy.curlProxyOptions() });
           if (stealth && stealth.status >= 200 && stealth.status < 300 && stealth.html) {
             rememberSolverCookies(cookies, stealth.cookies);
             return { url: current, html: stealth.html };
