@@ -277,7 +277,7 @@ async function resolveShareUrlWithAgent(shareUrl, userAgent, validateUrl = asser
   let status = null;
   for (let hop = 0; hop < SHARE_RESOLVE_MAX_HOPS; hop++) {
     await validateUrl(current);
-    const res = await fetch(current, {
+    const res = await solverrProxy.proxiedFetch(current, {
       method: 'GET',
       redirect: 'manual',
       headers: { 'User-Agent': userAgent, Accept: 'text/html' },
@@ -694,7 +694,7 @@ async function embedThumbnailFromUrl(filepath, thumbnailUrl, { onStage = () => {
   if (!THUMBNAIL_FALLBACK_EXTS.has(ext)) throw new Error(`can't embed a thumbnail into .${ext}`);
   await assertPublicUrlResolved(thumbnailUrl);
 
-  const res = await fetch(thumbnailUrl, { signal: AbortSignal.timeout(30000) });
+  const res = await solverrProxy.proxiedFetch(thumbnailUrl, { signal: AbortSignal.timeout(30000) });
   if (!res.ok) throw new Error(`HTTP ${res.status} fetching thumbnail`);
   const imageExt = /png/i.test(res.headers.get('content-type') || '') ? 'png' : 'jpg';
   const coverPath = `${filepath}.cover.${imageExt}`;

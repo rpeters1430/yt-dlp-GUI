@@ -114,6 +114,8 @@ function createAgent(url) {
     const creds = `${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password)}`;
     opts.token = `Basic ${Buffer.from(creds).toString('base64')}`;
   }
+  // Keep protocol-aware defaults: forward plain HTTP, CONNECT HTTPS. Solverr only accepts
+  // CONNECT for HTTPS on port 443, so forcing tunnels also for HTTP would break those links.
   return new ProxyAgent(opts);
 }
 

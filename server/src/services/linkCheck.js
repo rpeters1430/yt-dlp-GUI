@@ -5,6 +5,7 @@
 //
 // status: online | offline | reachable | unknown (the check itself failed).
 const ytdlp = require('./ytdlp');
+const solverrProxy = require('./solverrProxy');
 
 const MAX_CHECK = 300;
 const CONCURRENCY = 4;
@@ -136,7 +137,7 @@ async function checkOne(url, { fetchImpl, assertUrl }) {
 }
 
 // Checks up to MAX_CHECK URLs, CONCURRENCY at a time, in the order given.
-async function checkLinks(urls, { fetchImpl = fetch, assertUrl = ytdlp.assertPublicUrlResolved, concurrency = CONCURRENCY } = {}) {
+async function checkLinks(urls, { fetchImpl = solverrProxy.proxiedFetch, assertUrl = ytdlp.assertPublicUrlResolved, concurrency = CONCURRENCY } = {}) {
   const list = urls.slice(0, MAX_CHECK);
   const results = new Array(list.length);
   let next = 0;
