@@ -623,14 +623,29 @@ pages. Solverr decrypts HTTPS to do this, so this container has to trust Solverr
    `update-ca-certificates`; a failure is logged and the app starts anyway.
 
 **Settings → Downloads → Solverr proxy** turns the proxy on or off, sets or overrides the proxy URL, and shows
-whether it's in use. The app checks every minute whether Solverr answers and only routes yt-dlp through it
-(`--proxy … --compat-options no-certifi`) while it does and the CA is installed, so stopping Solverr never
-breaks downloads: they go direct again. Browser TLS impersonation is skipped while the proxy is in use, since
-Solverr does its own. Never use `--no-check-certificates` to work around a missing CA.
+whether routing is enabled. The app checks every minute for TCP reachability and routes requests through it while
+it answers and the CA file is installed. This status is not an authentication or challenge-solving test: a wrong
+password or untrusted certificate still produces a request error. After a failed reachability check, new requests
+go direct; an already-running yt-dlp process keeps the proxy arguments it started with.
 
-Link Grabber page fetches follow the same rule: while the proxy is active they tunnel through it, trusting Solverr's
-CA, as does the curl_cffi fallback. This is separate from the Link Grabber's **Challenge Solver** URL, which calls
-Solverr's FlareSolverr-style `/v1` API when a page is still blocked.
+The same setting covers:
+
+| Request | Routing while the proxy is active |
+| --- | --- |
+| Link Grabber forum pages, pagination and redirects (including the CLI crawler and watches) | HTTP absolute-form forwarding; HTTPS CONNECT with Solverr's CA |
+| Extracted-link availability checks | Same forwarding and CA trust as forum pages |
+| Reddit share-link resolution and fallback video artwork | Same forwarding and CA trust as forum pages |
+| yt-dlp metadata analysis and video/audio downloads | `--proxy … --compat-options no-certifi`; browser TLS impersonation is skipped because Solverr handles it |
+| Link Grabber curl_cffi fallback | Explicit proxy URL and CA bundle |
+
+Do not force CONNECT for plain HTTP: Solverr accepts CONNECT only for HTTPS targets on port 443. Never use
+`--no-check-certificates` to work around a missing CA. Disabling the proxy restores direct requests and yt-dlp's
+saved impersonation setting.
+
+The Link Grabber's **Challenge Solver** URL is separate: set it to `http://solverr:8191` (or the reachable NAS
+address) to call Solverr's FlareSolverr-style `/v1` API when a page is still blocked. This local control API is
+called directly, not through the forward proxy. JDownloader and Aria2 control APIs are also called directly;
+downloads handed to those applications use their own network/proxy configuration.
 
 The image also ships `yt-dlp-with-solverr-proxy.sh`, the standalone wrapper from Solverr, for one-off command-line
 use: `docker exec ytdlp-gui yt-dlp-with-solverr-proxy.sh <url>` (as root; it reinstalls the CA first).
