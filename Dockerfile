@@ -1,13 +1,13 @@
 # --- Resolve nightly yt-dlp and the latest FFmpeg autobuild ---
 # CI resolves once and passes the same manifest to both architectures. Local
 # builds resolve here; use --no-cache-filter tool-versions to check again.
-FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS tool-versions
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216 AS tool-versions
 ARG TOOL_MANIFEST=
 COPY scripts/ci/resolve-tools.mjs /resolve-tools.mjs
 RUN node /resolve-tools.mjs --manifest-base64 "$TOOL_MANIFEST" --output /out
 
 # --- Build client ---
-FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS client-build
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216 AS client-build
 WORKDIR /app/client
 COPY client/package.json client/package-lock.json ./
 RUN npm ci --no-audit --no-fund
