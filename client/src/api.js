@@ -55,7 +55,8 @@ export const api = {
   getLinkGrabberSettings: () => request('/linkgrabber/settings'),
   updateLinkGrabberSettings: (payload) => request('/linkgrabber/settings', { method: 'PUT', body: JSON.stringify(payload) }),
   testJDownloader: () => request('/linkgrabber/test-jd', { method: 'POST', body: '{}' }),
-  testSolver: (url) => request('/linkgrabber/test-solver', { method: 'POST', body: JSON.stringify(url ? { url } : {}) }),
+  // Tests the saved address only; save the form first.
+  testSolver: () => request('/linkgrabber/test-solver', { method: 'POST', body: '{}' }),
   getLinkGrabberHistoryStats: () => request('/linkgrabber/history/stats'),
   recordLinkGrabberHistory: (payload) => request('/linkgrabber/history', { method: 'POST', body: JSON.stringify(payload) }),
   clearLinkGrabberHistory: () => request('/linkgrabber/history', { method: 'DELETE' }),

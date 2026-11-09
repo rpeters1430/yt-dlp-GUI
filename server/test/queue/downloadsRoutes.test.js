@@ -60,6 +60,13 @@ test('POST / validates the URL list', async (t) => {
 
   const local = await call('POST', '/', { url: 'http://127.0.0.1:8080/admin' });
   assert.equal(local.status, 400);
+
+  // A bare string or object for `urls` is a client error, not a crash.
+  const notArray = await call('POST', '/', { urls: 'https://www.youtube.com/watch?v=aaaaaaaaaaa' });
+  assert.equal(notArray.status, 400);
+  assert.match(notArray.body.error, /urls must be an array/);
+  assert.equal((await call('POST', '/', { urls: [{}, 42] })).status, 400);
+  assert.equal((await call('POST', '/', { url: 'https://www.youtube.com/watch?v=aaaaaaaaaaa', downloadSections: 'intro' })).status, 400);
 });
 
 test('POST / queues each URL with normalized options', async (t) => {

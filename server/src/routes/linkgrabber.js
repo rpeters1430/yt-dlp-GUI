@@ -58,8 +58,9 @@ router.put('/settings', (req, res) => {
   res.json({ ok: true });
 });
 
+// Like test-jd below: only the saved (or environment) address, never one from the request.
 router.post('/test-solver', async (req, res) => {
-  const rawUrl = (req.body?.solverUrl || getSetting('solverUrl') || process.env.SOLVERR_URL || process.env.SOLVER_URL || process.env.FLARESOLVERR_URL || '').trim();
+  const rawUrl = (getSetting('solverUrl') || process.env.SOLVERR_URL || process.env.SOLVER_URL || process.env.FLARESOLVERR_URL || '').trim();
   if (!rawUrl) return res.status(400).json({ ok: false, message: 'Solver URL is not configured' });
   try {
     const result = await linkGrabber.testSolverConnection(rawUrl);

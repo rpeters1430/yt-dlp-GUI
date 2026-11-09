@@ -9,6 +9,9 @@ const ROUTES = path.join(__dirname, '..', '..', 'src', 'routes', 'twitch');
 async function startApp(t) {
   const q = loadQueue(t);
   q.queue.init(q.io);
+  // twitch.tv is a public host; skip the real DNS lookup so the test runs offline.
+  const ytdlp = require(path.join(__dirname, '..', '..', 'src', 'services', 'ytdlp'));
+  t.mock.method(ytdlp, 'assertPublicUrlResolved', async () => {});
   const userId = q.db.prepare("INSERT INTO users (username, password_hash) VALUES ('admin', 'x')").run().lastInsertRowid;
   const app = express();
   app.use(express.json());
@@ -40,4 +43,17 @@ test('POST /download passes liveFromStart only for a live recording that is not 
   assert.equal((await options({ channel: 'somechannel', isLive: true, liveFromStart: false })).liveFromStart, false);
   assert.equal((await options({ channel: 'somechannel', isLive: true, waitForLive: true, liveFromStart: true })).liveFromStart, false);
   assert.equal((await options({ url: 'https://www.twitch.tv/videos/1', liveFromStart: true })).liveFromStart, false);
+});
+
+test('POST /download stores trim ranges in yt-dlp\'s time form and rejects anything else', async (t) => {
+  const { q, post } = await startApp(t);
+  const ok = await post('/download', { url: 'https://www.twitch.tv/videos/1', downloadSections: '00:01:00-00:02:00' });
+  assert.equal(ok.status, 200);
+  await waitFor(() => q.queue.listJobs({ activeOnly: true }).length === 0, { label: 'queue to drain' });
+  assert.equal(JSON.parse(q.queue.getJob(ok.body.id).options_json).downloadSections, '*00:01:00-00:02:00');
+
+  const bad = await post('/download', { url: 'https://www.twitch.tv/videos/1', downloadSections: 'intro|outro' });
+  assert.equal(bad.status, 400);
+  const notString = await post('/download', { url: { href: 'https://www.twitch.tv/videos/1' } });
+  assert.equal(notString.status, 400);
 });

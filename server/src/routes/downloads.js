@@ -174,8 +174,12 @@ router.post('/', async (req, res) => {
     liveChunkDuration,
     downloadSections,
   } = req.body || {};
+  // `urls` must be an array; a bare string (or object) would otherwise crash on .map below.
+  if (urls !== undefined && urls !== null && !Array.isArray(urls)) {
+    return res.status(400).json({ error: 'urls must be an array of links' });
+  }
   const list = urls ? urls : url ? [url] : [];
-  const trimmed = list.map(ytdlp.normalizeUrl).filter(Boolean);
+  const trimmed = list.filter((u) => typeof u === 'string').map(ytdlp.normalizeUrl).filter(Boolean);
 
   if (trimmed.length === 0) return res.status(400).json({ error: 'At least one URL is required' });
   const MAX_URLS_PER_REQUEST = 100;
@@ -195,13 +199,9 @@ router.post('/', async (req, res) => {
     }
   }
 
-  let normalizedSection = '';
-  if (downloadSections && typeof downloadSections === 'string' && downloadSections.trim()) {
-    const rawSec = downloadSections.trim();
-    if (!/^(\*?[0-9:.]+-[0-9:.]+|\*?[0-9:.]+-inf)$/i.test(rawSec)) {
-      return res.status(400).json({ error: 'Invalid trim section format (expected start-end, e.g. 00:01:00-00:03:30)' });
-    }
-    normalizedSection = rawSec.startsWith('*') ? rawSec : `*${rawSec}`;
+  const normalizedSection = ytdlp.normalizeDownloadSection(downloadSections);
+  if (normalizedSection === null) {
+    return res.status(400).json({ error: 'Invalid trim section format (expected start-end, e.g. 00:01:00-00:03:30)' });
   }
 
   const chunkMins = splitLiveChunks ? (parseInt(liveChunkDuration, 10) || 0) : 0;
