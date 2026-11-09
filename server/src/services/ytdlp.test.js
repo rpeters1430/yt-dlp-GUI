@@ -513,11 +513,15 @@ test('assertPublicUrl blocks loopback and private hosts in every spelling', () =
   for (const url of [
     'http://127.0.0.1/', 'http://127.1/', 'http://2130706433/', 'http://[::1]/', 'http://[::ffff:127.0.0.1]/',
     'http://[::ffff:192.168.1.5]/', 'http://[fd00::1]/', 'http://localhost/', 'http://app.localhost/',
-    'http://localhost./', 'http://app.localhost./',
+    'http://localhost./', 'http://app.localhost./', 'http://[fe90::1]/', 'http://[febf::1]/', 'http://100.64.0.1/',
+    'http://100.127.255.254/', 'http://[::127.0.0.1]/', 'http://[64:ff9b::127.0.0.1]/', 'http://[64:ff9b::10.0.0.1]/',
   ]) {
     assert.throws(() => assertPublicUrl(url), /local\/private/, url);
   }
-  for (const url of ['https://www.youtube.com/watch?v=x', 'http://[::ffff:8.8.8.8]/', 'http://8.8.8.8/']) {
+  for (const url of [
+    'https://www.youtube.com/watch?v=x', 'http://[::ffff:8.8.8.8]/', 'http://8.8.8.8/', 'http://100.63.0.1/',
+    'http://100.128.0.1/', 'http://[64:ff9b::8.8.8.8]/', 'http://[2001:4860::8888]/', 'http://[fec0::1]/',
+  ]) {
     assert.doesNotThrow(() => assertPublicUrl(url), url);
   }
 });
@@ -773,4 +777,27 @@ test('VOD work directories preserve the final destination without absolute outpu
     if (previous === undefined) delete process.env.YTDLP_WORK_DIR;
     else process.env.YTDLP_WORK_DIR = previous;
   }
+});
+
+test('wait-for-video intervals that yt-dlp would reject fall back to the default', () => {
+  const { buildDownloadArgs } = require('./ytdlp');
+  const interval = (waitInterval) => {
+    const args = buildDownloadArgs('https://www.twitch.tv/somechannel', { isLive: true, waitForLive: true, waitInterval });
+    return args[args.indexOf('--wait-for-video') + 1];
+  };
+  assert.equal(interval(30), '30');
+  assert.equal(interval(-5), '15');
+  assert.equal(interval(0), '15');
+  assert.equal(interval('abc'), '15');
+  assert.equal(interval(999999), '3600');
+});
+
+test('normalizeDownloadSection accepts time ranges in yt-dlp\'s "*start-end" form only', () => {
+  const { normalizeDownloadSection } = require('./ytdlp');
+  assert.equal(normalizeDownloadSection(undefined), '');
+  assert.equal(normalizeDownloadSection('  '), '');
+  assert.equal(normalizeDownloadSection('00:01:00-00:02:00'), '*00:01:00-00:02:00');
+  assert.equal(normalizeDownloadSection('*10-inf'), '*10-inf');
+  assert.equal(normalizeDownloadSection('intro'), null);
+  assert.equal(normalizeDownloadSection(['0-10']), null);
 });

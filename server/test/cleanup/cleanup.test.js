@@ -173,3 +173,26 @@ test('runDbMaintenance prunes old watch_runs past the per-watch keep limit and r
   assert.equal(s.q.db.prepare('SELECT COUNT(*) AS c FROM watch_runs WHERE watch_id = ?').get(w).c, 10);
   assert.equal(s.q.db.prepare('SELECT COUNT(*) AS c FROM sessions').get().c, 1);
 });
+
+test('a rejected settings save writes none of its fields', async (t) => {
+  const q = loadQueue(t);
+  const express = require('express');
+  const userId = q.db.prepare("INSERT INTO users (username, password_hash) VALUES ('admin', 'x')").run().lastInsertRowid;
+  const app = express();
+  app.use(express.json());
+  app.use((req, res, next) => {
+    req.session = { userId, sessionVersion: 1, destroy: (cb) => cb && cb() };
+    next();
+  });
+  app.use('/api/cleanup', require(path.join(__dirname, '..', '..', 'src', 'routes', 'cleanup')));
+  const server = await new Promise((resolve) => { const srv = app.listen(0, () => resolve(srv)); });
+  t.after(() => server.close());
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/api/cleanup/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ageEnabled: true, jellyfinUrl: 'http://jf.example', minFreeDiskGb: -1 }),
+  });
+  assert.equal(res.status, 400);
+  const saved = q.db.prepare("SELECT key FROM settings WHERE key IN ('cleanup_age_enabled', 'jellyfin_url')").all();
+  assert.deepEqual(saved, []);
+});

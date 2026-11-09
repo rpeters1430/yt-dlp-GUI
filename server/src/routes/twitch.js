@@ -116,7 +116,7 @@ router.get('/vod-info', async (req, res) => {
 });
 
 // Enqueue a Twitch live stream or VOD download with specialized options
-router.post('/download', (req, res) => {
+router.post('/download', async (req, res) => {
   const {
     url,
     channel,
@@ -134,13 +134,30 @@ router.post('/download', (req, res) => {
     liveChunkDuration = 0,
   } = req.body || {};
 
-  let targetUrl = (url || '').trim();
-  if (!targetUrl && channel) {
-    targetUrl = `https://www.twitch.tv/${cleanChannelName(channel)}`;
+  if ((url !== undefined && url !== null && typeof url !== 'string')
+    || (channel !== undefined && channel !== null && typeof channel !== 'string')) {
+    return res.status(400).json({ error: 'url and channel must be strings' });
+  }
+  let targetUrl = ytdlp.normalizeUrl(url || '');
+  const channelName = cleanChannelName(channel);
+  if (!targetUrl && channelName) {
+    targetUrl = `https://www.twitch.tv/${channelName}`;
   }
 
   if (!targetUrl) {
     return res.status(400).json({ error: 'URL or channel is required' });
+  }
+  // Same "*start-end" time form as the main download route; anything else would reach
+  // yt-dlp as a chapter-title regex and quietly download nothing useful.
+  const section = ytdlp.normalizeDownloadSection(downloadSections);
+  if (section === null) {
+    return res.status(400).json({ error: 'Invalid trim section format (expected start-end, e.g. 00:01:00-00:03:30)' });
+  }
+  // Fail fast like POST /api/downloads instead of queueing a job that fails minutes later.
+  try {
+    await ytdlp.assertPublicUrlResolved(targetUrl);
+  } catch (e) {
+    return res.status(400).json({ error: `${e.message}: ${targetUrl}` });
   }
 
   const chunkMins = splitLiveChunks ? (parseInt(liveChunkDuration, 10) || 0) : 0;
@@ -154,7 +171,7 @@ router.post('/download', (req, res) => {
     waitInterval: parseInt(waitInterval, 10) || 15,
     twitchChat: !!twitchChat,
     hlsUseMpegts: hlsUseMpegts !== false,
-    downloadSections: downloadSections ? downloadSections.trim() : null,
+    downloadSections: section || null,
     isTwitch: true,
     splitLiveChunks: !!splitLiveChunks && chunkMins > 0,
     liveChunkDuration: chunkMins,

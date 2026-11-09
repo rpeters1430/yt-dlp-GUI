@@ -52,8 +52,8 @@ function validateUrl(url) {
   return null;
 }
 
-const COLORS = { download_completed: 0x159a66, download_failed: 0xe3435e, watch_new_videos: 0x5b6df8, watch_error: 0xb3781a, test: 0x5b6df8 };
-const NTFY_TAGS = { download_completed: 'white_check_mark', download_failed: 'x', watch_new_videos: 'new', watch_error: 'warning', test: 'bell' };
+const COLORS = { download_completed: 0x159a66, download_failed: 0xe3435e, watch_new_videos: 0x5b6df8, watch_error: 0xb3781a, thread_watch_new_links: 0x5b6df8, test: 0x5b6df8 };
+const NTFY_TAGS = { download_completed: 'white_check_mark', download_failed: 'x', watch_new_videos: 'new', watch_error: 'warning', thread_watch_new_links: 'link', test: 'bell' };
 
 function truncate(text, max) {
   const s = String(text || '');

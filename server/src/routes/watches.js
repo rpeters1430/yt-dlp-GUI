@@ -19,6 +19,19 @@ function parseLimit(value, fallback, max) {
   return Math.min(n, max);
 }
 
+// A whole number >= 1, or `fallback` when the value is blank, not a number, zero or negative.
+// A NaN would otherwise be stored as NULL, and a negative interval checks on every tick.
+function positiveInt(value, fallback) {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) && n >= 1 ? n : fallback;
+}
+
+// A duration bound in seconds: a positive whole number, or null for "no bound".
+function durationBound(value) {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 // Blank filter fields are stored as NULL; patterns are kept exactly as typed otherwise.
 function normalizePattern(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -201,11 +214,11 @@ function createWatchesRouter({
     const filterErrors = validateWatchFilters({ matchTitle: normalizePattern(matchTitle), rejectTitle: normalizePattern(rejectTitle) });
     if (filterErrors.length) return res.status(400).json({ error: filterErrors[0], errors: filterErrors });
 
-    const interval = parseInt(checkIntervalMins, 10) || 30;
-    const dlLimit = parseInt(downloadLimit, 10) || 5;
-    const scanDepth = parseInt(maxScanEntries, 10) || 30;
-    const minDur = minDuration ? parseInt(minDuration, 10) : null;
-    const maxDur = maxDuration ? parseInt(maxDuration, 10) : null;
+    const interval = positiveInt(checkIntervalMins, 30);
+    const dlLimit = positiveInt(downloadLimit, 5);
+    const scanDepth = positiveInt(maxScanEntries, 30);
+    const minDur = durationBound(minDuration);
+    const maxDur = durationBound(maxDuration);
     const sponsorCats = Array.isArray(sponsorblockCategories)
       ? sponsorblockCategories.join(',')
       : (sponsorblockCategories || null);
@@ -323,11 +336,11 @@ function createWatchesRouter({
       return res.status(400).json({ error: 'Invalid format selector' });
     }
 
-    const interval = checkIntervalMins !== undefined ? parseInt(checkIntervalMins, 10) : watch.check_interval_mins;
-    const dlLimit = downloadLimit !== undefined ? parseInt(downloadLimit, 10) : watch.download_limit;
-    const scanDepth = maxScanEntries !== undefined ? parseInt(maxScanEntries, 10) : watch.max_scan_entries;
-    const minDur = minDuration !== undefined ? (minDuration ? parseInt(minDuration, 10) : null) : watch.min_duration;
-    const maxDur = maxDuration !== undefined ? (maxDuration ? parseInt(maxDuration, 10) : null) : watch.max_duration;
+    const interval = checkIntervalMins !== undefined ? positiveInt(checkIntervalMins, watch.check_interval_mins || 30) : watch.check_interval_mins;
+    const dlLimit = downloadLimit !== undefined ? positiveInt(downloadLimit, watch.download_limit || 5) : watch.download_limit;
+    const scanDepth = maxScanEntries !== undefined ? positiveInt(maxScanEntries, watch.max_scan_entries || 30) : watch.max_scan_entries;
+    const minDur = minDuration !== undefined ? durationBound(minDuration) : watch.min_duration;
+    const maxDur = maxDuration !== undefined ? durationBound(maxDuration) : watch.max_duration;
     const isEnabled = enabled !== undefined ? (enabled ? 1 : 0) : watch.enabled;
     const isAudio = audioOnly !== undefined ? (audioOnly ? 1 : 0) : watch.audio_only;
     const isSubs = subtitles !== undefined ? (subtitles ? 1 : 0) : watch.subtitles;

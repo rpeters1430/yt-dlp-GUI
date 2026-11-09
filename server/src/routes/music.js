@@ -18,9 +18,10 @@ router.use('/library', require('./musicLibrary'));
 
 // Search for albums or tracks
 router.get('/search', async (req, res) => {
-  const query = req.query.q || '';
-  const type = req.query.type || 'album';
-  const limit = parseInt(req.query.limit || '20', 10);
+  // A repeated ?q= arrives as an array; only a single string is a query.
+  const query = typeof req.query.q === 'string' ? req.query.q : '';
+  const type = typeof req.query.type === 'string' ? req.query.type : 'album';
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
 
   if (!query.trim()) {
     return res.json({ results: [] });

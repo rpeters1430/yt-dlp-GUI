@@ -151,6 +151,20 @@ test('a private/local URL is refused before anything is spawned', async () => {
   await assert.rejects(ytdlp.download('http://127.0.0.1/x', { jobId: 'local' }), /./);
 });
 
+test('a job removed during the pre-spawn DNS check never starts yt-dlp', async (t) => {
+  const controller = new AbortController();
+  const dns = require('dns').promises;
+  // Removal lands while the lookup is in flight, before any process is registered.
+  t.mock.method(dns, 'lookup', async () => {
+    controller.abort();
+    return [{ address: '93.184.216.34', family: 4 }];
+  });
+  process.env.FAKE_YTDLP = JSON.stringify({ steps: [{ out: 'FILEPATH /x/video.mp4' }] });
+  // The fake binary would succeed with this file had it been started.
+  await assert.rejects(ytdlp.download(URL, { jobId: 'removed-early', signal: controller.signal }), /aborted/);
+  assert.equal(ytdlp.stopDownload('removed-early'), false, 'nothing was registered');
+});
+
 test('a missing binary rejects instead of hanging', async () => {
   // Spawn errors arrive asynchronously; point at a path that doesn't exist via a fresh load.
   const { spawnSync } = require('child_process');

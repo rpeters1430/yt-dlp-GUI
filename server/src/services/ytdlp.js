@@ -164,18 +164,21 @@ function isPrivateOrLoopbackIp(host) {
     if (a === 172 && b >= 16 && b <= 31) return true;
     if (a === 192 && b === 168) return true;
     if (a === 169 && b === 254) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 (CGNAT, Tailscale)
     return false;
   }
-  // IPv4-mapped IPv6 ("::ffff:127.0.0.1", which URL normalises to "::ffff:7f00:1").
-  const mapped = host.match(/^(?:0*:)*:?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
-  if (mapped) {
-    const hi = parseInt(mapped[1], 16);
-    const lo = parseInt(mapped[2], 16);
+  // IPv6 forms that embed an IPv4 address, which URL normalises to two hex groups:
+  // IPv4-mapped "::ffff:127.0.0.1" -> "::ffff:7f00:1", the deprecated IPv4-compatible
+  // "::127.0.0.1" -> "::7f00:1", and NAT64 "64:ff9b::127.0.0.1" -> "64:ff9b::7f00:1".
+  const embedded = host.match(/^(?:(?:0*:)*:?ffff:|::|64:ff9b::)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (embedded) {
+    const hi = parseInt(embedded[1], 16);
+    const lo = parseInt(embedded[2], 16);
     return isPrivateOrLoopbackIp(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
   }
   if (host === '::1' || host === '::') return true;
   if (/^f[cd][0-9a-f]{2}:/i.test(host)) return true; // fc00::/7 (unique local)
-  if (/^fe80:/i.test(host)) return true; // link-local
+  if (/^fe[89ab][0-9a-f]:/i.test(host)) return true; // fe80::/10 (link-local)
   return false;
 }
 
@@ -795,6 +798,18 @@ function resolveDownloadOptions(url, options = {}) {
   return { options: resolved, adjustments, caps };
 }
 
+// A trim range as yt-dlp's --download-sections time form ("*start-end"), '' when none was
+// given, or null when it isn't a time range. The leading "*" matters: without it yt-dlp
+// reads the value as a chapter-title regex instead of a time range.
+function normalizeDownloadSection(value) {
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value !== 'string') return null;
+  const raw = value.trim();
+  if (!raw) return '';
+  if (!/^(\*?[0-9:.]+-[0-9:.]+|\*?[0-9:.]+-inf)$/i.test(raw)) return null;
+  return raw.startsWith('*') ? raw : `*${raw}`;
+}
+
 const CONCURRENT_FRAGMENTS = Math.max(1, Math.min(16, parseInt(process.env.CONCURRENT_FRAGMENTS || '4', 10) || 1));
 
 function buildDownloadArgs(url, rawOptions = {}) {
@@ -916,7 +931,9 @@ function buildDownloadArgs(url, rawOptions = {}) {
       args.push('--hls-use-mpegts');
     }
     if (options.waitForLive) {
-      const waitInterval = parseInt(options.waitInterval || '15', 10);
+      // A zero, negative or non-numeric interval makes yt-dlp reject the whole command.
+      const parsedInterval = parseInt(options.waitInterval, 10);
+      const waitInterval = Number.isFinite(parsedInterval) && parsedInterval > 0 ? Math.min(parsedInterval, 3600) : 15;
       args.push('--wait-for-video', String(waitInterval));
     }
     // Joining a broadcast that's already in progress normally starts recording from the
@@ -1282,8 +1299,12 @@ function getDownloadIdleTimeoutMs(url, options = {}, timeouts = {}) {
 async function download(url, options = {}, onProgress, onLog) {
   // Queue items may wait before starting, so validate DNS again at dispatch time.
   await assertPublicUrlResolved(url);
+  // The job can be removed while the DNS check above runs. No process is registered yet, so
+  // stopDownload() can't reach it: without this check yt-dlp would start for a deleted job.
+  if (options.signal?.aborted) throw new Error('Download aborted by user');
   nasProcessing.prepareWorkDirectory(options.outputTemplate || `${VIDEO_DIR}/${DEFAULT_OUTPUT_TEMPLATE}`, options);
   const coordinator = nasProcessing.enabled() ? await processingGate.listen() : null;
+  if (options.signal?.aborted) throw new Error('Download aborted by user');
   const args = buildDownloadArgs(url, options);
   const commandStr = formatCommand(YTDLP_BIN, args);
   const jobId = options.jobId ? `job:${options.jobId}` : 'download';
@@ -1696,6 +1717,7 @@ module.exports = {
   searchYouTube,
   download,
   buildDownloadArgs,
+  normalizeDownloadSection,
   buildFormatSelector,
   resolveDownloadOptions,
   expectedOutputExt,

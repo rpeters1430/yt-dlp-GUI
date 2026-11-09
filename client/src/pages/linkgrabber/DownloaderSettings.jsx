@@ -59,7 +59,7 @@ export default function DownloaderSettings({ onClose }) {
     setSolverTestStatus(null);
     try {
       await api.updateLinkGrabberSettings({ solverUrl: solverUrl.trim() });
-      const res = await api.testSolver(solverUrl.trim());
+      const res = await api.testSolver();
       setSolverTestStatus(res);
     } catch (err) {
       setSolverTestStatus({ ok: false, message: err.message });

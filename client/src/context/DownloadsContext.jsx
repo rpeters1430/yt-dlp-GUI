@@ -38,6 +38,14 @@ function applyUpdate(prev, job) {
   return pruneFinished(next);
 }
 
+function byQueueOrder(a, b) {
+  const byPriority = (b.priority || 0) - (a.priority || 0);
+  if (byPriority) return byPriority;
+  const ta = a.created_at || '';
+  const tb = b.created_at || '';
+  return ta < tb ? -1 : ta > tb ? 1 : 0;
+}
+
 function countStatuses(jobs) {
   const counts = { queued: 0, downloading: 0, completed: 0, failed: 0 };
   for (const j of jobs) counts[j.status] = (counts[j.status] || 0) + 1;
@@ -170,7 +178,9 @@ export function DownloadsProvider({ children, isAuthenticated }) {
     [jobs]
   );
   const queuedJobs = useMemo(
-    () => jobs.filter((j) => j.status === 'queued').slice().sort((a, b) => (b.priority || 0) - (a.priority || 0)),
+    // The order the server starts them in: highest priority first, then oldest first. The
+    // job list itself is newest first, so priority alone showed ties in reverse.
+    () => jobs.filter((j) => j.status === 'queued').slice().sort(byQueueOrder),
     [jobs]
   );
 

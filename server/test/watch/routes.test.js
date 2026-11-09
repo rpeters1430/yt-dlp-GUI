@@ -176,3 +176,27 @@ test('a watch cannot be deleted or reset while it is being checked', async (t) =
   assert.equal((await call('DELETE', `/${id}`)).status, 200);
   assert.equal(s.db.prepare('SELECT COUNT(*) AS n FROM watch_items').get().n, 0);
 });
+
+test('blank, zero or negative numbers keep sensible watch limits instead of NULL or negatives', async (t) => {
+  const { s, call } = await startApp(t);
+  const id = s.addWatch();
+  const before = s.db.prepare('SELECT check_interval_mins, download_limit, max_scan_entries FROM watches WHERE id = ?').get(id);
+  const res = await call('PUT', `/${id}`, { checkIntervalMins: '', downloadLimit: -3, maxScanEntries: 'abc', minDuration: -10, maxDuration: '' });
+  assert.equal(res.status, 200);
+  const row = s.db.prepare('SELECT check_interval_mins, download_limit, max_scan_entries, min_duration, max_duration FROM watches WHERE id = ?').get(id);
+  assert.equal(row.check_interval_mins, before.check_interval_mins || 30);
+  assert.equal(row.download_limit, before.download_limit || 5);
+  assert.equal(row.max_scan_entries, before.max_scan_entries || 30);
+  assert.equal(row.min_duration, null);
+  assert.equal(row.max_duration, null);
+
+  await call('PUT', `/${id}`, { checkIntervalMins: 120, downloadLimit: '7' });
+  const updated = s.db.prepare('SELECT check_interval_mins, download_limit FROM watches WHERE id = ?').get(id);
+  assert.deepEqual({ ...updated }, { check_interval_mins: 120, download_limit: 7 });
+
+  const created = await call('POST', '/', { url: 'https://www.youtube.com/@y', checkIntervalMins: -1, downloadLimit: 0 });
+  assert.equal(created.status, 200);
+  assert.equal(created.body.check_interval_mins, 30);
+  assert.equal(created.body.download_limit, 5);
+  await settle();
+});
