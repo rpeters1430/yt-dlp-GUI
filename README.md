@@ -9,24 +9,26 @@
   <img src="https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue?style=flat-square&logo=docker" alt="Platforms">
   <img src="https://img.shields.io/badge/image-ghcr.io%2Frpeters1430%2Fyt--dlp--gui-informational?style=flat-square&logo=github" alt="Docker Image">
   <img src="https://img.shields.io/badge/status-active%20development-emerald?style=flat-square" alt="Project Status">
-  <img src="https://img.shields.io/badge/tests-212%20passing-success?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-212%2B%20passing-success?style=flat-square" alt="Tests">
   <img src="https://img.shields.io/badge/code%20style-eslint%20clean-blueviolet?style=flat-square" alt="ESLint">
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License">
 </p>
 
 <p align="center">
-  A self-hosted web app for downloading video and audio from <b>any site <a href="https://github.com/yt-dlp/yt-dlp">yt-dlp</a> supports</b> — YouTube, Vimeo, Twitter/X, TikTok, Reddit, SoundCloud, Twitch, Bandcamp, and hundreds more.
-  <br>
-  Paste URLs, monitor real-time WebSocket progress, manage an in-browser media library, record live streams, organize high-fidelity music releases, and automatically follow channel uploads and playlists.
+  A high-density, cyberpunk-styled self-hosted web control deck for downloading, organizing, and streaming video and audio with <b><a href="https://github.com/yt-dlp/yt-dlp">yt-dlp</a></b> — YouTube, Twitch, TikTok, Vimeo, Twitter/X, Reddit, SoundCloud, Bandcamp, Bunkr, and hundreds more.
+  <br><br>
+  Equipped with a tactile <b>Cyber-Industrial Control Deck</b> UI, real-time WebSocket telemetry, standalone <b>MusicBrainz tagging & acoustic fingerprinting</b>, full <b>Lidarr bridge</b> automation, deep <b>forum link grabbing</b>, <b>Solverr MITM challenge proxy</b> routing, and <b>NAS post-processing optimization</b>.
 </p>
 
 <p align="center">
   <a href="#quick-start-docker-compose"><b>🚀 Quick Start</b></a> •
-  <a href="#project-status--roadmap"><b>📊 Project Status</b></a> •
+  <a href="#cyber-industrial-control-deck--ui-styles"><b>🎨 UI Styles & Design System</b></a> •
   <a href="#features"><b>✨ Features</b></a> •
-  <a href="#music-hub--lidarr-integration"><b>🎵 Music & Lidarr</b></a> •
-  <a href="#live-streams--twitch-hub"><b>🔴 Live Streams</b></a> •
-  <a href="#architecture"><b>🏗️ Architecture</b></a> •
+  <a href="#project-status--roadmap"><b>📊 Project Status</b></a> •
+  <a href="#music-hub--metadata-tagging"><b>🎵 Music Hub</b></a> •
+  <a href="#link-grabber-and-forum-crawler"><b>🕷️ Link Grabber</b></a> •
+  <a href="#solverr-forward-proxy"><b>🛡️ Solverr Proxy</b></a> •
+  <a href="#nas-post-processing-optimizer"><b>⚡ NAS Optimization</b></a> •
   <a href="#configuration"><b>⚙️ Config</b></a>
 </p>
 
@@ -38,281 +40,253 @@
 
 ---
 
+## 🎨 Cyber-Industrial Control Deck & UI Styles
+
+yt-dlp GUI features a purpose-built **Cyber-Industrial Control Deck** (*Night City Terminal*) interface. It pairs the density and tactile rigor of professional audio and broadcast workstations with the crisp precision of modern developer tools.
+
+```
++-----------------------------------------------------------------------------------+
+|  // COMMAND CENTER                                                                |
+|  +-------------------------------------------------------------+-------+-------+  |
+|  | [Link Icon] Paste links: YouTube, Twitch, Bunkr, 1,700+... | Paste | ANALYZE |  |
+|  +-------------------------------------------------------------+-------+-------+  |
+|     (•) 2 active   ( ) 4 waiting   (✓) 1,420 done   (⚠) 2 failed                  |
++-----------------------------------------------------------------------------------+
+```
+
+### 1. 4-Tier Dark Depth Architecture
+The UI eliminates generic flat gray containers in favor of deep obsidian surfaces with subtle violet undertones, separated by laser-etched 1px micro-borders:
+
+| Design Token | Hex Value | Role & Applied Elements |
+| :--- | :--- | :--- |
+| `--bg` | `#06050b` | Base ground (deep void black with faint violet undertone) |
+| `--rail` | `#090812` | Navigation rail & persistent shell backdrop |
+| `--bg-elevated` | `#0d0c18` | Panels, staging tray backdrop, drawer canvas (*Surface 1*) |
+| `--surface` | `#131126` | Active cards, input interiors, dialog bodies (*Surface 2*) |
+| `--surface-hover` | `#1b1736` | Card hover elevations, selected nav items, active chips (*Surface 3*) |
+| `--surface-active`| `#241f48` | Pressed buttons, raised segments, active toggles |
+| `--border` | `#1f1b3d` | Subtle dividers, card outlines |
+| `--border-strong` | `#352f66` | Focused elements, active chip outlines, panel rims |
+| `--border-active` | `#5c52a8` | Focused inputs, highlighted cards, modal borders |
+
+### 2. Targeted Semantic Neon Signaling
+Neon accents are applied in strictly targeted doses for instant cognitive status recognition:
+- **`--neon-cyan` (`#00f0ff`) — Action & Telemetry**: Primary buttons, active tabs, yt-dlp analyzing radar beam, active filter chips, download progress fill bar.
+- **`--neon-magenta` (`#ff2a6d`) — Live & Broadcast**: Pulsing live broadcast beacons (`● LIVE`), recording indicators, destructive actions (cancel / delete), error badges.
+- **`--neon-green` (`#39ff9c`) — Success & Audio**: Completed downloads, online host indicators, Music mode highlights, Lidarr verified tags.
+- **`--neon-yellow` (`#f5ed00`) — Caution & Offline**: Duplicate link alerts, paused queue state, Cloudflare challenge notifications, offline host checks.
+- **`--neon-violet` (`#b98cff`) — Streamer & Feeds**: Twitch channel monitoring, custom watch tags, forum post archive passwords.
+
+### 3. Display Density & Retro Scanlines
+Configurable in **Settings → Appearance**:
+- **Display Density**: Switch between **Cozy** (default breathing room) and **Compact** (tighter row spacing for viewing maximum downloads, watch items, and crawl results).
+- **CRT Scanlines**: Toggle a retro full-screen CRT scanline texture (`data-scanlines="on"` / `off`) over the control deck.
+
+### 4. Tactile Command Omnibar & Hotkeys
+- **Chamfered 45° Cut Corners**: Styled with modern CSS `corner-shape: angle` for an authentic hardware terminal look.
+- **Pulsing Laser Glow**: Deep matte black interior (`#04030a`) that pulses with a cyan border glow when focused.
+- **Instant Clipboard Paste**: Quick-action **Paste** button with keyboard shortcut (`⌘V` / `Ctrl+V`), `Enter` to analyze, and `Esc` to clear.
+- **Auto-Analyze**: Automatically inspects links immediately when pasted from clipboard (configurable in Settings).
+
+### 5. Hero Telemetry Module (Now Downloading)
+- **Dual-Column Cockpit**: Left pane features high-resolution artwork, a glowing cyan progress bar, smoothed download speeds, and dynamic ETA countdowns. The right pane provides a live terminal showing real-time yt-dlp/ffmpeg stage progress.
+- **Moving-Average Smoothing**: Filters out bursty connection jitter to render readable, stable transfer speeds (`MB/s`) and accurate ETAs.
+- **Persisted Stage Timing**: Shows real elapsed time across post-processing stages (`Merging formats...`, `Embedding subtitles...`), surviving browser refreshes and reconnects.
+
+### 6. Responsive Adaptive Navigation
+- **Desktop (1024px+)**: Collapsible left navigation rail (64px icon rail or 220px expanded with labels) with centered max-width workspace canvas.
+- **Mobile & Tablet (<1024px)**: Persistent bottom Cyber TabBar (54px height) with touch-optimized 44px tap targets.
+- **Progressive Web App (PWA)**: Installable standalone app on desktop (Chrome, Edge) and mobile (Android, iOS Safari) with instant launch, custom shortcuts, and Android Web Share target integration.
+
+---
+
 ## 📊 Project Status & Roadmap
 
 > [!NOTE]
 > **Current Release:** `v1.0.0` (Active Production & Feature Development)  
-> Container image builds are automatically published to GitHub Container Registry (`ghcr.io/rpeters1430/yt-dlp-gui:latest`) on every merge to `main`.
+> Multi-arch container images (`amd64` / `arm64`) are automatically published to GitHub Container Registry (`ghcr.io/rpeters1430/yt-dlp-gui:latest`) on every merge to `main`.
 
-Each GitHub Actions image build checks the official upstream releases for the
-latest **yt-dlp nightly** and **FFmpeg autobuild**. It resolves both tools once,
-uses the same versions for amd64 and arm64, and verifies their SHA256 hashes.
-New versions invalidate the relevant Docker layers automatically. Runtime smoke
-tests and vulnerability scans must pass before the image is published.
-
-The Actions summary records the selected releases. Their URLs and checksums are
-also saved inside the image at
-`/usr/local/share/yt-dlp-gui/tool-versions.json`. Existing tools stored in your
-`/config` volume can still take precedence according to the app's settings.
-
-For a local build that checks upstream again even when Docker layers are cached:
-
-```bash
-docker buildx build --no-cache-filter tool-versions --load -t yt-dlp-gui:local .
-# Or refresh all layers when building with Compose:
-docker compose build --no-cache
-```
-
-This checks for tool updates whenever an image is built; it does not schedule
-additional image builds. The app's existing overnight tool updates still apply.
+Each GitHub Actions image build checks official upstream releases for the latest **yt-dlp nightly** and **FFmpeg autobuild**. Upstream tools are resolved, verified against SHA256 checksums, and baked into the image. Image metadata and checksums are recorded in `/usr/local/share/yt-dlp-gui/tool-versions.json`.
 
 ### Component Status Matrix
 
 | Module | Status | Highlights |
 |---|---|---|
-| **Core Queue & Downloader** | 🟢 Production Ready | Concurrent queue, watchdog timers, delta socket logs, audio drift correction |
-| **Music Hub & Audio Engine** | 🟢 Production Ready | OPUS bitstream copy (~160kbps), 320k MP3, M4A, FLAC, auto-tagging & cover art |
-| **Lidarr Torznab & Download Bridge** | 🟢 Production Ready | Torznab indexer (`/api/lidarr/torznab`), qBit/SAB emulation, missing album browser, auto-import sync |
+| **Cyber-Industrial UI** | 🟢 Production Ready | 4-tier dark depth, semantic neon signaling, CRT scanlines, Cozy/Compact density, PWA installable |
+| **Core Queue & Downloader** | 🟢 Production Ready | Concurrent queue, watchdog timers, delta socket logs, audio drift correction, smoothed speed & ETA |
+| **Music Hub & Standalone Tagging** | 🟢 Production Ready | MusicBrainz search, Cover Art Archive, Chromaprint / AcoustID fingerprinting, Apple catalog, selective tag reviews |
+| **Lidarr Bridge & Indexer** | 🟢 Production Ready | Torznab indexer (`/api/lidarr/torznab`), qBit/SAB emulation, wanted album browser, auto-import sync |
+| **Link Grabber & Forum Crawler** | 🟢 Production Ready | XenForo thread-aware crawling, multi-select host chips, grouped post archive passwords, JDownloader/aria2 hand-off |
+| **Solverr MITM Forward Proxy** | 🟢 Production Ready | Transparent Cloudflare challenge bypass for crawler, link checks, and yt-dlp with auto CA trust installation |
+| **NAS Post-Processing Optimizer** | 🟢 Production Ready | In-flight stream merge, dedicated post-processor gate, SSD work directory, persisted stage timing |
 | **Watches (Channel Feeds)** | 🟢 Production Ready | Multi-tab discovery (Videos, Shorts, Live), baseline checks, regex filtering, retry backoff |
-| **Live Stream Recorder** | 🟢 Production Ready | YouTube, Twitch, TikTok Live, MPEG-TS HLS chunking, graceful finalization, manual split |
-| **Library & Streaming Player** | 🟢 Production Ready | In-browser seeking with HTTP range requests, `.nfo` & poster generation, file protector |
+| **Live Stream Recorder** | 🟢 Production Ready | YouTube, Twitch, TikTok Live auto-record, MPEG-TS HLS chunking, graceful finalization, manual split |
+| **Library & Streaming Player** | 🟢 Production Ready | In-browser seeking with HTTP range requests, `.nfo` & poster generation, file protection guard |
 | **Media Server Integration** | 🟢 Production Ready | Jellyfin playlist sync & watched status, Plex library scans & watched auto-delete |
 | **Test & Code Quality** | 🟢 212+ Tests Passing | ESLint clean across client and server, modular Express app (`src/app.js`), lazy-loaded client routes |
-
-### Recent Milestones & Improvements
-- **🎵 Full Lidarr Integration**:
-  - Implemented Torznab RSS 2.0 indexer (`t=caps`, `t=music`, `t=search`) with audio categories (`3000`, `3010`, `3020`, `3040`).
-  - Added qBittorrent v2 and SABnzbd Web API emulation with deterministic infohashes and on-demand `.torrent` generation.
-  - Direct UI browsing of Lidarr **Wanted / Missing Albums** with one-click queueing and automated `DownloadedAlbumsScan` triggers.
-  - Configurable download paths and cross-platform Docker path normalization.
-- **🔴 Resilient Live Stream Handling**:
-  - Automatically recognizes when streams finish and gracefully completes finalization without killing active remux processes.
-  - User-directed chunk splitting when manually stopping live recordings.
-  - Real-time elapsed time counter and pulsing indicator for active streams.
-- **⚡ Performance & Socket Optimization**:
-  - Progress updates stream full logs only on delta changes (≤1/s per job), drastically reducing network chatter.
-  - Server-side history searching, status filtering, and pagination.
-  - Client-side code splitting with lazy-loaded page routes (initial JS bundle trimmed down to 393 kB).
-- **🔊 Audio & Remux Fixes**:
-  - Resolved audio sync drift on variable-framerate streams and complex multi-stream remuxes.
-- **🧪 Test Suite & Refactor**:
-  - Expanded test suite from 146 to 212+ automated tests covering queue lifecycle, mock yt-dlp execution, auto-delete, sessions, and notification delivery.
-  - Modularized `ytdlp.js` into focused modules (`ytdlpPaths.js`, `ytdlpCookies.js`, `ytdlpTools.js`).
-
-### Active Backlog & Next Up
-- [ ] Non-Watch failed download retry button (`POST /api/downloads/:id/retry`) and bulk queue actions ("Retry all", "Clear completed").
-- [ ] Pause / resume and drag-and-drop queue reordering.
-- [ ] Dynamic concurrency control adjustable directly in the Settings UI without restart.
-- [ ] Automatic duplicate detection for re-submitted video URLs or IDs.
-- [ ] Vitest + React Testing Library frontend test suite.
-- [ ] Ultra-compact phone layout audit for 360px–400px viewports.
 
 ---
 
 ## Contents
 
-- [Features](#features)
-  - [Downloading & Queue](#downloading)
-  - [Library & Browser Player](#library)
-  - [Watches (Auto-download Feeds)](#watches-auto-download-new-uploads)
-  - [Auto-delete & Housekeeping](#auto-delete)
-  - [Live Streams & Twitch Hub](#live-streams)
-  - [Music Hub & Lidarr Integration](#music-hub--music-watcher)
-  - [Link Grabber & Forum Crawler](#link-grabber--forum-crawler)
+- [🎨 Cyber-Industrial Control Deck & UI Styles](#cyber-industrial-control-deck--ui-styles)
+- [📊 Project Status & Roadmap](#project-status--roadmap)
+- [✨ Features](#features)
+  - [Downloading & Queue Engine](#downloading--queue-engine)
+  - [Cyber-Industrial UI & PWA](#cyber-industrial-ui--pwa)
+  - [Music Hub & Metadata Tagging](#music-hub--metadata-tagging)
+  - [Lidarr Integration](#lidarr-integration)
+  - [Live Streams & Twitch Hub](#live-streams--twitch-hub)
+  - [Link Grabber & Forum Crawler](#link-grabber-and-forum-crawler)
+  - [Solverr Forward Proxy](#solverr-forward-proxy)
+  - [NAS Post-Processing Optimizer](#nas-post-processing-optimizer)
+  - [Library & Browser Media Player](#library--browser-media-player)
+  - [Watches (Channel & Playlist Feeds)](#watches-channel--playlist-feeds)
+  - [Auto-Delete & Housekeeping](#auto-delete--housekeeping)
+  - [Media Server Sync (Jellyfin & Plex)](#media-server-integration-jellyfin--plex)
   - [Notifications](#notifications)
-  - [Media Server Sync (Jellyfin & Plex)](#jellyfin-playlist-sync)
-- [Quick start (Docker Compose)](#quick-start-docker-compose)
-- [Updating](#updating)
-- [Configuration](#configuration)
-- [File naming](#file-naming)
-- [Notifications](#notifications)
-- [Site cookies](#site-cookies-youtube-twitch-and-others)
-- [Solverr proxy](#solverr-proxy)
-- [Jellyfin integration](#jellyfin-integration)
-- [Plex integration](#plex-integration)
-- [Lidarr integration](#lidarr-integration)
-- [Link Grabber & forum crawler](#link-grabber-and-forum-crawler)
-- [Scheduled tasks](#scheduled-tasks)
-- [Where your data lives](#where-your-data-lives)
-- [Security notes](#security-notes)
-- [Troubleshooting](#troubleshooting)
-- [Local development](#local-development-without-docker)
-- [Architecture](#architecture)
-- [Automatic image builds](#automatic-image-builds)
+  - [Tooling & Multi-JS Engine](#tooling--multi-js-engine)
+- [🚀 Quick Start (Docker Compose)](#quick-start-docker-compose)
+- [⚙️ Configuration](#configuration)
+  - [Core Settings](#core-settings)
+  - [NAS Post-Processing](#nas-post-processing)
+  - [Solverr Proxy](#solverr-proxy-variables)
+  - [Timeouts & Watchdogs](#timeouts--watchdogs)
+  - [Binaries & Update Schedules](#binaries--update-schedules)
+- [📁 File Naming & Output Templates](#file-naming--output-templates)
+- [🏗️ System Architecture](#system-architecture)
+- [🔒 Security Notes](#security-notes)
+- [🔧 Troubleshooting](#troubleshooting)
+- [💻 Local Development](#local-development)
+- [🙏 Acknowledgements](#acknowledgements)
 
 ---
 
 ## Features
 
-### Downloading
-- Paste one or many URLs at once; jobs are queued with configurable concurrency
-- Pause or resume the queue, move a queued download to the front, and prioritize manual downloads ahead of Watch backfills
-- Live progress bars over WebSocket (percent, speed, ETA)
-- Format picker, audio-only (MP3), timestamp/chapter trimming, subtitles, embedded thumbnail/metadata/chapters, and SponsorBlock auto-remove
-- Optional per-download bandwidth caps and jittered delays to reduce network saturation and rate limits
-- Download history with thumbnails, file paths, and the exact yt-dlp command and log for every job
-- Customizable filename/folder layout — pick a preset or write your own yt-dlp template, globally or per Watch (see [File naming](#file-naming))
-- Writes a Kodi/Jellyfin/Emby-compatible `.nfo` + poster image next to every download so titles, descriptions, and artwork scrape reliably (toggle in Settings)
+### Downloading & Queue Engine
+- **Universal Downloader**: Paste one or multiple URLs at once from YouTube, Twitch, TikTok, Vimeo, Twitter/X, Reddit, SoundCloud, Bunkr, and hundreds of yt-dlp supported sites.
+- **Concurrent Queue Management**: Configurable concurrency slots with real-time pause/resume, front-of-queue priority bumping, and manual job prioritization ahead of Watch backfills.
+- **Real-Time WebSocket Telemetry**: Live progress percentage, moving-average smoothed download speeds, and dynamic ETA countdowns without jitter.
+- **Granular Format Picker**: Choose specific video/audio stream resolutions, containers, subtitle languages, chapter embeddings, and audio extraction options (OPUS, FLAC, MP3, M4A).
+- **SponsorBlock Integration**: Automatically remove sponsor segments, intros, outros, or self-promotions from downloads.
+- **Bandwidth Caps & Jitter**: Optional per-download transfer rate limits and randomized request delays to avoid network saturation and host rate limits.
+- **Complete Job Audit**: View full yt-dlp execution commands, environment parameters, and real-time streaming logs for every job in history.
+- **Kodi / Jellyfin / Plex Metadata**: Generates `.nfo` metadata and poster artwork alongside downloads for seamless scraping.
 
-### Library
-- **In-browser media center**: Browse all downloaded media in a responsive grid with instant search, category filters, and sorting.
-- **Direct browser playback**: Stream video and audio files directly in the browser with seeking (HTTP range requests) — no external media server needed.
-- **File management**: One-click local device download, file deletion protection, or clean removal (including accompanying `.nfo`, subtitles, and posters).
-- **Health tracking**: Automatically detects files moved or deleted outside the application.
+### Cyber-Industrial UI & PWA
+- **Control Deck Styling**: High-contrast, obsidian dark cyberpunk aesthetic with purposeful semantic neon signaling (Cyan, Magenta, Green, Yellow, Violet).
+- **Tactile Command Omnibar**: Floating input with chamfered 45° cut corners, glowing laser borders, clipboard paste shortcuts (`⌘V` / `Ctrl+V`), and automatic metadata analysis.
+- **Dual Density Modes**: Segmented toggle between **Cozy** and **Compact** density in Appearance settings.
+- **CRT Scanlines**: Optional retro CRT monitor overlay texture (`data-scanlines="on"`).
+- **Progressive Web App (PWA)**:
+  - Installable on desktop (Chrome, Edge) and mobile (Android, iOS Safari).
+  - Dedicated window, app icon, and launch shortcuts directly into History, Watches, and Library.
+  - Service worker caching for instant app shell startup.
+  - **Android Web Share Target**: Share video and audio URLs directly from mobile browser or YouTube/Twitch apps into yt-dlp GUI.
 
-### Watches (Auto-download new uploads)
-- **Automated polling**: Point a Watch at a playlist or channel URL; it automatically checks for new uploads on a schedule (default: 30 minutes).
-- **Channel tab support**: YouTube channel URLs (`youtube.com/@name`) can individually track **Videos**, **Shorts**, and **Live streams**.
-- **Smart baselines**: Discovered videos are baselined on creation so you aren't flooded with old uploads, with optional backfill of the latest $N$ uploads (or all existing up to 5,000).
-- **Regex title filters**: Include and exclude regular expression matching with in-browser regex testing before saving.
-- **Automatic retry with exponential backoff**: Failed items retry up to four times (15m, 1h, 6h) before pausing.
-- **Audit ledger**: Comprehensive **Activity** tab displaying the exact scan history and disposition of every cataloged video.
-
-### Auto-delete
-- Optionally clean up Watch-downloaded videos: delete after N days, once watched in Jellyfin, or both
-- Runs nightly, with a dry-run preview and a "run now" button
-- Safety guards: per-video protect, per-Watch exemption, and "always keep newest N"
-- Optional free-space guard: run cleanup and pause new Watch queueing below a configured disk threshold
-
-### Queue and failure recovery
-- Pause queued work while active downloads finish; resume whenever you're ready
-- Promote a queued download to the front of the queue
-- Filter failed jobs by likely cause (network, bot check, authentication, or unavailable) and retry only matching or transient failures
-
-### Install as an app (PWA)
-- Install it from the browser (Chrome/Edge: the install icon in the address bar; Android: **Add to Home screen**; iOS Safari: **Share → Add to Home Screen**) to get its own window, icon and app shortcuts to History, Watches and Library
-- Installing needs HTTPS (or `localhost`): put the app behind a reverse proxy with a certificate if you reach it by IP or hostname
-- A service worker caches the app shell, so it opens without a connection; downloads and the API always go to the server
-
-### Mobile sharing
-- Once installed on Android, share links to it from other apps, or use the bookmarklet in Settings → Downloads
-
-### Live streams
-- **YouTube and any other yt-dlp live extractor** — a URL that's currently live is detected automatically in the Analyze modal
-- Join at the live edge, or record the whole broadcast from the start (`--live-from-start`)
-- Scheduled streams that haven't started yet can be waited on and recorded the moment they go live (`--wait-for-video`)
-- **TikTok Live** — paste a `tiktok.com/@user/live` link; if they're offline, queue **Wait & Auto-Record** and recording starts the next time they go live (also works for offline Twitch channels)
-- Recordings use MPEG-TS-safe HLS segments (`--hls-use-mpegts`), so the file stays playable even if interrupted
-- Live jobs show a pulsing **LIVE** badge and elapsed time, with a one-click **Stop Recording** that keeps everything captured so far
-
-### Twitch hub
-- Record a live channel, including auto-record when it goes live
-- Browse and download a channel's VODs
-- Trim a VOD or clip to a time range
-- Track active recordings in real time
-
-### Music Hub & Music Watcher
-- Search and discover albums, artists, and tracks with high-resolution artwork and 30-second audio previews.
-- Auto-match YouTube audio streams and transcode to **OPUS** (highest quality native bitstream copy, ~160 kbps VBR), **MP3** (up to 320 kbps CBR), **M4A (AAC)**, or **FLAC**.
-- Full ID3/Vorbis metadata embedding with track numbers and cover art.
-- Structured filesystem layout: `{MusicFolder}/{Artist}/{Album}/{TrackNumber} - {Title}.{ext}`.
-- Dedicated Music Watches to track artist releases and discographies.
+### Music Hub & Metadata Tagging
+- **Standalone Tagging & Import**: Tag, review, and organize audio releases directly in the web UI without needing Lidarr.
+- **MusicBrainz & Cover Art Archive**: Automatic metadata retrieval for tracks, albums, release dates, and high-resolution cover artwork.
+- **Acoustic Fingerprinting (Chromaprint / AcoustID)**: Identify unknown or misnamed audio files using audio waveform fingerprinting (`fpcalc`).
+- **Apple Music / iTunes Catalog Search**: Search and match releases across worldwide Apple Music catalogs with country storefront selection.
+- **Interactive Library Review**: Inspect tags across your existing music library with selective field updates and tag clearing (supports MP3/ID3, FLAC, Ogg Vorbis, and Opus).
+- **High-Fidelity Audio Formats**: Native bitstream OPUS copy (~160 kbps VBR), 320 kbps CBR MP3, FLAC, and AAC M4A.
+- **Structured Storage Layout**: `{MusicFolder}/{Artist}/{Album}/{TrackNumber} - {Title}.{ext}`.
 
 ### Lidarr Integration
-- **Torznab Indexer (`/api/lidarr/torznab`)**: Emulates a Torznab RSS indexer with full music categories and deterministic torrent infohashes.
-- **Download Client Bridge (`/api/lidarr/qbit` & `/api/lidarr/sab`)**: Emulates qBittorrent v2 or SABnzbd API endpoints for seamless handoff to Lidarr's Completed Download Handling.
-- **Wanted Albums Browser**: Direct UI interface within the Music page to browse Lidarr's wanted missing albums and grab them with one click.
-- **Automatic Library Rescan**: Automatically commands Lidarr to run `DownloadedAlbumsScan` upon job completion.
+- **Torznab RSS 2.0 Indexer (`/api/lidarr/torznab`)**: Functions as a native Lidarr indexer with audio categories (`3000`, `3010`, `3020`, `3040`) and deterministic torrent infohashes.
+- **Download Client Emulation (`/api/lidarr/qbit` & `/api/lidarr/sab`)**: Emulates qBittorrent v2 or SABnzbd API endpoints for seamless handoff to Lidarr's Completed Download Handling.
+- **Wanted Albums Browser**: Browse Lidarr's missing and wanted albums directly in the Music UI and queue them with a single click.
+- **Automatic Library Rescan**: Triggers Lidarr's `DownloadedAlbumsScan` immediately upon audio job completion.
 
-### Link Grabber & Forum Crawler
-- **Links page**: Crawl a forum thread or any page and list every download link it contains, grouped by host, with filters and search.
-- **Thread-aware**: XenForo threads (SimpCity and similar) can be crawled whole, by page range, or just the last N pages; quoted replies and mirror-bot reposts are skipped and Base64-hidden links decoded.
-- **Post by post**: Each link shows who posted it and links back to the post; group the list by post, and see the archive password given in that post.
-- **Background crawls**: A crawl runs on the server with live progress and a Cancel button, and the last 50 are kept under **Recent crawls** to reopen.
-- **Link checks**: See whether links still work before sending them, with file name and size from Pixeldrain, MEGA and direct file links.
-- **Thread watches**: Re-crawl a thread's newest pages on a schedule and send the links you haven't had yet to JDownloader, the queue or aria2, with a notification.
-- **Your choice of hand-off**: Copy the selected links, queue them here with yt-dlp, or send them to JDownloader (Click'n'Load) or aria2. Nothing is sent until you click **Send**.
-- **History**: Links you've already sent or copied are marked, even through a host's mirror domains (bunkr.si and bunkr.fi count as one), so re-crawling an active thread highlights only what's new.
-- **Command-line crawler** (`crawler/`): The same crawl from a terminal through the app, printing a plain list of links to copy (see [below](#link-grabber-and-forum-crawler)).
+### Live Streams & Twitch Hub
+- **Universal Live Detection**: Automatically recognizes live broadcasts from YouTube, Twitch, TikTok Live, and other supported extractors.
+- **Wait & Auto-Record**: Queue streams that have not yet started or offline channels (e.g. `tiktok.com/@user/live` or Twitch channels); recording begins automatically the moment they go live.
+- **Stream Edge or From Start**: Join at the current live edge or record from the beginning (`--live-from-start`).
+- **Resilient HLS Chunking**: Records using MPEG-TS HLS chunks (`--hls-use-mpegts`) ensuring captures remain valid and playable even if abruptly interrupted.
+- **Graceful Split & Stop**: Stop recordings without remux corruption, with optional user-directed chunk splitting.
+- **Twitch VOD Browser & Trimmer**: Browse channel VODs and clips with precision time-range trimming before download.
+
+### Link Grabber and Forum Crawler
+- **Deep Forum Crawling**: Crawl forum threads (XenForo like SimpCity and others) across single pages, page ranges, the last $N$ pages, or whole threads.
+- **Post-by-Post Intelligence**: Automatically extracts post author, avatar, thread page number, post ID, and archive passwords (`#password`) with one-click copy.
+- **Multi-Select Host Chips**: Filter extracted links with interactive multi-select chips displaying live host counters (`Bunkr`, `Gofile`, `Pixeldrain`, `Mega`, etc.).
+- **Content Cleaning**: Skips quoted replies, signatures, and mirror-bot reposts while automatically decoding Base64-hidden links.
+- **Multi-Target Dispatch Bar**:
+  - Send selected links directly to **JDownloader** (Click'n'Load) with package-per-page naming and embedded archive passwords.
+  - Queue directly into **yt-dlp GUI** download queue.
+  - Dispatch to **aria2** RPC.
+  - Copy clean link lists to clipboard.
+- **Link Availability Checks**: Tests links through host APIs (Pixeldrain, Mega, direct headers) to display **Online** / **Offline** status, file names, and byte sizes.
+- **Scheduled Thread Watches**: Automatically monitors active forum threads on a recurring schedule (every 30m to 24h), filtering duplicates across mirror domains (e.g., `bunkr.si` and `bunkr.fi`).
+- **Python CLI Crawler (`crawler/crawler.py`)**: Execute terminal-based forum crawls utilizing the app's saved cookies, downloader configurations, and history ledger.
+
+### Solverr Forward Proxy
+- **Transparent Challenge Solving**: Routes crawler page fetches, link availability checks, and yt-dlp media downloads through an authenticated [Solverr](https://github.com/rpeters1430/solverr) MITM forward proxy.
+- **Bypasses Cloudflare & Bot Barriers**: Solves Cloudflare Turnstile, JavaScript challenges, and anti-bot verification transparently.
+- **Automatic CA Trust Store Integration**: Container entrypoint downloads and installs Solverr's CA certificate with SHA-256 fingerprint verification (`SOLVERR_PROXY_CA_SHA256`).
+- **Automatic Health Fallback**: Performs continuous TCP reachability checks; if Solverr becomes temporarily unavailable, new requests automatically fall back to direct routing.
+- **Challenge Solver API**: Integrates with Solverr's FlareSolverr-compatible `/v1` endpoint for challenging forum pages.
+
+### NAS Post-Processing Optimizer
+- **In-Flight Stream Merging**: Merges video and audio streams while embedding tags and metadata in a single pass, eliminating costly secondary full-file rewrites on slow storage.
+- **Post-Processing Concurrency Gate (`MAX_CONCURRENT_POSTPROCESSORS`)**: Limits disk-heavy operations (remuxing, moving, splitting) to 1 concurrent process (configurable 1–4) to prevent HDD thrashing while network downloads continue concurrently.
+- **SSD Working Storage (`YTDLP_WORK_DIR`)**: Stages active downloads and merges on fast NVMe/SSD storage, transferring final files to HDD media shares atomically upon completion.
+- **Real-Time Stage Telemetry**: Displays the active post-processing phase (`Merging formats...`, `Embedding subtitles...`) and persists elapsed stage durations across reconnects.
+
+### Library & Browser Media Player
+- **In-Browser Media Center**: Browse completed downloads in an interactive card grid with instant searching, category filters, and sorting.
+- **Direct Streaming with Seeking**: Stream video and audio files in-browser using HTTP range requests (`206 Partial Content`) for instant seeking without external servers.
+- **File Management**: Single-click downloads to local device, deletion protection locks, and clean file removals (including `.nfo`, subtitles, and posters).
+- **Health Tracking**: Automatically detects and flags files that were moved or deleted outside the application.
+
+### Watches (Channel & Playlist Feeds)
+- **Automated Channel Polling**: Periodically monitors YouTube channels, playlists, Twitch channels, and RSS feeds on customizable schedules (default: every 30 minutes).
+- **Granular YouTube Tab Tracking**: Selectively track **Videos**, **Shorts**, and **Live Streams** on YouTube channel URLs (`youtube.com/@name`).
+- **Smart Baselining & Backfill**: Baselines existing channel uploads upon creation to avoid unwanted bulk downloads, with optional backfill of the newest $N$ uploads (up to 5,000).
+- **Regex Title Filtering**: Include and exclude filters using regular expressions, with interactive in-browser regex testing before saving.
+- **Exponential Retry Backoff**: Automatically retries failed jobs across 15m, 1h, and 6h intervals before flagging.
+- **Detailed Activity Ledger**: Complete audit log displaying scan timestamps, discovered videos, filter decisions, and queue states.
+
+### Auto-Delete & Housekeeping
+- **Automated Retention**: Clean up Watch-downloaded media based on age (delete after $N$ days), watched status in Jellyfin/Plex, or both.
+- **Disk Free-Space Guard**: Halts new Watch queueing and triggers emergency cleanup when disk space drops below a configurable threshold.
+- **Exemption Protection**: Protect favorite videos from deletion, exempt specific Watches, or enforce "always keep newest $N$" rules.
+- **Scheduled Dry-Runs**: Nightly automated runs with instant dry-run preview and manual "Run Now" execution.
+
+### Media Server Integration (Jellyfin & Plex)
+- **Jellyfin**:
+  - Automatic per-Watch playlist creation and synchronization.
+  - "Watched in Jellyfin" auto-delete triggers based on user watch activity.
+  - Filename-based matching ensuring compatibility across varying Docker mount points.
+- **Plex**:
+  - Immediate post-download library scan commands sent to Plex Media Server.
+  - Per-channel Plex playlist synchronization.
+  - User-scoped "Watched in Plex" status tracking for automated cleanup.
 
 ### Notifications
-- Dispatches webhook payloads to **Discord**, **Slack**, **Mattermost**, **Rocket.Chat**, **ntfy**, **Gotify**, or generic JSON webhooks (Home Assistant, n8n, Node-RED).
-- Configurable event subscriptions: download completed, download failed, Watch queued new items, or Watch check failures.
+- **Multi-Platform Webhooks**: Dispatches rich notifications to **Discord**, **Slack**, **Mattermost**, **Rocket.Chat**, **ntfy**, **Gotify**, or custom JSON webhooks (Home Assistant, n8n, Node-RED).
+- **Event Subscriptions**: Subscribe to download completions, download failures, Watch queue events, Watch check errors, or Thread Watch link discoveries.
 
-### Jellyfin & Plex Integration
-- **Jellyfin**: Automated per-Watch playlist creation and synchronization, and "Watched in Jellyfin" auto-delete triggers.
-- **Plex**: Post-download library scan commands, per-Watch playlist sync, and token-scoped "Watched in Plex" auto-delete.
-
-### Maintenance & Security
-- Bundles self-managed static builds of [yt-dlp](https://github.com/yt-dlp/yt-dlp), [FFmpeg](https://github.com/yt-dlp/FFmpeg-Builds), and [Deno](https://deno.com) (for YouTube challenge solving).
-- Toggle between yt-dlp **Stable** and **Nightly** channels with automated overnight update checks.
-- Rate-limited single admin authentication with session invalidation on credential rotation.
-- Built-in SSRF protection blocking loopback and private IP targeting by default.
+### Tooling & Multi-JS Engine
+- **Multi-JS YouTube Challenge Solving**: Supports Deno, Node.js, and QuickJS-ng (`qjs`) runtimes required by yt-dlp for modern YouTube challenge solving.
+- **In-App Deno Management**: Install and update Deno directly from **Settings → Tools**.
+- **Automated Nightly Updates**: Daily background checks for yt-dlp (Stable vs. Nightly), static FFmpeg builds, QuickJS-ng, and Deno without interrupting active downloads.
 
 ---
 
-## System Architecture
+## 🚀 Quick Start (Docker Compose)
 
-```mermaid
-flowchart TD
-    subgraph Clients["Clients & External Apps"]
-        Browser["Web Browser (React 19 + Vite)"]
-        LidarrApp["Lidarr Server"]
-        Webhooks["Discord / Slack / ntfy / Gotify"]
-    end
+Prebuilt multi-arch images (`linux/amd64` and `linux/arm64`) are published to GitHub Container Registry.
 
-    subgraph Container["yt-dlp GUI Container (Node 24 Alpine)"]
-        API["Express 5 REST API & Socket.io"]
-        Auth["Session & Rate Limiter"]
-        Queue["Concurrency Job Queue"]
-        Ledger["SQLite Database (better-sqlite3)"]
-        Sched["Cron Scheduler (node-cron)"]
-
-        subgraph Engine["Execution Runtime"]
-            Runner["yt-dlp Process Runner"]
-            FFmpeg["FFmpeg / FFprobe"]
-            Deno["Deno JS Engine (YT Solver)"]
-        end
-    end
-
-    subgraph Storage["Host Volumes"]
-        ConfigDir["/config (app.db, cookies.txt)"]
-        DownloadDir["/downloads (Media, .nfo, Artwork)"]
-    end
-
-    subgraph MediaServers["Media Servers"]
-        Jellyfin["Jellyfin Server"]
-        Plex["Plex Media Server"]
-    end
-
-    Browser <-->|"WebSocket & REST"| API
-    LidarrApp <-->|"Torznab & qBit API"| API
-    API --> Auth --> Queue
-    Queue <--> Ledger
-    Sched --> Queue
-    Ledger <--> ConfigDir
-
-    Queue --> Runner
-    Runner --> FFmpeg
-    Runner --> Deno
-    Runner --> DownloadDir
-
-    Queue -->|"Notifications"| Webhooks
-    Queue -->|"Playlist & Scan Sync"| Jellyfin
-    Queue -->|"Library & Watched Sync"| Plex
-```
-
-### Maintenance & security
-- Bundles modern static FFmpeg builds from [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) and the [QuickJS-ng](https://github.com/quickjs-ng/quickjs) JavaScript runtime yt-dlp needs for YouTube, with FFmpeg checksum and QuickJS binary validation before installation
-- Choose the yt-dlp **stable** or **nightly** channel; the choice survives container recreation
-- Single admin login with rate-limited login attempts and session invalidation on password change; Lidarr API-key endpoints are rate-limited too
-- Cookie support for any site, for age-restricted, members-only, private, or subscriber-only content
-- Blocks URLs that target private/loopback addresses, including hostnames resolving to private IPs (SSRF guard)
-- Optional `PUID` / `PGID` support for NAS file ownership
-
-## Quick start (Docker Compose)
-
-Prebuilt multi-arch images (`linux/amd64` and `linux/arm64`) are automatically pushed to GitHub Container Registry. No local compiling required.
-
-### 1. Create directory structure
-
+### 1. Directory Structure
 ```bash
 mkdir -p ytdlp-gui/downloads ytdlp-gui/videos ytdlp-gui/music ytdlp-gui/config
 cd ytdlp-gui
 ```
 
-### 2. Create `docker-compose.yml`
-
+### 2. `docker-compose.yml`
 ```yaml
 services:
   ytdlp-gui:
@@ -326,27 +300,27 @@ services:
     environment:
       - MAX_CONCURRENT_DOWNLOADS=2
       - TZ=America/Los_Angeles
-      # Optional: use your NAS user and group IDs (check with `id`)
-      # - PUID=1000
-      # - PGID=10
       - VIDEO_DIR=/videos
       - MUSIC_DIR=/music
+      # Optional: NAS user/group permissions (check with `id`)
+      # - PUID=1000
+      # - PGID=100
+      # Optional: Solverr forward proxy integration
+      # - SOLVERR_PROXY_URL=http://USER:PASS@solverr:8192
+      # - SOLVERR_PROXY_CA_URL=http://solverr:8191/proxy-ca.crt
+      # - SOLVERR_PROXY_CA_SHA256=your-ca-fingerprint
+      # Optional: SSD working directory for post-processing
+      # - YTDLP_WORK_DIR=/scratch
     volumes:
       - ./downloads:/downloads
       - ./videos:/videos
       - ./music:/music
       - ./config:/config
+      # Optional SSD scratch mount:
+      # - /mnt/ssd/scratch:/scratch
 ```
 
-Adjust to taste:
-- **`./videos` / `./music`** — point these at your media library folders (e.g. `/volume1/Media/YouTube:/videos`, `/volume1/Media/music:/music`). Videos are saved under `VIDEO_DIR`, music under `MUSIC_DIR`. Leave both variables and mounts out to keep everything in `./downloads`.
-- **`ports`** — change the left-hand `3000` if that port is taken (e.g. `"8080:3000"`).
-- **`TZ`** — your timezone (e.g. `America/New_York`), so scheduled checks and timestamps line up.
-- **`MAX_CONCURRENT_DOWNLOADS`** — keep this low (1–2) on a NAS with limited CPU.
-- **`PUID` / `PGID`** — optional host UID and GID for the app process and files it creates. When set, the container adjusts `/config` ownership and the top level of download directories before dropping root privileges.
-
-### 3. Create `.env` next to it
-
+### 3. `.env` File
 ```env
 ADMIN_USER=admin
 ADMIN_PASSWORD=choose-a-strong-password
@@ -354,147 +328,86 @@ ADMIN_PASSWORD=choose-a-strong-password
 
 > [!TIP]
 > - If `ADMIN_PASSWORD` is omitted, a random password is generated on first launch and printed once to the container logs (`docker compose logs ytdlp-gui`).
-> - Secure this file: run `chmod 600 .env` on Linux servers.
+> - Secure this file on Linux servers: `chmod 600 .env`.
 
-### 4. Start the container
-
+### 4. Start the Application
 ```bash
 docker compose pull
 docker compose up -d
 ```
+Access the web control deck at `http://<server-ip>:3000`.
 
-Access the web interface at `http://<your-server-ip>:3000`.
+---
 
-yt-dlp, FFmpeg, and QuickJS-ng can also be updated from **Settings** without pulling a new image, and are checked automatically overnight (see [Scheduled tasks](#scheduled-tasks)). If you'd rather have a reproducible yt-dlp version, pin it in the `Dockerfile` (`pip3 install yt-dlp==<version>`) and build locally — see [PyPI](https://pypi.org/project/yt-dlp/) for release history.
+## ⚙️ Configuration
 
-## Configuration
-
-All configuration variables can be passed via `.env` or the `environment:` block in `docker-compose.yml`.
+Pass configuration variables through `.env` or the `environment:` block in `docker-compose.yml`.
 
 ### Core Settings
 
 | Variable | Default | Description |
 |---|---|---|
-| `ADMIN_USER` | `admin` | Login username. |
-| `ADMIN_PASSWORD` | random (printed once) | Login password. |
-| `SESSION_SECRET` | generated & persisted | Secret used to sign session cookies. |
-| `PUID` | `0` (root) | Optional numeric user ID for the app and download processes inside Docker. |
-| `PGID` | `0` (root) | Optional numeric group ID for the app and download processes inside Docker. |
-| `TZ` | container default (UTC) | Timezone for schedules and timestamps. |
-| `PORT` | `3000` | Port the server listens on inside the container. |
-| `MAX_CONCURRENT_DOWNLOADS` | `2` | How many downloads run at once. |
-| `CONCURRENT_FRAGMENTS` | `4` | Fragments fetched in parallel within one HLS/DASH download (Twitch VODs and most non-YouTube sites). `1` turns it off; live recordings never use it. |
-| `FORCE_KEYFRAMES_AT_CUTS` | off | Set to `1` to pass `--force-keyframes-at-cuts` when SponsorBlock or a section download cuts the file. Cleaner cuts, but yt-dlp re-encodes the entire video in software, which can pin every CPU core for a long time. |
-| `JS_RUNTIMES` | `deno,node,quickjs` | JS runtimes yt-dlp may use for YouTube challenge solving, comma-separated. Ones that aren't installed are skipped, and yt-dlp prefers Deno, then Node, then QuickJS-ng. |
-| `TRUST_PROXY` | off | Set to `1` behind a TLS-terminating reverse proxy — required for `COOKIE_SECURE` to work there. |
-| `COOKIE_SECURE` | off | Set to `1` once the app is reachable over HTTPS; restricts the login cookie to HTTPS. |
-| `ALLOW_LOCAL_URLS` | off | Set to `1` to allow URLs pointing at loopback/private/link-local addresses (e.g. `127.0.0.1`, `192.168.x.x`). Only needed to target an internal mirror or service. |
+| `ADMIN_USER` | `admin` | Web UI login username. |
+| `ADMIN_PASSWORD` | random (printed in log) | Web UI login password. |
+| `SESSION_SECRET` | generated & persisted | Secret key used to sign session cookies. |
+| `PORT` | `3000` | Port the Express server listens on inside the container. |
+| `TZ` | `UTC` | Timezone for schedules, timestamps, and cron jobs. |
+| `PUID` | `0` (root) | Optional host numeric user ID for permissions drop. |
+| `PGID` | `0` (root) | Optional host numeric group ID for permissions drop. |
+| `MAX_CONCURRENT_DOWNLOADS` | `2` | Number of simultaneous downloads. |
+| `CONCURRENT_FRAGMENTS` | `4` | Parallel fragments for HLS/DASH streams (non-live). |
+| `FORCE_KEYFRAMES_AT_CUTS` | `0` (off) | Forces keyframe re-encoding at cuts for SponsorBlock. |
+| `JS_RUNTIMES` | `deno,node,quickjs` | Comma-separated list of JavaScript engines for yt-dlp. |
+| `TRUST_PROXY` | `0` (off) | Set to `1` when behind a reverse proxy (e.g., Traefik, Nginx). |
+| `COOKIE_SECURE` | `0` (off) | Set to `1` when accessing exclusively over HTTPS. |
+| `ALLOW_LOCAL_URLS` | `0` (off) | Set to `1` to allow downloading from private/loopback IPs. |
 
-### NAS post-processing
-
-Large videos can require several complete reads and writes even when FFmpeg copies the
-codecs without re-encoding. The bundled NAS postprocessor coordinates disk-heavy work
-across downloads, scheduled/live jobs, artwork embedding, final moves and recording
-splitting. Downloads remain concurrent; heavy processing defaults to one operation at a time.
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `MAX_CONCURRENT_POSTPROCESSORS` | `1` | Concurrent heavy processing operations, clamped to 1–4. Start with 1 on HDD storage. |
-| `NAS_POSTPROCESSING` | enabled | Set to `0` to disable the bundled yt-dlp optimizer integration. |
-| `YTDLP_WORK_DIR` | unset | Optional absolute container path to SSD working storage for ordinary VOD downloads. Bind-mount the SSD here. Live/wait-for-live captures retain their original paths for safe stop/recovery. |
-
-For compatible MP4 downloads, metadata is embedded during the stream merge, eliminating a
-separate full-file rewrite. Subtitle, chapter, SponsorBlock, custom postprocessor argument,
-and later-splitting cases retain yt-dlp's existing pipeline. Known intermediate MP4 passes
-skip fast-start relocation only when a later metadata rewrite will perform it. Final MP4
-fast-start is preserved. Selected media codecs and quality are unchanged.
-
-Active jobs show the processing stage and elapsed time from a persisted stage timestamp,
-which survives reconnects. Logs record actual processing durations. Waiting for a processing
-permit does not trigger the idle watchdog; low-CPU jobs with measurable I/O activity also
-receive the existing busy-job grace period. A percentage or ETA is not fabricated for
-postprocessors that only provide stage boundaries.
-
-An optional work directory must have room for source streams and their merged output;
-known source sizes receive an early space check. Final files still go to the selected library
-folder. Cross-filesystem transfers copy into a temporary file beside the destination, publish only
-a complete copy, and use the processing gate. A failed final transfer preserves the source
-for retry and leaves an existing destination intact.
-Empty per-job work directories are removed after success; nonempty partials remain available
-for retries of the same job. This does not eliminate every pass for complex jobs or split
-recordings. Actual speed gains depend on disk load, sizes and selected features.
-
-Plugin integration tests (requires yt-dlp and FFmpeg in the test environment):
-
-```bash
-python3 -m unittest discover -s server/test/python -v
-```
-
-### Solverr proxy
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `SOLVERR_PROXY_URL` | unset | Solverr forward proxy, e.g. `http://USER:PASSWORD@solverr:8192`. A URL saved in **Settings → Downloads → Solverr proxy URL** overrides it. |
-| `SOLVERR_PROXY_CA_URL` | unset | Where the entrypoint downloads Solverr's CA at container start, e.g. `http://solverr:8191/proxy-ca.crt`. |
-| `SOLVERR_PROXY_CA_SHA256` | unset | The CA's SHA-256 fingerprint from Solverr's startup log; installation is refused on a mismatch. |
-| `SOLVERR_PROXY_CA_ACTION` | `install` | Set to `remove` (and restart) to take the CA back out of the trust store. |
-| `SOLVERR_PROXY_CA_ATTEMPTS` | `5` | CA download attempts, 3 s apart, while Solverr is still starting. |
-
-See [Solverr proxy](#solverr-proxy) for the full setup.
-
-### Timeouts & watchdogs
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `DOWNLOAD_IDLE_TIMEOUT_MS` | `900000` (15 min) | Stops a download if yt-dlp produces no output this long, so a hung job can't hold a queue slot forever. Not applied to "wait for stream to go live" jobs. |
-| `LIVE_DOWNLOAD_IDLE_TIMEOUT_MS` | `3600000` (60 min) | Same watchdog for active live recordings, which can legitimately stay quiet longer. |
-| `PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS` | `3600000` (60 min) | Same watchdog for playlist URLs (e.g. `...?list=...`), which may spend a long time preparing before the first progress line. |
-| `DOWNLOAD_MAX_QUIET_MS` | `14400000` (4 h) | When the watchdog fires but the job is still using CPU (e.g. FFmpeg merging a multi-hour capture), it's spared — up to this hard cap of total silence. |
-| `GETINFO_TIMEOUT_MS` | `120000` (2 min) | Timeout for metadata-only lookups (format picker, Watch checks, pre-download info). |
-
-### Binaries & update schedules
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `YTDLP_BIN` | `yt-dlp` | Path to the yt-dlp binary, if not on `PATH`. |
-| `FFMPEG_DIR` | auto-detected | Directory containing `ffmpeg`/`ffprobe`, if not using the Settings-managed build. |
-| `YTDLP_UPDATE_CRON` | `0 3 * * *` | When to check for a new yt-dlp build (only when the saved channel is Nightly). |
-| `FFMPEG_UPDATE_CRON` | `30 3 * * *` | When to check for a new FFmpeg build. |
-| `QUICKJS_UPDATE_CRON` | `45 3 * * *` | When to check for a new QuickJS-ng release. |
-| `DENO_UPDATE_CRON` | `50 3 * * *` | When to check for a new Deno release (only if Deno is installed). |
-| `DEPENDENCY_UPDATE_STARTUP_DELAY_MS` | `30000` | Delay before re-applying a saved Nightly yt-dlp channel after startup. |
-
-### Update Schedules (Cron)
+### NAS Post-Processing
 
 | Variable | Default | Description |
 |---|---|---|
-| `DOWNLOAD_DIR` | `/downloads` in Docker, `./downloads` otherwise | Where downloaded files are written. |
-| `VIDEO_DIR` | `DOWNLOAD_DIR` | Default base folder for video downloads (YouTube, Twitch, …). Overridable in **Settings → File naming → Video folder**. |
-| `MUSIC_DIR` | `DOWNLOAD_DIR/Music` | Default folder for Music-tab, music Watch and Lidarr downloads. Overridable in **Music → Settings**; a saved folder of `Music` (the old default) also maps here. |
-| `CONFIG_DIR` | `/config` in Docker, `./config` otherwise | Where the database, sessions, and cookies are stored. |
+| `NAS_POSTPROCESSING` | `1` (enabled) | Enables single-pass stream merge and post-processing optimizer. |
+| `MAX_CONCURRENT_POSTPROCESSORS` | `1` | Concurrent heavy disk operations (clamped to 1–4). |
+| `YTDLP_WORK_DIR` | unset | Container path to fast SSD staging directory for active downloads. |
 
-## File naming
+### Solverr Proxy Variables
 
-**Settings → File naming** sets the **Video folder** (default `VIDEO_DIR`, else `/downloads`) and the layout of new video downloads inside it, as a [yt-dlp output template](https://github.com/yt-dlp/yt-dlp#output-template). Presets:
+| Variable | Default | Description |
+|---|---|---|
+| `SOLVERR_PROXY_URL` | unset | Solverr forward proxy URL (e.g., `http://USER:PASS@solverr:8192`). |
+| `SOLVERR_PROXY_CA_URL` | unset | HTTP URL where entrypoint fetches Solverr's CA cert. |
+| `SOLVERR_PROXY_CA_SHA256` | unset | SHA-256 fingerprint of Solverr's CA for verification. |
+| `SOLVERR_PROXY_CA_ACTION` | `install` | Set to `remove` to uninstall the CA certificate. |
+| `SOLVERR_PROXY_CA_ATTEMPTS` | `5` | Startup retry attempts while Solverr initializes. |
 
-| Preset | Example result |
-|---|---|
-| Channel folder (default) | `Example Channel/Video title [id].mp4` |
-| Flat | `Video title [id].mp4` |
-| Channel / Year | `Example Channel/2026/Video title [id].mp4` |
-| Channel / date-prefixed title | `Example Channel/2026-09-14 Video title [id].mp4` |
-| TV show | `Example Channel/Season 2026/S2026E0914 - Video title [id].mp4` |
-| Site / Channel | `Youtube/Example Channel/Video title [id].mp4` |
+### Timeouts & Watchdogs
 
-Or write your own — the page shows a live example of the result. Each Watch can override the global template in its **Quality & Format** tab, which is handy for sending a channel to its own media-server library (e.g. `Kids/%(uploader)s/%(title)s [%(id)s].%(ext)s`). Music downloads always use their Artist/Album layout.
+| Variable | Default | Description |
+|---|---|---|
+| `DOWNLOAD_IDLE_TIMEOUT_MS` | `900000` (15m) | Cancels frozen jobs producing no output (except wait-for-live). |
+| `LIVE_DOWNLOAD_IDLE_TIMEOUT_MS` | `3600000` (60m) | Extended watchdog allowance for active live stream captures. |
+| `PLAYLIST_DOWNLOAD_IDLE_TIMEOUT_MS`| `3600000` (60m) | Watchdog allowance for large playlists during pre-download info checks. |
+| `DOWNLOAD_MAX_QUIET_MS` | `14400000` (4h) | Maximum quiet allowance for CPU/IO busy jobs during heavy remuxing. |
+| `GETINFO_TIMEOUT_MS` | `120000` (2m) | Timeout for metadata analysis lookups and Watch checks. |
+
+### Binaries & Update Schedules
+
+| Variable | Default | Description |
+|---|---|---|
+| `YTDLP_BIN` | `yt-dlp` | Path to yt-dlp binary if not on system `PATH`. |
+| `FFMPEG_DIR` | auto-detected | Directory containing `ffmpeg` and `ffprobe`. |
+| `YTDLP_UPDATE_CRON` | `0 3 * * *` | Nightly check for yt-dlp builds (Nightly channel). |
+| `FFMPEG_UPDATE_CRON` | `30 3 * * *` | Nightly check for static FFmpeg build releases. |
+| `QUICKJS_UPDATE_CRON` | `45 3 * * *` | Nightly check for QuickJS-ng releases. |
+| `DENO_UPDATE_CRON` | `50 3 * * *` | Nightly check for Deno engine updates. |
 
 ---
 
-## File Naming
+## 📁 File Naming & Output Templates
 
-Control download destinations in **Settings → File naming** using [yt-dlp output template syntax](https://github.com/yt-dlp/yt-dlp#output-template).
+Customize media file layouts in **Settings → File naming** using [yt-dlp output template syntax](https://github.com/yt-dlp/yt-dlp#output-template).
 
-| Preset | Resulting Path Format |
+| Preset Name | Resulting File Layout |
 |---|---|
 | **Channel folder** *(default)* | `Example Channel/Video title [id].mp4` |
 | **Flat** | `Video title [id].mp4` |
@@ -504,216 +417,119 @@ Control download destinations in **Settings → File naming** using [yt-dlp outp
 | **Site / Channel** | `Youtube/Example Channel/Video title [id].mp4` |
 
 > [!TIP]
-> The **TV show structure** preset generates `Season YYYY` folders with episode dates, producing complete Kodi/Jellyfin/Plex-compatible series metadata with `tvshow.nfo`, `poster.jpg`, and `fanart.jpg`.
+> The **TV show structure** preset produces series folders with season/episode numbers and generates `tvshow.nfo`, `poster.jpg`, and `fanart.jpg` compatible with Kodi, Jellyfin, and Plex.
 
 ---
 
-## Lidarr Integration
-
-The application functions as a complete bridge between [Lidarr](https://lidarr.audio) and web audio sources.
+## 🏗️ System Architecture
 
 ```mermaid
-flowchart LR
-    A["Lidarr"] -->|"1. Torznab Search (t=music)"| B["yt-dlp GUI Indexer"]
-    B -->|"Returns RSS 2.0 XML"| A
-    A -->|"2. Grab & Send to Client"| C["Download Bridge (qBit / SAB)"]
-    C -->|"3. Enqueue & Tag Audio"| D["yt-dlp Queue"]
-    A -->|"4. Poll Progress"| C
-    D -->|"5. OPUS / FLAC / MP3 Ready"| C
-    C -->|"State: Completed"| A
-    A -->|"6. Import into Artist Library"| E["Music Library"]
+flowchart TD
+    subgraph Clients["Clients & Mobile Applications"]
+        Browser["Cyber-Industrial Deck (React 19 + Vite + PWA)"]
+        LidarrApp["Lidarr Server"]
+        Webhooks["Discord / Slack / ntfy / Gotify"]
+    end
+
+    subgraph Container["yt-dlp GUI Container (Node 24 Alpine)"]
+        API["Express 5 REST API & Socket.io"]
+        Auth["Session & Rate Limiter"]
+        Queue["Concurrency Job Queue & Optimizer"]
+        Ledger["SQLite Database (better-sqlite3)"]
+        Sched["Cron Scheduler (node-cron)"]
+
+        subgraph Engine["Execution Runtime"]
+            Runner["yt-dlp Process Runner"]
+            FFmpeg["FFmpeg / FFprobe"]
+            Deno["Deno / Node / QuickJS Runtimes"]
+            Optimizer["NAS Video Post-Processor"]
+        end
+    end
+
+    subgraph Storage["Storage Volumes"]
+        ConfigDir["/config (app.db, cookies.txt)"]
+        DownloadDir["/downloads (Media, .nfo, Artwork)"]
+        SSDWork["/scratch (Optional SSD Work Dir)"]
+    end
+
+    subgraph Proxy["External Services"]
+        Solverr["Solverr MITM Forward Proxy"]
+        MediaServers["Jellyfin & Plex Servers"]
+    end
+
+    Browser <-->|"WebSocket & REST"| API
+    LidarrApp <-->|"Torznab & qBit API"| API
+    API --> Auth --> Queue
+    Queue <--> Ledger
+    Sched --> Queue
+    Ledger <--> ConfigDir
+
+    Queue --> Runner
+    Runner --> FFmpeg
+    Runner --> Deno
+    Runner --> Optimizer
+    Optimizer --> SSDWork
+    Optimizer --> DownloadDir
+
+    Runner -.->|"MITM Proxy"| Solverr
+    Queue -->|"Notifications"| Webhooks
+    Queue -->|"Sync & Library Refresh"| MediaServers
 ```
 
-### Setup Instructions
-
-1. **Torznab Indexer**:
-   - In Lidarr, navigate to **Settings → Indexers → Add (+) → Torznab (Custom)**.
-   - **URL**: `http://<server-ip>:3000/api/lidarr/torznab`
-   - **API Key**: Found under **Music → Lidarr** tab in the web interface.
-   - **Categories**: `3000, 3010, 3020, 3040`.
-2. **Download Client**:
-   - In Lidarr, go to **Settings → Download Clients → Add (+) → qBittorrent**.
-   - **Host**: `<server-ip>`
-   - **Port**: `3000`
-   - **URL Base**: `/api/lidarr/qbit`
-   - **Category**: `music`
-   - Test and Save.
-
-3. **Lidarr Server Automation (Optional)**:
-   - In the app's **Music → Lidarr** tab, enter your Lidarr server URL and API key.
-   - Enable **Automatically notify Lidarr when downloads finish** to trigger `DownloadedAlbumsScan` as soon as music completes.
-   - Browse and download wanted/missing albums from Lidarr with a single click.
-
-## Link Grabber and forum crawler
-
-### In the web app
-
-Open **Links** in the sidebar, paste a thread or page URL and pick how many pages to crawl:
-
-| Mode | Crawls |
-|---|---|
-| Follow "Next" links | Any site: the page plus the pages its *Next* links lead to |
-| Whole Thread | Every page of a forum thread (up to 25 per crawl) |
-| Last N Pages | Only the newest pages, handy for checking an active thread |
-| Page Range | The pages you list, e.g. 20–27 |
-| Single Page | Just the URL you pasted |
-
-On XenForo forums the crawler reads each post on its own: links in quotes, signatures, the sidebar and the footer are skipped, and each link shows who posted it, a link back to that post, and a key icon when the post gave an archive password. Other pages are read whole, minus their navigation and footer.
-
-Forums that need a login use your cookies: save them under **Crawler cookies** (or fall back to the cookies.txt from Settings) and tick **Use saved cookies**, or paste temporary cookies to use instead of the saved ones for one crawl. For a Cloudflare-protected forum, export cookies that include `cf_clearance` and set **Crawler User-Agent** under **Downloaders** to that browser's exact User-Agent; Cloudflare rejects the cookie from any other. Pages that answer with a rate limit or server error are retried twice before the crawl stops.
-
-A crawl runs on the server: the page shows its progress with a **Cancel** button, and you can leave and come back. The last 50 crawls are listed under **Recent crawls**; opening one shows its links again, with anything sent since marked as such.
-
-Select the links you want (shift-click selects a run of them), then **Copy** or choose a target and **Send**. For JDownloader, click **Downloaders**, enter its Click'n'Load address (`http://<host>:9666`, not the `5800` web UI port), and press **Test connection** to check it can be reached. In package-per-page mode each JDownloader package is named `[Page N] Thread title` and carries the passwords found on that page. Links you send anywhere or copy are remembered and show as sent before next time; **Clear history** in the same panel makes them show as new again.
-
-**Check links** asks whether the links shown (or the selected ones, up to 300) still work. Pixeldrain and MEGA links are checked through their APIs and direct file links by their headers, which also gives a name and size; those come back **Online** or **Offline**. Any other link is only fetched: a 404 means **Offline**, a normal answer only **Reachable**, since many hosts show "file not found" on an ordinary page. **Deselect offline** drops the dead ones from the selection.
-
-#### Thread watches
-
-**Watch this thread** (or **Add watch**) re-crawls a thread's newest pages on a schedule, from every 30 minutes to daily, with your saved crawler cookies. Links that aren't in the history yet go to JDownloader, the download queue or aria2, or with **Just tell me** only trigger a notification (the *Thread watch found new links* event under Notifications). By default only file host links count. The first check sends every such link on those pages that you haven't sent before; after that, only new ones. Clicking a watch shows its latest check's links.
-
-### From the command line
-
-`crawler/crawler.py` runs the same crawl from a terminal, through the app, and prints the new links as a plain list, one URL per line. The app has to be running; the crawler signs in to it (`YTDLP_GUI_URL`, `YTDLP_GUI_USER`, `YTDLP_GUI_PASSWORD`) and uses its saved crawler cookies, downloader addresses and link history. It runs from a checkout of this repo (it isn't part of the Docker image) and needs Python 3.9+:
-
-```bash
-cd crawler
-pip install -r requirements.txt
-
-python crawler.py "https://simpcity.cr/threads/name.12345/" --last 3   # newest 3 pages
-python crawler.py "https://simpcity.cr/threads/name.12345/" --all-pages
-python crawler.py "https://simpcity.cr/threads/name.12345/" --pages 20-
-python crawler.py threads.txt --last 3                                 # a watchlist, one URL per line
-
-python crawler.py URL > links.txt   # only the links go to stdout
-python crawler.py URL --copy        # also copy them to the clipboard
-python crawler.py URL --by-page     # '# title - page N' and '# password:' lines between groups
-```
-
-- **Cookies**: the ones saved in the app under **Crawler cookies**; `--cookies cookies.txt` uses others for one run. `cookies.json`, `cookies.txt`, `threads.txt` and `*_cookies.*` are git-ignored.
-- **History**: listed links go into the app's history, so the next run (and the Links page) shows only new links. `--ignore-history` lists everything again; `--no-record` leaves the history untouched. A `crawler/crawled_history.db` from the old standalone crawler is still imported into the app's history when the server starts.
-- **Sending is off by default.** `--jd` sends the links to JDownloader at the address saved in the app (`--send queue` or `--send aria2` for the others), or set `CRAWLER_SEND_TO_JD=1` to send every run; `--no-jd` overrides that setting.
-- A thread that fails in a watchlist is skipped and reported at the end; the rest still run.
-
-All flags are listed in [`crawler/README.md`](crawler/README.md) and with `python crawler.py --help`.
-
-## Solverr proxy
-
-[Solverr](https://github.com/rpeters1430/solverr) can run an authenticated HTTP/HTTPS forward proxy that sends
-requests through its challenge solver, which gets yt-dlp past Cloudflare and similar walls on forum and file-host
-pages. Solverr decrypts HTTPS to do this, so this container has to trust Solverr's CA.
-
-1. Enable the proxy in Solverr (`MITM_ENABLED`, `MITM_PROXY_USERNAME`, `MITM_PROXY_PASSWORD`) and note the CA
-   fingerprint it logs at startup.
-2. Add the proxy and CA settings to this app's service. The container must start as root (the default; `PUID`/`PGID`
-   still work, privileges are dropped after the CA is installed):
-
-   ```yaml
-   services:
-     ytdlp-gui:
-       environment:
-         - SOLVERR_PROXY_URL=http://USER:PASSWORD@solverr:8192
-         - SOLVERR_PROXY_CA_URL=http://solverr:8191/proxy-ca.crt
-         - SOLVERR_PROXY_CA_SHA256=<fingerprint from Solverr startup log>
-   ```
-
-   Put both containers on the same Docker network (or use the NAS's LAN address), and URL-encode special characters
-   in the username or password.
-3. Recreate the container. The entrypoint verifies the fingerprint and installs the CA with
-   `update-ca-certificates`; a failure is logged and the app starts anyway.
-
-**Settings → Downloads → Solverr proxy** turns the proxy on or off, sets or overrides the proxy URL, and shows
-whether routing is enabled. The app checks every minute for TCP reachability and routes requests through it while
-it answers and the CA file is installed. This status is not an authentication or challenge-solving test: a wrong
-password or untrusted certificate still produces a request error. After a failed reachability check, new requests
-go direct; an already-running yt-dlp process keeps the proxy arguments it started with.
-
-The same setting covers:
-
-| Request | Routing while the proxy is active |
-| --- | --- |
-| Link Grabber forum pages, pagination and redirects (including the CLI crawler and watches) | HTTP absolute-form forwarding; HTTPS CONNECT with Solverr's CA |
-| Extracted-link availability checks | Same forwarding and CA trust as forum pages |
-| Reddit share-link resolution and fallback video artwork | Same forwarding and CA trust as forum pages |
-| yt-dlp metadata analysis and video/audio downloads | `--proxy … --compat-options no-certifi`; browser TLS impersonation is skipped because Solverr handles it |
-| Link Grabber curl_cffi fallback | Explicit proxy URL and CA bundle |
-
-Do not force CONNECT for plain HTTP: Solverr accepts CONNECT only for HTTPS targets on port 443. Never use
-`--no-check-certificates` to work around a missing CA. Disabling the proxy restores direct requests and yt-dlp's
-saved impersonation setting.
-
-The Link Grabber's **Challenge Solver** URL is separate: set it to `http://solverr:8191` (or the reachable NAS
-address) to call Solverr's FlareSolverr-style `/v1` API when a page is still blocked. This local control API is
-called directly, not through the forward proxy. JDownloader and Aria2 control APIs are also called directly;
-downloads handed to those applications use their own network/proxy configuration.
-
-The image also ships `yt-dlp-with-solverr-proxy.sh`, the standalone wrapper from Solverr, for one-off command-line
-use: `docker exec ytdlp-gui yt-dlp-with-solverr-proxy.sh <url>` (as root; it reinstalls the CA first).
-
-## Scheduled tasks
-
-All times are server-local (set `TZ`).
-
-| Task | When |
-|---|---|
-| Watch checks | Evaluated every 5 minutes; each Watch runs once its own interval (default 30 min) has elapsed |
-| Thread watch checks | Evaluated every 5 minutes; each thread watch runs once its own interval (default 6 hours) has elapsed, one at a time |
-| Jellyfin playlist sync | Every 15 minutes, plus right after each Watch download |
-| Plex playlist sync | Every 15 minutes, plus right after each Watch download |
-| Auto-delete | Nightly at 03:00 |
-| yt-dlp nightly check | 03:00 (`YTDLP_UPDATE_CRON`, Nightly channel only) |
-| FFmpeg check | 03:30 (`FFMPEG_UPDATE_CRON`) — downloaded only when the upstream build changes |
-| QuickJS-ng check | 03:45 (`QUICKJS_UPDATE_CRON`) |
-| Deno check | 03:50 (`DENO_UPDATE_CRON`, only once Deno is installed) |
-
-Dependency updates are skipped while downloads are active, so they never interrupt a running job.
-
-## Where your data lives
-
-| Host path | Container path | Contents |
-|---|---|---|
-| `./downloads` | `/downloads` | Downloaded media (a subfolder per uploader/channel by default — see [File naming](#file-naming)), plus `.nfo`/poster files |
-| `./videos` (optional) | `/videos` (`VIDEO_DIR`) | Video downloads, when `VIDEO_DIR` is set |
-| `./music` (optional) | `/music` (`MUSIC_DIR`) | Music-tab, music Watch and Lidarr downloads, when `MUSIC_DIR` is set |
-| `./config` | `/config` | SQLite database (`app.db`), sessions, saved cookies, and app-managed tool builds |
-
-**Back up `./config`** to keep your history, Watches, and settings. Everything in it can be restored by copying the folder back before starting the container.
-
-## Security notes
-
-- This app is meant for a single trusted admin. Don't expose it to the internet without HTTPS (see [reverse proxy](#running-behind-a-reverse-proxy-https)) and a strong password.
-- `.env` and `./config/cookies.txt` contain secrets — keep them out of git and off shared drives.
-- Only download content you have the right to download, and respect each site's terms of service.
-
-## Troubleshooting
-
-**`docker pull` fails with an auth/denied error** — the GHCR package may be private. Set it to public in the package's GitHub settings, or `docker login ghcr.io` with a token that has `read:packages`.
-
-**I lost the generated admin password** — set `ADMIN_PASSWORD` in `.env` and run `docker compose up -d` to recreate the container.
-
-**Login doesn't stick / I get logged straight back out** — you likely set `COOKIE_SECURE=1` while accessing the app over plain HTTP, or forgot `TRUST_PROXY=1` behind a proxy.
-
-**Progress bars don't update** — your reverse proxy isn't forwarding WebSockets. Enable WebSocket support for the proxy host.
-
-**YouTube says "Sign in to confirm you're not a bot" or a video is unavailable** — add cookies (see [Site cookies](#site-cookies-youtube-twitch-and-others)) and update yt-dlp from Settings; switching to the Nightly channel often helps when YouTube changes something.
-
-**A URL to a local service is rejected** — that's the private-address guard, which also checks hostname DNS answers. Set `ALLOW_LOCAL_URLS=1` if it's intentional.
-
-### Jellyfin
-- **Playlist Synchronization**: Automatically creates and maintains a Jellyfin playlist corresponding to each Watch feed.
-- **Watched Auto-Delete**: Marks media eligible for deletion once watched by designated Jellyfin users.
-- Matching is performed on filenames, ensuring compatibility even when directory mount points differ.
-
-### Plex
-- **Immediate Library Scan**: Triggers an on-demand Plex library refresh right after a file completes downloading.
-- **Playlist Sync**: Keeps per-channel Plex playlists synchronized with completed downloads.
-- **Watched Status Checking**: Polls the authenticated user account to safely trigger cleanup rules.
+### Architecture Notes
+- **Backend**: Express 5 on Node.js 24 with `better-sqlite3` storage, `socket.io` for live WebSocket telemetry, and `node-cron` for scheduling. yt-dlp is executed via `child_process.spawn`, ensuring full compatibility with any site supported by upstream yt-dlp.
+- **Frontend**: Modular React 19 single-page application built with Vite, served as static assets from the Express backend in a single lightweight container.
+- **Library Playback**: Media streaming utilizes HTTP range requests (`206 Partial Content`) for seekable browser playback directly from disk, protected by admin session authentication.
+- **YouTube JS Solver Engine**: Automatically discovers available JavaScript runtimes (`Deno`, `Node.js`, `QuickJS-ng`) and supplies them to yt-dlp via `--js-runtimes` for solving modern YouTube anti-bot challenges.
+- **Watch Audit Ledger**: Discovered videos are tracked in `watch_items` and `watch_runs` tables with full filtering decisions, download states, and retry counters.
 
 ---
 
-## Local Development (without Docker)
+## 🔒 Security Notes
 
-Prerequisites: Node.js 24+, plus `yt-dlp`, `ffmpeg`, and [QuickJS-ng](https://github.com/quickjs-ng/quickjs)'s `qjs` installed and on your `PATH`.
+- **Single Admin Authentication**: Protected with `bcrypt` password hashing, rate-limited login endpoints, and automatic session invalidation upon credential changes.
+- **Private Network SSRF Guard**: Automatically blocks URLs targeting localhost, loopback, link-local, or private RFC 1918 IP addresses (including DNS resolution rebinding checks). Set `ALLOW_LOCAL_URLS=1` only if intentionally targeting internal mirrors.
+- **Secrets Management**: Keep `.env` and `cookies.txt` secured. Do not expose the container directly to public networks without a TLS-terminating reverse proxy and strong authentication.
+
+---
+
+## 🔧 Troubleshooting
+
+<details>
+<summary><b>YouTube "Sign in to confirm you're not a bot" or age-restricted videos</b></summary>
+
+Export your browser session cookies using an extension like *Get cookies.txt LOCALLY* and paste them into **Settings → Site Cookies**. Switch your yt-dlp channel to **Nightly** in **Settings → Tools** to incorporate the latest upstream extractor fixes.
+</details>
+
+<details>
+<summary><b>Progress bars or speeds do not update in real time</b></summary>
+
+Your reverse proxy is dropping WebSocket upgrade headers. Ensure your proxy configuration passes `Upgrade` and `Connection` headers (in Nginx Proxy Manager, toggle on **Websockets Support**).
+</details>
+
+<details>
+<summary><b>Session logs out immediately or login fails to persist</b></summary>
+
+Verify that `COOKIE_SECURE=1` is only enabled when accessing the application over HTTPS. If running behind a reverse proxy terminating TLS, ensure `TRUST_PROXY=1` is enabled in your environment.
+</details>
+
+<details>
+<summary><b>A URL to an internal network service is rejected</b></summary>
+
+The built-in SSRF private-address guard rejects loopback and private IP addresses by default. Set `ALLOW_LOCAL_URLS=1` in your container environment to permit internal targets.
+</details>
+
+<details>
+<summary><b>Solverr proxy reachability check reports disconnected</b></summary>
+
+Verify that `SOLVERR_PROXY_URL` and `SOLVERR_PROXY_CA_URL` are reachable from within the container. If both containers run on Docker, ensure they share the same Docker network bridge and that passwords containing special characters are properly URL-encoded.
+</details>
+
+---
+
+## 💻 Local Development
+
+Prerequisites: Node.js 24+, `yt-dlp`, `ffmpeg`, and `qjs` (QuickJS-ng) installed on your system `PATH`.
 
 ```bash
 # Terminal 1: Backend API (http://localhost:3000)
@@ -727,75 +543,42 @@ npm install
 npm run dev
 ```
 
-Run test suite:
-
+### Running Tests & Linting
 ```bash
+# Server test suite
 cd server
 npm run test
-npm run test:coverage
+npm run lint
+
+# Client test suite
+cd client
+npm run test
+npm run lint
 ```
 
-Run linter:
-
-```bash
-# Server lint
-cd server && npm run lint
-
-# Client lint
-cd client && npm run lint
 ```
-client/              React (Vite) frontend
-  src/pages/         Top-level pages (Dashboard, Library, History, Watches, Music, Twitch, Settings, ...)
-  src/components/    Shared UI components
+client/              React 19 (Vite) frontend
+  src/components/    Shared UI components, cards, drawers, dialogs
+  src/context/       Global state contexts (Downloads, Staging, Toast)
+  src/pages/         Top-level pages (Dashboard, Library, History, Watches, Music, Twitch, Links, Settings)
+  src/cyberpunk.css  Cyber-Industrial Control Deck theme & HUD styles
+  src/styles.css     Design tokens, palette, and base layout
 server/
-  src/index.js       Express + socket.io entry point
-  src/routes/        REST API routes
-  src/services/      yt-dlp runner, queue, scheduler, Jellyfin, music, cleanup, notifications, updaters
-Dockerfile           Multi-stage build: client bundle + runtime with yt-dlp, FFmpeg, QuickJS-ng
-docker-compose.yml   Compose file (pulls the published image, or builds locally)
+  src/index.js       Express + Socket.io entrypoint
+  src/routes/        REST API route handlers
+  src/services/      Queue runner, scheduler, music metadata, cleanup, updaters, notifications
+  src/plugins/       NAS post-processing optimizer yt-dlp plugin
+crawler/             Python CLI forum crawler
+Dockerfile           Multi-stage build (Vite client + Node 24 runtime with yt-dlp & FFmpeg)
+docker-compose.yml   Docker Compose deployment specification
 ```
 
 ---
 
-## Troubleshooting
+## 🙏 Acknowledgements
 
-<details>
-<summary><b>YouTube "Sign in to confirm you're not a bot" or age-restricted videos</b></summary>
-
-Export your browser session cookies using an extension like *Get cookies.txt LOCALLY* and paste them into **Settings → Site Cookies**. Switch your yt-dlp channel to **Nightly** in Settings if YouTube has rolled out breaking layout adjustments.
-</details>
-
-<details>
-<summary><b>Progress bars do not move</b></summary>
-
-Your reverse proxy is likely dropping WebSocket upgrade headers. Ensure your proxy configuration forwards `Upgrade` and `Connection` headers (in Nginx Proxy Manager, enable the "Websockets Support" toggle).
-</details>
-
-<details>
-<summary><b>Session cookies fail to persist / immediate logout</b></summary>
-
-Verify that `COOKIE_SECURE=1` is only enabled when accessing over HTTPS, and that `TRUST_PROXY=1` is set when running behind a TLS termination proxy.
-</details>
-
-- **Backend** — Node.js + Express, `better-sqlite3` for storage, `socket.io` for live progress, and `node-cron` for scheduling. yt-dlp is invoked via `child_process.spawn` rather than a library binding, so any yt-dlp version and any site it supports works without code changes.
-- **Frontend** — React (Vite), built and served as static files by the Express server: one container, one port.
-- **Library playback** — files are streamed from disk (with HTTP range requests, so seeking works) behind the same login as the rest of the app. Files are only served by download ID, from the path yt-dlp reported when the download finished — never from a path the browser supplies.
-- **YouTube JS runtime**: since yt-dlp 2025.11.12, full YouTube support requires an external JavaScript runtime to solve YouTube's JS challenges. The image builds [QuickJS-ng](https://github.com/quickjs-ng/quickjs) (`qjs`) from a pinned release for both amd64 and arm64. The app runs yt-dlp with `--no-js-runtimes` plus a `--js-runtimes <name>:<path>` for every runtime it finds: Deno (if a `deno` binary is in `/config/bin` or on `PATH`; **Settings → Tools → Install Deno** puts the latest release in `/config/bin`), the Node.js the app itself runs on, and QuickJS-ng. yt-dlp then picks its preferred one (Deno, then Node, then QuickJS). Set `JS_RUNTIMES` to narrow the list. Which runtimes yt-dlp actually detected is logged at startup (`[ytdlp:js] ...`) and shown under **Settings → Tools**. Outside Docker, put `qjs` on your `PATH` yourself.
-- **Watches** — every video a Watch discovers is a row in a ledger (`watch_items`) with its filter decision and download state, and every check is a row in `watch_runs`; download jobs link back to their item, so a failure is retried rather than forgotten. The first check on a new Watch only records existing videos; later checks auto-queue anything new. **Reset history** forgets everything except completed downloads and re-baselines on the next check.
-- **Auto-delete** — evaluates only Watch-downloaded videos; see [Jellyfin integration](#jellyfin-integration) for how "watched" is determined.
-- **Jellyfin playlist sync** — each Watch's playlist is created on first sync and its Jellyfin item ID is cached on the Watch, so renaming it doesn't create a duplicate.
-
-Set `ALLOW_LOCAL_URLS=1` in your environment to permit downloading from internal private network mirrors (e.g. `192.168.x.x` or `127.0.0.1`).
-</details>
-
----
-
-## Acknowledgements
-
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — the downloader doing all the heavy lifting
-- [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) — static FFmpeg builds
-- [QuickJS-ng](https://github.com/quickjs-ng/quickjs) — JavaScript runtime for YouTube challenge solving
-
-### Standalone music tagging
-
-Music downloads can be tagged and imported without Lidarr using free MusicBrainz metadata, optional Cover Art Archive images, and Mutagen. Select **Music → Settings → Manage tags and library here**, then choose **MusicBrainz releases** in Search. Files are verified before import; failed tagging can be retried without downloading again. Existing Lidarr-enabled installations keep their handoff mode until changed. See [the standalone music guide](docs/standalone-music.md) for setup, naming, dependencies, and limitations.
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — The definitive command-line video and audio downloader.
+- [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) — High-performance static FFmpeg binaries.
+- [QuickJS-ng](https://github.com/quickjs-ng/quickjs) — Fast, embeddable JavaScript engine for YouTube challenge solving.
+- [Deno](https://deno.com) — Modern JavaScript runtime for YouTube signature solving.
+- [MusicBrainz](https://musicbrainz.org) & [AcoustID](https://acoustid.org) — Open music encyclopedia and acoustic fingerprinting.
