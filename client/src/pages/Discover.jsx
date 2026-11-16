@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowDownToLine, ExternalLink, Search, Youtube } from 'lucide-react';
+import { ArrowDownToLine, ExternalLink, Film, Search } from 'lucide-react';
 import { api } from '../api.js';
 import { formatDuration } from '../format.js';
 import { useStaging } from '../context/StagingContext.jsx';
@@ -60,7 +60,7 @@ export default function Discover() {
     <div className="discover-page">
       <div className="page-title-row">
         <div>
-          <h1><Youtube size={22} /> Discover on YouTube</h1>
+          <h1><Film size={22} /> Discover on YouTube</h1>
           <p className="page-subtitle">Find videos, see what is already in your library, then send a video to the download tray or start watching its channel.</p>
         </div>
       </div>
@@ -99,7 +99,7 @@ export default function Discover() {
               return (
                 <article className="discover-card" key={video.id || video.url}>
                   <a className="discover-art" href={video.url} target="_blank" rel="noreferrer" aria-label={`Open ${video.title} on YouTube`}>
-                    {video.thumbnail ? <img src={video.thumbnail} alt="" loading="lazy" /> : <div className="discover-art-empty"><Youtube size={26} /></div>}
+                    {video.thumbnail ? <img src={video.thumbnail} alt="" loading="lazy" /> : <div className="discover-art-empty"><Film size={26} /></div>}
                     {video.duration != null && <span className="discover-duration">{formatDuration(video.duration)}</span>}
                   </a>
                   <div className="discover-card-body">
