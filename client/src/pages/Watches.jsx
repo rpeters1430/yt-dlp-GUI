@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import WatchMenu from '../components/WatchMenu.jsx';
 import { api } from '../api.js';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
@@ -29,6 +30,7 @@ function runBadge(w) {
 }
 
 export default function Watches() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [watches, setWatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
@@ -52,6 +54,18 @@ export default function Watches() {
   const [playlistWatch, setPlaylistWatch] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
   const [pendingReset, setPendingReset] = useState(null); // { id, label }
+
+  // Discover can open this screen with a channel URL ready in the full add form.
+  useEffect(() => {
+    const addUrl = searchParams.get('add');
+    if (!addUrl) return;
+    setAdvancedUrl(addUrl);
+    setEditingWatch(null);
+    setModalOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('add');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const refresh = useCallback(() => {
     api.listWatches()

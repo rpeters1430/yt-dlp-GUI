@@ -3613,6 +3613,48 @@ button.watch-activity-tab-btn.active { color: var(--accent); border-bottom-color
   min-width: 0;
 }
 
+.discover-page { display: flex; flex-direction: column; gap: 18px; }
+.discover-page .page-title-row h1 { display: flex; align-items: center; gap: 10px; }
+.page-subtitle { margin: 5px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.5; max-width: 720px; }
+.discover-search { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.discover-search > svg { color: var(--text-muted); flex: 0 0 auto; }
+.discover-search input { flex: 1; min-width: 0; color: var(--text); background: transparent; border: 0; outline: 0; font: inherit; }
+.discover-search input::placeholder { color: var(--text-muted); }
+.discover-message { margin: 0; }
+.discover-loading { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 150px; color: var(--text-secondary); }
+.discover-results-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.discover-results-heading h2 { margin: 0; font-size: 16px; }
+.discover-results-heading span { color: var(--text-muted); font-size: 12px; }
+.discover-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(245px, 1fr)); gap: 14px; }
+.discover-card { min-width: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.discover-art { display: block; position: relative; aspect-ratio: 16 / 9; background: var(--bg-elevated); overflow: hidden; }
+.discover-art img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .18s ease; }
+.discover-art:hover img { transform: scale(1.03); }
+.discover-art-empty { display: grid; place-items: center; height: 100%; color: var(--text-muted); }
+.discover-duration { position: absolute; right: 8px; bottom: 8px; padding: 3px 6px; color: white; background: rgb(0 0 0 / 78%); border-radius: 4px; font: 11px var(--font-mono); }
+.discover-card-body { display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+.discover-title { display: flex; align-items: flex-start; gap: 6px; color: var(--text); font-size: 13px; font-weight: 600; line-height: 1.4; text-decoration: none; }
+.discover-title svg { flex: 0 0 auto; margin-top: 3px; color: var(--text-muted); }
+.discover-title:hover { color: var(--accent-cyan); }
+.discover-channel { overflow: hidden; color: var(--text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.discover-status { align-self: flex-start; padding: 3px 7px; color: var(--warning); background: var(--warning-soft); border-radius: 4px; font-size: 10px; font-weight: 600; }
+.discover-status.complete { color: var(--success); background: var(--success-soft); }
+.discover-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 3px; }
+.sharing-panel { display: flex; flex-direction: column; gap: 12px; }
+.sharing-panel .panel-description { margin: 0; }
+.sharing-steps ol { margin: 0; padding-left: 22px; color: var(--text-secondary); font-size: 13px; line-height: 1.8; }
+.sharing-bookmarklet-row { display: flex; align-items: flex-start; gap: 10px; }
+.sharing-bookmarklet-row textarea { flex: 1; min-width: 0; resize: vertical; padding: 9px; color: var(--text); background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-sm); font: 11px var(--font-mono); overflow-wrap: anywhere; }
+.sharing-bookmarklet-row button { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; }
+.sharing-note { margin: 0; }
+.sharing-panel .text-link { display: inline-flex; align-items: center; gap: 6px; color: var(--accent-cyan); font-size: 12px; text-decoration: none; }
+@media (max-width: 640px) {
+  .discover-search { gap: 8px; }
+  .discover-search .btn-primary { padding-inline: 11px; }
+  .sharing-bookmarklet-row { flex-direction: column; }
+  .sharing-bookmarklet-row textarea, .sharing-bookmarklet-row button { width: 100%; }
+}
+
 
 .history-footer {
   display: flex;

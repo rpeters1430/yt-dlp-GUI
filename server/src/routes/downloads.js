@@ -8,6 +8,31 @@ const { requireAuth } = require('../auth');
 const router = express.Router();
 router.use(requireAuth);
 
+// Search YouTube with yt-dlp's existing flat search extractor. Keep this bounded: searching
+// is a discovery tool, not an unbounded scraper, and results are annotated from local history.
+router.get('/youtube/search', async (req, res) => {
+  const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  if (!query) return res.json({ results: [] });
+  if (query.length > 200) return res.status(400).json({ error: 'Search query must be 200 characters or fewer' });
+
+  try {
+    const results = await ytdlp.searchYouTube(query, 10);
+    const ids = results.map((item) => item.id).filter(Boolean);
+    const existing = ids.length
+      ? db.prepare(`SELECT video_id, status FROM downloads WHERE video_id IN (${ids.map(() => '?').join(',')}) ORDER BY created_at DESC`).all(...ids)
+      : [];
+    const statusById = new Map();
+    for (const row of existing) {
+      if (!statusById.has(row.video_id) || row.status === 'completed') statusById.set(row.video_id, row.status);
+    }
+    res.set('Cache-Control', 'no-store');
+    res.json({ results: results.map((item) => ({ ...item, downloadStatus: statusById.get(item.id) || null })) });
+  } catch (err) {
+    console.error('[youtube:search] Error:', err.message);
+    res.status(502).json({ error: err.message || 'YouTube search failed' });
+  }
+});
+
 // Fetch metadata/formats for a URL before download, supporting both single videos and playlists.
 router.post('/info', async (req, res) => {
   const { url: rawUrl, analyzeId: rawAnalyzeId } = req.body || {};

@@ -11,6 +11,7 @@ import ReleaseNotesDialog from './components/ReleaseNotesDialog.jsx';
 
 // Home ships in the main bundle; every other page loads when first opened.
 const History = lazy(() => import('./pages/History.jsx'));
+const Discover = lazy(() => import('./pages/Discover.jsx'));
 const Library = lazy(() => import('./pages/Library.jsx'));
 const Watches = lazy(() => import('./pages/Watches.jsx'));
 const Settings = lazy(() => import('./pages/Settings.jsx'));
@@ -57,6 +58,7 @@ function Shell({ user }) {
                 <Route path="/twitch" element={<Twitch />} />
                 <Route path="/library" element={<Library />} />
                 <Route path="/history" element={<History />} />
+                <Route path="/discover" element={<Discover />} />
                 <Route path="/watches" element={<Watches />} />
                 <Route path="/links" element={<LinkGrabber />} />
                 <Route path="/sites" element={<SupportedSites />} />
