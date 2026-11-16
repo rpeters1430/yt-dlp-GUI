@@ -8,6 +8,7 @@ import NotificationSettings from '../components/NotificationSettings.jsx';
 import PlexSettings from '../components/PlexSettings.jsx';
 import DownloadsSettings from '../components/settings/DownloadsSettings.jsx';
 import AppearanceSettings from '../components/settings/AppearanceSettings.jsx';
+import SharingSettings from '../components/settings/SharingSettings.jsx';
 
 const SECTIONS = [
   { id: 'downloads', label: 'Downloads', description: 'Defaults used when you analyze a link. You can still change them per download.' },
@@ -17,6 +18,7 @@ const SECTIONS = [
   { id: 'media', label: 'Media servers', description: 'Jellyfin and Plex playlists, library scans and .nfo metadata.' },
   { id: 'autodelete', label: 'Auto-delete', description: 'Remove downloads once they have been watched.' },
   { id: 'notifications', label: 'Notifications', description: 'Get told when downloads finish or fail.' },
+  { id: 'sharing', label: 'Sharing', description: 'Send videos from your browser to the download queue.' },
   { id: 'account', label: 'Account', description: 'Appearance, password and sign-out.' },
 ];
 
@@ -1000,6 +1002,8 @@ export default function Settings({ username, onLogout }) {
           )}
 
           {section === 'notifications' && <NotificationSettings />}
+
+          {section === 'sharing' && <SharingSettings />}
 
           {section === 'account' && (
             <>

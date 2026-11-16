@@ -113,7 +113,7 @@ Each GitHub Actions image build checks official upstream releases for the latest
 | Module | Status | Highlights |
 |---|---|---|
 | **Cyber-Industrial UI** | 🟢 Production Ready | 4-tier dark depth, semantic neon signaling, CRT scanlines, Cozy/Compact density, PWA installable |
-| **Core Queue & Downloader** | 🟢 Production Ready | Concurrent queue, watchdog timers, delta socket logs, audio drift correction, smoothed speed & ETA |
+| **Core Queue & Downloader** | 🟢 Production Ready | Concurrent queue, watchdog timers, delta socket logs, audio drift correction, smoothed speed & ETA; in-app YouTube discovery |
 | **Music Hub & Standalone Tagging** | 🟢 Production Ready | MusicBrainz search, Cover Art Archive, Chromaprint / AcoustID fingerprinting, Apple catalog, selective tag reviews |
 | **Lidarr Bridge & Indexer** | 🟢 Production Ready | Torznab indexer (`/api/lidarr/torznab`), qBit/SAB emulation, wanted album browser, auto-import sync |
 | **Link Grabber & Forum Crawler** | 🟢 Production Ready | XenForo thread-aware crawling, multi-select host chips, grouped post archive passwords, JDownloader/aria2 hand-off |
@@ -166,6 +166,8 @@ Each GitHub Actions image build checks official upstream releases for the latest
 
 ### Downloading & Queue Engine
 - **Universal Downloader**: Paste one or multiple URLs at once from YouTube, Twitch, TikTok, Vimeo, Twitter/X, Reddit, SoundCloud, Bunkr, and hundreds of yt-dlp supported sites.
+- **YouTube Discovery**: Search YouTube videos inside the app, see whether a result is already downloaded or queued, add videos to the review tray, or start a channel Watch from a result.
+- **Browser Bookmarklet**: Create a bookmarklet in Settings → Sharing to send the current browser video into the app's review tray without storing an API key in the bookmark.
 - **Concurrent Queue Management**: Configurable concurrency slots with real-time pause/resume, front-of-queue priority bumping, and manual job prioritization ahead of Watch backfills.
 - **Real-Time WebSocket Telemetry**: Live progress percentage, moving-average smoothed download speeds, and dynamic ETA countdowns without jitter.
 - **Granular Format Picker**: Choose specific video/audio stream resolutions, containers, subtitle languages, chapter embeddings, and audio extraction options (OPUS, FLAC, MP3, M4A).
@@ -184,6 +186,7 @@ Each GitHub Actions image build checks official upstream releases for the latest
   - Dedicated window, app icon, and launch shortcuts directly into History, Watches, and Library.
   - Service worker caching for instant app shell startup.
   - **Android Web Share Target**: Share video and audio URLs directly from mobile browser or YouTube/Twitch apps into yt-dlp GUI.
+  - **Browser Bookmarklet**: Send the current video page into the app from a desktop browser; the normal sign-in session protects the queue.
 
 ### Music Hub & Metadata Tagging
 - **Standalone Tagging & Import**: Tag, review, and organize audio releases directly in the web UI without needing Lidarr.

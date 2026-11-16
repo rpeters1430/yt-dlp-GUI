@@ -32,6 +32,7 @@ export const api = {
   changePassword: (currentPassword, newPassword) => request('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
 
   getInfo: (url, analyzeId) => request('/downloads/info', { method: 'POST', body: JSON.stringify({ url, analyzeId }) }),
+  searchYouTube: (q) => request(`/downloads/youtube/search?q=${encodeURIComponent(q)}`),
   enqueue: (payload) => request('/downloads', { method: 'POST', body: JSON.stringify(payload) }),
   listDownloads: () => request('/downloads'),
   searchDownloads: ({ status = 'all', q = '', limit = 50, offset = 0, category = 'all' } = {}) =>

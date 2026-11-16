@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { Home, Music, Tv, Library, History, Radar, Link2, Globe, Settings, MoreHorizontal } from 'lucide-react';
+import { Home, Music, Tv, Library, History, Radar, Link2, Globe, Settings, MoreHorizontal, Search } from 'lucide-react';
 import { useDownloads } from '../context/DownloadsContext.jsx';
 
 const LINKS = [
@@ -9,6 +9,7 @@ const LINKS = [
   { to: '/twitch', label: 'Twitch', icon: Tv },
   { to: '/library', label: 'Library', icon: Library },
   { to: '/history', label: 'History', icon: History, badge: 'failed' },
+  { to: '/discover', label: 'Discover', icon: Search },
   { to: '/watches', label: 'Watches', icon: Radar },
   { to: '/links', label: 'Links', icon: Link2 },
   { to: '/sites', label: 'Sites', icon: Globe },
