@@ -43,13 +43,14 @@ test('inspectCookieFile flags a signed-out export and an expired one', () => {
   assert.equal(cookieCheck.inspectCookieFile(row('.google.com', 'SAPISID')).hasLogin, false);
   const old = [row('.youtube.com', 'SAPISID', PAST), row('.youtube.com', 'SID', PAST)].join('\n');
   assert.equal(cookieCheck.inspectCookieFile(old).allLoginCookiesExpired, true);
+  assert.equal(cookieCheck.inspectCookieFile(row('.youtube.com', 'SAPISID', PAST), PAST).allLoginCookiesExpired, true);
 });
 
 const login = { hasLogin: true, allLoginCookiesExpired: false };
 
-test('classifyCheck: success with no warning is good', () => {
+test('classifyCheck: public video success leaves login unverified', () => {
   const r = cookieCheck.classifyCheck({ inspection: login, exitCode: 0, stderr: '', timedOut: false });
-  assert.deepEqual([r.verdict, r.cookies, r.ip], ['good', 'valid', 'ok']);
+  assert.deepEqual([r.verdict, r.cookies, r.ip], ['good', 'unknown', 'ok']);
 });
 
 test('classifyCheck: rotated cookies but the IP is fine', () => {
@@ -62,10 +63,10 @@ test('classifyCheck: rejected cookies plus bot check (the failing-download case)
   assert.deepEqual([r.verdict, r.cookies, r.ip], ['bad', 'rejected', 'blocked']);
 });
 
-test('classifyCheck: accepted login but IP bot-checked', () => {
+test('classifyCheck: bot check leaves login unverified', () => {
   const r = cookieCheck.classifyCheck({ inspection: login, exitCode: 1, stderr: BOT, timedOut: false });
-  assert.deepEqual([r.verdict, r.cookies, r.ip], ['bad', 'valid', 'blocked']);
-  assert.match(r.message, /New cookies won't fix this/);
+  assert.deepEqual([r.verdict, r.cookies, r.ip], ['bad', 'unknown', 'blocked']);
+  assert.match(r.message, /could not be verified/);
 });
 
 test('classifyCheck: unrelated failure or timeout is unknown, not blamed on cookies', () => {
@@ -99,4 +100,20 @@ test('runYtdlpCheck kills a hung process and reports a timeout', async () => {
   };
   const r = await cookieCheck.runYtdlpCheck({ spawn: hung, timeoutMs: 20 });
   assert.equal(r.timedOut, true);
+});
+
+test('replacing cookies invalidates a pending check and exposes the new file status', async () => {
+  fs.writeFileSync(COOKIES_FILE, LOGGED_IN);
+  assert.equal(cookieCheck.getFileStatus(), 'present');
+  const pending = cookieCheck.checkYoutubeCookies({ spawn: fakeSpawn() });
+
+  fs.writeFileSync(COOKIES_FILE, row('.youtube.com', 'SAPISID', PAST));
+  cookieCheck.clearLastResult();
+  assert.equal(cookieCheck.getFileStatus(), 'expired');
+  assert.equal(await pending, null);
+  assert.equal(cookieCheck.getLastResult(), null);
+
+  const current = await cookieCheck.checkYoutubeCookies({ spawn: fakeSpawn() });
+  assert.equal(current.cookies, 'expired');
+  assert.equal(cookieCheck.getLastResult().cookies, 'expired');
 });

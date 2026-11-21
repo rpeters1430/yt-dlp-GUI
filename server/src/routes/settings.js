@@ -42,7 +42,7 @@ function saveSetting(key, value) {
 }
 
 router.get('/cookies', (req, res) => {
-  res.json({ configured: fs.existsSync(COOKIES_FILE) });
+  res.json({ configured: fs.existsSync(COOKIES_FILE), fileStatus: cookieCheck.getFileStatus() });
 });
 
 // Accepts pasted cookies.txt (Netscape format) content, e.g. exported via a
@@ -58,7 +58,7 @@ router.put('/cookies', (req, res) => {
   // set separately via the Twitch Settings tab (which merges into this same file).
   ytdlp.writeCookiesFilePreservingTwitchAuth(content);
   cookieCheck.clearLastResult();
-  res.json({ ok: true });
+  res.json({ ok: true, fileStatus: cookieCheck.getFileStatus() });
 });
 
 // Last stored check result (or null), so the page can show it without spending a request.
