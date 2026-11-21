@@ -23,8 +23,20 @@ services:
       # - SOLVERR_PROXY_URL=http://USER:PASSWORD@solverr:8192
       # - SOLVERR_PROXY_CA_URL=http://solverr:8191/proxy-ca.crt
       # - SOLVERR_PROXY_CA_SHA256=<fingerprint from Solverr startup log>
+      # Optional YouTube PO-token provider: uncomment the bgutil-provider service below, then
+      # turn it on in Settings → Downloads. Only needed to override the default URL:
+      # - BGUTIL_POT_URL=http://bgutil-provider:4416
     volumes:
       - ./downloads:/downloads
       - ./videos:/videos
       - ./music:/music
       - ./config:/config
+
+  # Optional: mints YouTube PO tokens so requests look like a real browser's player. Keep the
+  # tag in step with BGUTIL_POT_VERSION in the Dockerfile. Not exposed to the host; ytdlp-gui
+  # reaches it at http://bgutil-provider:4416 on the compose network.
+  # bgutil-provider:
+  #   image: brainicism/bgutil-ytdlp-pot-provider:2.0.2
+  #   container_name: bgutil-provider
+  #   restart: unless-stopped
+  #   init: true

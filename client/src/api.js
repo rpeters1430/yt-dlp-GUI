@@ -98,6 +98,7 @@ export const api = {
   updateSettings: (payload) => request('/settings', { method: 'PUT', body: JSON.stringify(payload) }),
   getSolverrProxyStatus: () => request('/settings/solverr-proxy'),
   checkSolverrProxy: () => request('/settings/solverr-proxy/check', { method: 'POST' }),
+  getPoTokenStatus: () => request('/settings/po-token'),
 
   getCookiesStatus: () => request('/settings/cookies'),
   saveCookies: (content) => request('/settings/cookies', { method: 'PUT', body: JSON.stringify({ content }) }),

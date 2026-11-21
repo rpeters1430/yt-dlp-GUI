@@ -62,6 +62,18 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     && rm /tmp/requirements-docker.txt \
     && rm -rf /var/lib/apt/lists/*
 
+# Optional YouTube PO-token provider plugin (Settings → Downloads → PO-token provider). It goes
+# in its own directory, not site-packages, so yt-dlp only loads it when that setting is on;
+# loaded without a reachable provider it warns on every YouTube request. Keep the version in
+# step with the brainicism/bgutil-ytdlp-pot-provider container in docker-compose.yml.
+ARG BGUTIL_POT_VERSION=2.0.2
+ARG BGUTIL_POT_SHA256=4f488008d25a715837df79472aad06ea052d20e14ad3a02609bbb0fbd746b8be
+RUN echo "bgutil-ytdlp-pot-provider==${BGUTIL_POT_VERSION} --hash=sha256:${BGUTIL_POT_SHA256}" > /tmp/bgutil.txt \
+    && pip3 install --no-cache-dir --break-system-packages --no-deps --only-binary=:all: --require-hashes \
+       --target /opt/yt-dlp-plugins/bgutil -r /tmp/bgutil.txt \
+    && rm /tmp/bgutil.txt \
+    && test -d /opt/yt-dlp-plugins/bgutil/yt_dlp_plugins
+
 # Install a checksum-verified static FFmpeg build (amd64 / arm64).
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in \

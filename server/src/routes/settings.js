@@ -8,6 +8,7 @@ const outputTemplate = require('../services/outputTemplate');
 const solverrProxy = require('../services/solverrProxy');
 const { SITE_COOKIES, writeSiteCookies, clearSiteCookies, siteCookiesStatus } = require('../services/ytdlpCookies');
 const cookieCheck = require('../services/cookieCheck');
+const poToken = require('../services/poToken');
 const { COOKIES_FILE } = ytdlp;
 
 const router = express.Router();
@@ -29,6 +30,8 @@ const ALLOWED_SETTINGS_KEYS = new Set([
   'impersonate_target',
   'solverr_proxy_mode',
   'solverr_proxy_url',
+  'pot_provider_mode',
+  'pot_provider_url',
 ]);
 
 function saveSetting(key, value) {
@@ -210,6 +213,8 @@ router.get('/', (req, res) => {
   settings.solverr_proxy_mode = solverrProxy.MODES.has(settings.solverr_proxy_mode) ? settings.solverr_proxy_mode : 'auto';
   // The password never leaves the server; PUT accepts the mask back and keeps the stored one.
   settings.solverr_proxy_url = solverrProxy.maskProxyUrl(settings.solverr_proxy_url || '');
+  settings.pot_provider_mode = poToken.MODES.has(settings.pot_provider_mode) ? settings.pot_provider_mode : 'off';
+  settings.pot_provider_url = settings.pot_provider_url || '';
   res.json(settings);
 });
 
@@ -280,6 +285,19 @@ router.put('/', (req, res) => {
     }
   }
 
+  const potMode = entries.find(([key]) => key === 'pot_provider_mode');
+  if (potMode && !poToken.MODES.has(potMode[1])) {
+    return res.status(400).json({ error: 'pot_provider_mode must be on or off' });
+  }
+
+  // Blank means "use BGUTIL_POT_URL, or http://bgutil-provider:4416".
+  const potUrl = entries.find(([key]) => key === 'pot_provider_url');
+  if (potUrl) {
+    potUrl[1] = potUrl[1] == null ? '' : String(potUrl[1]).trim().replace(/\/+$/, '');
+    const potError = potUrl[1] ? poToken.validateUrl(potUrl[1]) : null;
+    if (potError) return res.status(400).json({ error: potError });
+  }
+
   const concurrency = entries.find(([key]) => key === 'max_concurrent_downloads');
   if (concurrency) {
     const n = Number(concurrency[1]);
@@ -299,7 +317,14 @@ router.put('/', (req, res) => {
   // A higher limit can start queued downloads right away.
   if (concurrency) queue.processNext();
   if (proxyMode || proxyUrl) solverrProxy.check();
+  // The last cookie test ran with the old PO-token setup, so its IP answer no longer applies.
+  if (potMode || potUrl) cookieCheck.clearLastResult();
   res.json({ ok: true });
+});
+
+// PO-token provider status; pings the provider when the setting is on.
+router.get('/po-token', async (req, res) => {
+  res.json(await poToken.getStatus());
 });
 
 router.get('/solverr-proxy', (req, res) => {

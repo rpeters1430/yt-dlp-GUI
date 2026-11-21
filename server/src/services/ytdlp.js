@@ -6,6 +6,7 @@ const siteProfiles = require('./siteProfiles');
 const nasProcessing = require('./nasProcessing');
 const { processingGate } = require('./processingGate');
 const solverrProxy = require('./solverrProxy');
+const poToken = require('./poToken');
 const { DEFAULT_TEMPLATE: DEFAULT_OUTPUT_TEMPLATE } = require('./outputTemplate');
 
 const {
@@ -147,6 +148,7 @@ function commonArgs(options = {}) {
     ...proxy,
     ...(proxy.length ? [] : impersonateArgs(options?.impersonate)),
     ...cookieArgs(),
+    ...poToken.args(),
     ...ffmpegArgs(),
   ];
 }
