@@ -74,7 +74,11 @@ require('./services/solverrProxy').start();
 require('./services/siteProfiles').refreshYtdlpFacts();
 // Log which JS runtimes yt-dlp can actually use for YouTube, so a missing one shows up in `docker logs`.
 ytdlp.detectJsRuntimes().then((found) => {
-  if (!found || found === 'none') {
+  if (!found) {
+    // null: yt-dlp didn't print its runtime line, usually because the 30 s probe timed out
+    // while startup was busy. That says nothing about whether a runtime is installed.
+    console.warn('[ytdlp:js] Could not check JS runtimes: yt-dlp gave no answer within 30s');
+  } else if (found === 'none') {
     console.warn('[ytdlp:js] yt-dlp found no usable JS runtime; YouTube downloads may fail or lose formats');
   } else {
     console.log(`[ytdlp:js] JS runtimes available to yt-dlp: ${found}`);
