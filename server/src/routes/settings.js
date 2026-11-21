@@ -7,6 +7,7 @@ const queue = require('../services/queue');
 const outputTemplate = require('../services/outputTemplate');
 const solverrProxy = require('../services/solverrProxy');
 const { SITE_COOKIES, writeSiteCookies, clearSiteCookies, siteCookiesStatus } = require('../services/ytdlpCookies');
+const cookieCheck = require('../services/cookieCheck');
 const { COOKIES_FILE } = ytdlp;
 
 const router = express.Router();
@@ -53,13 +54,30 @@ router.put('/cookies', (req, res) => {
   // Uses the preserving variant so this doesn't silently wipe a Twitch auth-token cookie
   // set separately via the Twitch Settings tab (which merges into this same file).
   ytdlp.writeCookiesFilePreservingTwitchAuth(content);
+  cookieCheck.clearLastResult();
   res.json({ ok: true });
+});
+
+// Last stored check result (or null), so the page can show it without spending a request.
+router.get('/cookies/check', (req, res) => {
+  res.json({ result: cookieCheck.getLastResult() });
+});
+
+// Runs one real yt-dlp request against a public video and reports whether YouTube accepted
+// the login and whether it bot-checked this server's IP. See services/cookieCheck.js.
+router.post('/cookies/check', async (req, res) => {
+  try {
+    res.json({ result: await cookieCheck.checkYoutubeCookies() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Clears the whole cookies.txt, including any merged-in Twitch auth-token cookie — this is
 // an explicit "remove everything" action, unlike the PUT above.
 router.delete('/cookies', (req, res) => {
   if (fs.existsSync(COOKIES_FILE)) fs.unlinkSync(COOKIES_FILE);
+  cookieCheck.clearLastResult();
   res.json({ ok: true });
 });
 
