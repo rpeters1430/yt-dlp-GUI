@@ -1771,6 +1771,8 @@ module.exports = {
   sweepPrivateCookieDirs,
   PRIVATE_COOKIES_ROOT,
   commonArgs,
+  spawnYtdlp,
+  killProcessTree,
   getImpersonateTarget,
   impersonateArgs,
 };

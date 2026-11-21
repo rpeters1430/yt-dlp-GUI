@@ -36,6 +36,9 @@ export default function Settings({ username, onLogout }) {
   const [cookiesError, setCookiesError] = useState('');
   const [cookiesBusy, setCookiesBusy] = useState(false);
   const [cookiesFileName, setCookiesFileName] = useState('');
+  const [cookieCheck, setCookieCheck] = useState(null);
+  const [cookieCheckBusy, setCookieCheckBusy] = useState(false);
+  const [cookieCheckError, setCookieCheckError] = useState('');
 
   const [siteCookies, setSiteCookies] = useState(null);
   const [crawlerCookiesStatus, setCrawlerCookiesStatus] = useState(null);
@@ -91,6 +94,7 @@ export default function Settings({ username, onLogout }) {
 
   function refreshCookiesStatus() {
     api.getCookiesStatus().then((s) => setCookiesConfigured(s.configured)).catch(() => {});
+    api.getCookieCheck().then((r) => setCookieCheck(r.result)).catch(() => {});
     api.getSiteCookies().then(setSiteCookies).catch(() => {});
     api.getLinkGrabberCookies().then(setCrawlerCookiesStatus).catch(() => {});
   }
@@ -145,12 +149,29 @@ export default function Settings({ username, onLogout }) {
     try {
       await api.saveCookies(cookiesText);
       setCookiesText('');
-      setCookiesMessage('Cookies saved.');
+      setCookiesMessage('Cookies saved. Testing them with YouTube…');
       refreshCookiesStatus();
     } catch (err) {
       setCookiesError(err.message);
+      return;
     } finally {
       setCookiesBusy(false);
+    }
+    // Test right away so a dead export shows up here, not as a failed download later.
+    handleCheckCookies();
+  }
+
+  async function handleCheckCookies() {
+    setCookieCheckError('');
+    setCookieCheckBusy(true);
+    try {
+      const { result } = await api.checkCookies();
+      setCookieCheck(result);
+      setCookiesMessage('');
+    } catch (err) {
+      setCookieCheckError(err.message);
+    } finally {
+      setCookieCheckBusy(false);
     }
   }
 
@@ -559,6 +580,11 @@ export default function Settings({ username, onLogout }) {
               {cookiesBusy ? 'Saving…' : 'Save cookies'}
             </button>
             {cookiesConfigured && (
+              <button type="button" className="btn-secondary" onClick={handleCheckCookies} disabled={cookieCheckBusy}>
+                {cookieCheckBusy ? 'Testing with YouTube…' : 'Test YouTube cookies'}
+              </button>
+            )}
+            {cookiesConfigured && (
               <button type="button" className="btn-secondary" onClick={handleClearCookies}>
                 Remove saved cookies
               </button>
@@ -566,6 +592,8 @@ export default function Settings({ username, onLogout }) {
           </div>
           {cookiesMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{cookiesMessage}</div>}
           {cookiesError && <div className="alert alert-error"><AlertCircle size={15} />{cookiesError}</div>}
+          {cookieCheckError && <div className="alert alert-error"><AlertCircle size={15} />{cookieCheckError}</div>}
+          {cookiesConfigured && cookieCheck && <CookieCheckResult result={cookieCheck} />}
         </form>
       </section>
 
@@ -1058,5 +1086,41 @@ export default function Settings({ username, onLogout }) {
         </div>
       </div>
     </>
+  );
+}
+
+const COOKIE_LABELS = {
+  valid: ['Accepted', 'status-completed'],
+  rejected: ['Rejected by YouTube', 'status-failed'],
+  expired: ['Expired', 'status-failed'],
+  no_login: ['No login in file', 'status-failed'],
+  missing: ['No file', 'status-failed'],
+  unknown: ["Couldn't tell", 'status-queued'],
+};
+const IP_LABELS = {
+  ok: ['Not blocked', 'status-completed'],
+  blocked: ['Bot-checked', 'status-failed'],
+  unknown: ["Couldn't tell", 'status-queued'],
+};
+
+// Result of the server's one-request YouTube cookie test (services/cookieCheck.js). The two
+// rows matter separately: a rejected login means re-export, a bot-checked IP means new
+// cookies won't help.
+function CookieCheckResult({ result }) {
+  const [loginText, loginClass] = COOKIE_LABELS[result.cookies] || COOKIE_LABELS.unknown;
+  const [ipText, ipClass] = IP_LABELS[result.ip] || IP_LABELS.unknown;
+  const alertClass = result.verdict === 'good' ? 'alert-success' : result.verdict === 'bad' ? 'alert-error' : 'alert-info';
+  const checked = result.checkedAt ? new Date(result.checkedAt).toLocaleString() : '';
+  return (
+    <div className="cookie-check">
+      <div className="options-row" style={{ marginTop: 0, gap: 16, flexWrap: 'wrap' }}>
+        <span>YouTube login: <span className={`tag status-tag ${loginClass}`}>{loginText}</span></span>
+        <span>This server's IP: <span className={`tag status-tag ${ipClass}`}>{ipText}</span></span>
+      </div>
+      <div className={`alert ${alertClass}`}>
+        {result.verdict === 'good' ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
+        <span>{result.message}{checked && <> <small>(checked {checked})</small></>}</span>
+      </div>
+    </div>
   );
 }
