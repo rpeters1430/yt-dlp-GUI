@@ -90,7 +90,7 @@ function classifyCheck({ inspection, exitCode, stderr, timedOut }) {
   } else if (ip === 'blocked') {
     verdict = 'bad';
     message = 'YouTube accepted the login but is bot-checking this server\'s IP. New cookies won\'t fix this. '
-      + 'Move the server off the VPN or datacenter IP, or add a PO-token provider.';
+      + 'Move the server off the VPN or datacenter IP, or turn on the PO-token provider in Settings → Downloads.';
   } else if (cookies === 'valid' && ip === 'ok') {
     verdict = 'good';
     message = 'YouTube accepted the login and served video data to this server.';

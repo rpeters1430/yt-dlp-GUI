@@ -6,6 +6,7 @@ import { useToast } from '../../context/ToastContext.jsx';
 import { Switch } from '../DownloadOptionsFields.jsx';
 import { getAutoAnalyzeOnPaste, setAutoAnalyzeOnPaste } from '../../prefs.js';
 import SolverrProxySettings from './SolverrProxySettings.jsx';
+import PoTokenSettings from './PoTokenSettings.jsx';
 
 export function SettingRow({ label, description, children }) {
   return (
@@ -195,6 +196,7 @@ export default function DownloadsSettings() {
         </div>
       </SettingRow>
       <SolverrProxySettings />
+      <PoTokenSettings />
       <SettingRow
         label="One-click browser bookmarklet & Android Share"
         description="Drag 'Send to yt-dlp GUI' to your bookmarks bar, or install this web app on Android to share links directly from the native Share sheet."
