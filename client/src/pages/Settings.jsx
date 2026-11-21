@@ -33,6 +33,7 @@ export default function Settings({ username, onLogout }) {
   const [error, setError] = useState('');
 
   const [cookiesConfigured, setCookiesConfigured] = useState(null);
+  const [cookieFileStatus, setCookieFileStatus] = useState(null);
   const [cookiesText, setCookiesText] = useState('');
   const [cookiesMessage, setCookiesMessage] = useState('');
   const [cookiesError, setCookiesError] = useState('');
@@ -95,7 +96,10 @@ export default function Settings({ username, onLogout }) {
   const [jellyfinSyncNowError, setJellyfinSyncNowError] = useState('');
 
   function refreshCookiesStatus() {
-    api.getCookiesStatus().then((s) => setCookiesConfigured(s.configured)).catch(() => {});
+    api.getCookiesStatus().then((s) => {
+      setCookiesConfigured(s.configured);
+      setCookieFileStatus(s.fileStatus);
+    }).catch(() => {});
     api.getCookieCheck().then((r) => setCookieCheck(r.result)).catch(() => {});
     api.getSiteCookies().then(setSiteCookies).catch(() => {});
     api.getLinkGrabberCookies().then(setCrawlerCookiesStatus).catch(() => {});
@@ -149,10 +153,13 @@ export default function Settings({ username, onLogout }) {
     setCookiesError('');
     setCookiesBusy(true);
     try {
-      await api.saveCookies(cookiesText);
+      const { fileStatus } = await api.saveCookies(cookiesText);
+      setCookiesConfigured(true);
+      setCookieFileStatus(fileStatus);
+      setCookieCheck(null);
+      setCookiesFileName('');
       setCookiesText('');
-      setCookiesMessage('Cookies saved. Testing them with YouTube…');
-      refreshCookiesStatus();
+      setCookiesMessage('Cookies saved.');
     } catch (err) {
       setCookiesError(err.message);
       return;
@@ -183,7 +190,10 @@ export default function Settings({ username, onLogout }) {
     try {
       await api.clearCookies();
       setCookiesMessage('Cookies removed.');
-      refreshCookiesStatus();
+      setCookiesConfigured(false);
+      setCookieFileStatus(null);
+      setCookieCheck(null);
+      setCookieCheckError('');
     } catch (err) {
       setCookiesError(err.message);
     }
@@ -568,8 +578,8 @@ export default function Settings({ username, onLogout }) {
         <form onSubmit={handleSaveCookies} className="settings-form">
           <label className="file-input-label">
             <Upload size={14} />
-            {cookiesFileName || 'Upload cookies.txt…'}
-            <input type="file" accept=".txt,text/plain" onChange={handleCookiesFile} hidden />
+            {cookiesFileName || 'Choose cookies.txt…'}
+            <input type="file" accept=".txt,text/plain" onChange={handleCookiesFile} onClick={(event) => { event.currentTarget.value = ''; }} hidden />
           </label>
           <textarea
             placeholder="…or paste cookies.txt contents here"
@@ -578,16 +588,16 @@ export default function Settings({ username, onLogout }) {
             onChange={(e) => setCookiesText(e.target.value)}
           />
           <div className="options-row" style={{ marginTop: 0 }}>
-            <button type="submit" disabled={cookiesBusy || !cookiesText.trim()}>
+            <button type="submit" disabled={cookiesBusy || cookieCheckBusy || !cookiesText.trim()}>
               {cookiesBusy ? 'Saving…' : 'Save cookies'}
             </button>
             {cookiesConfigured && (
-              <button type="button" className="btn-secondary" onClick={handleCheckCookies} disabled={cookieCheckBusy}>
+              <button type="button" className="btn-secondary" onClick={handleCheckCookies} disabled={cookiesBusy || cookieCheckBusy}>
                 {cookieCheckBusy ? 'Testing with YouTube…' : 'Test YouTube cookies'}
               </button>
             )}
             {cookiesConfigured && (
-              <button type="button" className="btn-secondary" onClick={handleClearCookies}>
+              <button type="button" className="btn-secondary" onClick={handleClearCookies} disabled={cookiesBusy || cookieCheckBusy}>
                 Remove saved cookies
               </button>
             )}
@@ -595,7 +605,14 @@ export default function Settings({ username, onLogout }) {
           {cookiesMessage && <div className="alert alert-success"><CheckCircle2 size={15} />{cookiesMessage}</div>}
           {cookiesError && <div className="alert alert-error"><AlertCircle size={15} />{cookiesError}</div>}
           {cookieCheckError && <div className="alert alert-error"><AlertCircle size={15} />{cookieCheckError}</div>}
-          {cookiesConfigured && cookieCheck && <CookieCheckResult result={cookieCheck} />}
+          {cookiesConfigured && (
+            <div aria-live="polite">
+              <p>YouTube cookie file: {COOKIE_FILE_LABELS[cookieFileStatus] || 'Status unavailable'}</p>
+              {cookieCheckBusy && <p>Testing YouTube through the configured download route…</p>}
+              {cookieCheck && <CookieCheckResult result={cookieCheck} />}
+              {!cookieCheck && !cookieCheckBusy && !cookieCheckError && <p>No YouTube test result yet.</p>}
+            </div>
+          )}
         </form>
       </section>
 
@@ -1093,8 +1110,13 @@ export default function Settings({ username, onLogout }) {
   );
 }
 
+const COOKIE_FILE_LABELS = {
+  present: 'Login cookies present with no detected expiry',
+  expired: 'Login cookies expired',
+  no_login: 'No YouTube login cookies found',
+};
+
 const COOKIE_LABELS = {
-  valid: ['Accepted', 'status-completed'],
   rejected: ['Rejected by YouTube', 'status-failed'],
   expired: ['Expired', 'status-failed'],
   no_login: ['No login in file', 'status-failed'],
@@ -1102,14 +1124,11 @@ const COOKIE_LABELS = {
   unknown: ["Couldn't tell", 'status-queued'],
 };
 const IP_LABELS = {
-  ok: ['Not blocked', 'status-completed'],
+  ok: ['Public video available', 'status-completed'],
   blocked: ['Bot-checked', 'status-failed'],
   unknown: ["Couldn't tell", 'status-queued'],
 };
 
-// Result of the server's one-request YouTube cookie test (services/cookieCheck.js). The two
-// rows matter separately: a rejected login means re-export, a bot-checked IP means new
-// cookies won't help.
 function CookieCheckResult({ result }) {
   const [loginText, loginClass] = COOKIE_LABELS[result.cookies] || COOKIE_LABELS.unknown;
   const [ipText, ipClass] = IP_LABELS[result.ip] || IP_LABELS.unknown;
@@ -1118,8 +1137,8 @@ function CookieCheckResult({ result }) {
   return (
     <div className="cookie-check">
       <div className="options-row" style={{ marginTop: 0, gap: 16, flexWrap: 'wrap' }}>
-        <span>YouTube login: <span className={`tag status-tag ${loginClass}`}>{loginText}</span></span>
-        <span>This server's IP: <span className={`tag status-tag ${ipClass}`}>{ipText}</span></span>
+        <span>YouTube login status: <span className={`tag status-tag ${loginClass}`}>{loginText}</span></span>
+        <span>Download route: <span className={`tag status-tag ${ipClass}`}>{ipText}</span></span>
       </div>
       <div className={`alert ${alertClass}`}>
         {result.verdict === 'good' ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
