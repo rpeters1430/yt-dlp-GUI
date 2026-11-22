@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dismissReleaseNotes, RELEASE_NOTES_DISMISSAL_KEY, shouldShowReleaseNotes } from './releaseNotes.js';
+import { dismissReleaseNotes, formatAppVersion, RELEASE_NOTES_DISMISSAL_KEY, shouldShowReleaseNotes } from './releaseNotes.js';
 
 function createStorage(initial = {}) {
   const values = new Map(Object.entries(initial));
@@ -30,4 +30,13 @@ test('hides missing, blank, or invalid release notes', () => {
 test('still offers release notes when browser storage is unavailable', () => {
   const metadata = { revision: 'abc', notes: 'Change' };
   assert.equal(shouldShowReleaseNotes(metadata, { getItem: () => { throw new Error('blocked'); } }), true);
+});
+
+test('formats app version for display', () => {
+  assert.equal(formatAppVersion({ version: '1.2.3' }), 'v1.2.3');
+  assert.equal(formatAppVersion({ version: 'v1.2.3' }), 'v1.2.3');
+  assert.equal(formatAppVersion({ version: 'development' }), 'development');
+  assert.equal(formatAppVersion({ version: 'build-abc123def456' }), 'build-abc123def456');
+  assert.equal(formatAppVersion({ version: '  ' }), '');
+  assert.equal(formatAppVersion(null), '');
 });
