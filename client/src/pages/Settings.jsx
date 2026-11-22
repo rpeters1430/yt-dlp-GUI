@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { KeyRound, Cookie, PackageCheck, CheckCircle2, AlertCircle, Upload, Trash2, ListMusic, } from 'lucide-react';
 import SiteCookiesPanel from '../components/SiteCookiesPanel.jsx';
 import { api } from '../api.js';
+import { formatAppVersion } from '../releaseNotes.js';
 import FileNamingSettings from '../components/FileNamingSettings.jsx';
 import NotificationSettings from '../components/NotificationSettings.jsx';
 import PlexSettings from '../components/PlexSettings.jsx';
@@ -52,6 +53,7 @@ export default function Settings({ username, onLogout }) {
   const [crawlerCookiesError, setCrawlerCookiesError] = useState('');
 
   const [versions, setVersions] = useState(null);
+  const [appVersion, setAppVersion] = useState('');
   const [channel, setChannel] = useState('stable');
   const [ytdlpBusy, setYtdlpBusy] = useState(false);
   const [ytdlpMessage, setYtdlpMessage] = useState('');
@@ -111,6 +113,11 @@ export default function Settings({ username, onLogout }) {
 
   useEffect(refreshCookiesStatus, []);
   useEffect(refreshVersions, []);
+  useEffect(() => {
+    api.getReleaseNotes().then((info) => {
+      setAppVersion(formatAppVersion(info));
+    }).catch(() => {});
+  }, []);
   useEffect(() => {
     api.getSettings().then((s) => {
       if (s.ytdlpChannel) setChannel(s.ytdlpChannel);
@@ -499,6 +506,7 @@ export default function Settings({ username, onLogout }) {
     <>
       <div className="page-title-row">
         <h1>Settings</h1>
+        {appVersion && <span className="mono-meta">{appVersion}</span>}
       </div>
 
       <div className="settings-layout">

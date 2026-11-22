@@ -27,3 +27,9 @@ export function dismissReleaseNotes(revision, storage = browserStorage()) {
     // Storage may be disabled; the dialog can still be dismissed for this session.
   }
 }
+
+export function formatAppVersion(metadata) {
+  const version = typeof metadata?.version === 'string' ? metadata.version.trim() : '';
+  if (!version) return '';
+  return /^\d/.test(version) ? `v${version}` : version;
+}
