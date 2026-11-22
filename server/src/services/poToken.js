@@ -31,9 +31,15 @@ function getMode() {
   return MODES.has(mode) ? mode : 'off';
 }
 
+// A stored value that fails validateUrl (e.g. saved before it got stricter) is ignored rather
+// than handed to yt-dlp.
+function storedUrl() {
+  const stored = (readSetting('pot_provider_url') || '').trim().replace(/\/+$/, '');
+  return stored && !validateUrl(stored) ? stored : '';
+}
+
 function getUrl() {
-  const stored = (readSetting('pot_provider_url') || '').trim();
-  return (stored || DEFAULT_URL).replace(/\/+$/, '');
+  return (storedUrl() || DEFAULT_URL).replace(/\/+$/, '');
 }
 
 function pluginInstalled() {
@@ -51,6 +57,11 @@ function validateUrl(raw) {
   if (!['http:', 'https:'].includes(parsed.protocol)) return 'Provider URL must start with http:// or https://';
   if (!parsed.hostname) return 'Provider URL needs a host';
   if (parsed.pathname && parsed.pathname !== '/') return 'Provider URL must not include a path';
+  // The URL goes into yt-dlp's --extractor-args, where ';' and ',' separate arguments, and
+  // ping() appends /ping to it, so only scheme, host and port are allowed.
+  if (parsed.username || parsed.password) return 'Provider URL must not include a username or password';
+  if (parsed.search || parsed.hash || /[?#]/.test(String(raw))) return 'Provider URL must not include ? or #';
+  if (/[;,\s]/.test(String(raw))) return 'Provider URL must not include ; , or spaces';
   return null;
 }
 
@@ -103,7 +114,7 @@ async function getStatus({ pingFn = ping } = {}) {
   const base = {
     mode,
     url,
-    urlSource: (readSetting('pot_provider_url') || '').trim() ? 'setting' : (process.env.BGUTIL_POT_URL ? 'env' : 'default'),
+    urlSource: storedUrl() ? 'setting' : (process.env.BGUTIL_POT_URL ? 'env' : 'default'),
     pluginInstalled: pluginInstalled(),
     checkedAt: new Date().toISOString(),
   };
