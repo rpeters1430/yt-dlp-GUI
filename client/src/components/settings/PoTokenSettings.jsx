@@ -79,7 +79,7 @@ export default function PoTokenSettings() {
           size="lg"
           label="Use PO-token provider"
           checked={enabled}
-          disabled={busy || Boolean(status && !status.pluginInstalled)}
+          disabled={busy || Boolean(status && !status.pluginInstalled && !enabled)}
           onChange={(v) => save({ pot_provider_mode: v ? 'on' : 'off' }, v ? 'PO-token provider on' : 'PO-token provider off')}
         />
       </SettingRow>

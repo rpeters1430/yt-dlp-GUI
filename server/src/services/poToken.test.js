@@ -35,6 +35,9 @@ test('on: loads the plugin dir alongside the default dirs and points it at the p
   ]);
   setSetting('pot_provider_url', 'http://10.0.0.5:4416/');
   assert.equal(poToken.args().at(-1), 'youtubepot-bgutilhttp:base_url=http://10.0.0.5:4416');
+  // A stored URL that would smuggle extra extractor args falls back to the default.
+  setSetting('pot_provider_url', 'http://10.0.0.5:4416?x=1;player_client=web');
+  assert.equal(poToken.args().at(-1), 'youtubepot-bgutilhttp:base_url=http://bgutil-provider:4416');
 });
 
 test('on but plugin missing: no args, so yt-dlp is not told about a plugin it lacks', () => {
@@ -51,6 +54,10 @@ test('validateUrl accepts host:port URLs and rejects paths and other schemes', (
   assert.match(poToken.validateUrl('ftp://x:4416'), /http/);
   assert.match(poToken.validateUrl('http://x:4416/get_pot'), /path/);
   assert.match(poToken.validateUrl('not a url'), /look like/);
+  assert.match(poToken.validateUrl('http://x:4416?a=b;c=d'), /\?/);
+  assert.match(poToken.validateUrl('http://x:4416/#frag'), /\?/);
+  assert.match(poToken.validateUrl('http://user:pw@x:4416'), /username/);
+  assert.match(poToken.validateUrl('http://x,y:4416'), /;|look like|host/);
 });
 
 test('ping reads the provider version, and reports a down provider', async () => {
