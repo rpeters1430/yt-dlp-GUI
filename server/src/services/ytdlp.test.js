@@ -801,3 +801,20 @@ test('normalizeDownloadSection accepts time ranges in yt-dlp\'s "*start-end" for
   assert.equal(normalizeDownloadSection('intro'), null);
   assert.equal(normalizeDownloadSection(['0-10']), null);
 });
+
+test('ytdlpWarningLines keeps yt-dlp warnings and errors, deduplicated and redacted', () => {
+  const { ytdlpWarningLines } = require('./ytdlp');
+  const stderr = [
+    '[youtube] Extracting URL: https://youtu.be/x',
+    'WARNING: [youtube] x: n challenge solving failed: Some formats may be missing.',
+    'WARNING: [youtube] x: n challenge solving failed: Some formats may be missing.',
+    'WARNING: proxy http://user:secret@proxy:8192 unreachable',
+    'ERROR: [youtube] x: Requested format is not available',
+  ].join('\n');
+  assert.deepEqual(ytdlpWarningLines(stderr), [
+    'WARNING: [youtube] x: n challenge solving failed: Some formats may be missing.',
+    'WARNING: proxy http://[redacted]@proxy:8192 unreachable',
+    'ERROR: [youtube] x: Requested format is not available',
+  ]);
+  assert.deepEqual(ytdlpWarningLines(''), []);
+});

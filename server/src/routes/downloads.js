@@ -114,8 +114,12 @@ router.post('/info', async (req, res) => {
     // getInfo tolerates "no formats" so scheduled broadcasts can be probed; anything else
     // without formats (geo-blocked, removed, …) still can't be downloaded.
     if (heights.length === 0 && !(info.formats || []).length && liveStatus !== 'is_upcoming') {
-      console.warn(`[ytdlp:info] No formats for ${url} (extractor=${info.extractor || '?'}, live_status=${liveStatus || 'none'})`);
-      return res.status(502).json({ error: 'No downloadable formats found for this link' });
+      const warnings = info.ytdlpWarnings || [];
+      console.warn(`[ytdlp:info] No formats for ${url} (extractor=${info.extractor || '?'}, live_status=${liveStatus || 'none'})`
+        + (warnings.length ? `:\n  ${warnings.join('\n  ')}` : ''));
+      // The last yt-dlp warning is usually the actual reason (JS challenge, PO token, bot check…).
+      const reason = warnings.length ? `: ${warnings[warnings.length - 1].replace(/^(WARNING|ERROR):\s*/, '')}` : '';
+      return res.status(502).json({ error: `No downloadable formats found for this link${reason}` });
     }
 
     res.json({
