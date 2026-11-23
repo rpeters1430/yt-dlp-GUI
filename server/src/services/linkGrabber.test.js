@@ -6,6 +6,7 @@ const {
   parseNetscapeCookies,
   parseCookiesContent,
   cookieHeaderFor,
+  cookiesFor,
   getCrawlerCookiesStatus,
   saveCrawlerCookies,
   deleteCrawlerCookies,
@@ -774,6 +775,43 @@ test('a Solverr clearance cookie and User-Agent are reused on later forum pages'
 
   assert.equal(calls[1].userAgent, 'SolverBrowser/1.0');
   assert.equal(calls[1].cookie, 'cf_clearance=clear');
+});
+
+test('the challenge solver only receives cookies for the page it is solving', async (t) => {
+  const thread = 'https://forum.example.com/threads/t.1/';
+  let sentCookies = null;
+  const solver = http.createServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    sentCookies = JSON.parse(body).cookies;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', solution: { url: thread, status: 200, response: '<p>ok</p>', cookies: [] } }));
+  });
+  await new Promise((resolve) => solver.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => solver.close(resolve)));
+
+  const cookiesText = [
+    '# Netscape HTTP Cookie File',
+    '.youtube.com\tTRUE\t/\tTRUE\t9999999999\tSAPISID\tgoogle-login',
+    '.google.com\tTRUE\t/\tTRUE\t9999999999\tSID\tgoogle-sid',
+    '.forum.example.com\tTRUE\t/\tTRUE\t9999999999\txf_user\t42',
+  ].join('\n');
+  const fetchImpl = async () => new Response('<title>Just a moment...</title>', { status: 403, headers: { 'content-type': 'text/html', server: 'cloudflare' } });
+  await crawl({
+    url: thread, mode: 'single', cookiesText, ignoreHistory: true, solverUrl: `http://127.0.0.1:${solver.address().port}`,
+    fetchImpl, assertUrl: async () => {}, delayMs: 0,
+  });
+  assert.deepEqual(sentCookies.map((c) => c.name), ['xf_user']);
+});
+
+test('cookiesFor keeps only cookies a browser would send to the URL', () => {
+  const cookies = [
+    { name: 'SAPISID', value: 'x', domain: '.youtube.com', path: '/', secure: true },
+    { name: 'xf_user', value: '1', domain: 'forum.example.com', path: '/', secure: false },
+  ];
+  assert.deepEqual(cookiesFor(cookies, 'https://forum.example.com/t/1').map((c) => c.name), ['xf_user']);
+  assert.deepEqual(cookiesFor(cookies, 'https://www.youtube.com/').map((c) => c.name), ['SAPISID']);
+  assert.deepEqual(cookiesFor(cookies, 'not a url'), []);
 });
 
 test('a 403 says which cookies were sent', async () => {
