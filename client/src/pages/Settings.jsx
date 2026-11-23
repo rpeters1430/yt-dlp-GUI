@@ -206,6 +206,23 @@ export default function Settings({ username, onLogout }) {
     }
   }
 
+  async function handleClearYoutubeCookies() {
+    setCookiesMessage('');
+    setCookiesError('');
+    try {
+      const { removed, configured, fileStatus } = await api.clearYoutubeCookies();
+      setCookiesMessage(removed > 0
+        ? `Removed ${removed} YouTube/Google cookie${removed === 1 ? '' : 's'}${configured ? '; other sites\' cookies were kept.' : '.'}`
+        : 'No YouTube cookies were saved.');
+      setCookiesConfigured(configured);
+      setCookieFileStatus(configured ? fileStatus : null);
+      setCookieCheck(null);
+      setCookieCheckError('');
+    } catch (err) {
+      setCookiesError(err.message);
+    }
+  }
+
   function handleCookiesFile(e) {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -581,7 +598,8 @@ export default function Settings({ username, onLogout }) {
           field on the Twitch page. They're stored on this server only, with owner-only file
           permissions — never share this content with anyone else, it's equivalent to your
           login session. Uploading a new file here won't remove a Twitch auth-token set
-          separately; only "Remove saved cookies" below clears everything.
+          separately; "Remove YouTube cookies" drops only the YouTube/Google login, and "Remove saved
+          cookies" clears everything.
         </p>
         <form onSubmit={handleSaveCookies} className="settings-form">
           <label className="file-input-label">
@@ -602,6 +620,11 @@ export default function Settings({ username, onLogout }) {
             {cookiesConfigured && (
               <button type="button" className="btn-secondary" onClick={handleCheckCookies} disabled={cookiesBusy || cookieCheckBusy}>
                 {cookieCheckBusy ? 'Testing with YouTube…' : 'Test YouTube cookies'}
+              </button>
+            )}
+            {cookiesConfigured && (
+              <button type="button" className="btn-secondary" onClick={handleClearYoutubeCookies} disabled={cookiesBusy || cookieCheckBusy}>
+                Remove YouTube cookies
               </button>
             )}
             {cookiesConfigured && (

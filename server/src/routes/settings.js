@@ -6,7 +6,9 @@ const ytdlp = require('../services/ytdlp');
 const queue = require('../services/queue');
 const outputTemplate = require('../services/outputTemplate');
 const solverrProxy = require('../services/solverrProxy');
-const { SITE_COOKIES, writeSiteCookies, clearSiteCookies, siteCookiesStatus } = require('../services/ytdlpCookies');
+const {
+  SITE_COOKIES, writeSiteCookies, clearSiteCookies, siteCookiesStatus, removeYoutubeCookies,
+} = require('../services/ytdlpCookies');
 const cookieCheck = require('../services/cookieCheck');
 const poToken = require('../services/poToken');
 const { COOKIES_FILE } = ytdlp;
@@ -82,6 +84,13 @@ router.delete('/cookies', (req, res) => {
   if (fs.existsSync(COOKIES_FILE)) fs.unlinkSync(COOKIES_FILE);
   cookieCheck.clearLastResult();
   res.json({ ok: true });
+});
+
+// Removes only the YouTube/Google login from cookies.txt; other sites' cookies stay.
+router.delete('/cookies/youtube', (req, res) => {
+  const { removed, remaining } = removeYoutubeCookies();
+  cookieCheck.clearLastResult();
+  res.json({ ok: true, removed, configured: remaining, fileStatus: cookieCheck.getFileStatus() });
 });
 
 // Reddit and Twitter/X cookies live in their own files (see SITE_COOKIES) so uploading one
