@@ -418,6 +418,14 @@ function parseStageLine(line) {
   return { source: m[1], message: message.slice(0, 300) };
 }
 
+// The WARNING:/ERROR: lines yt-dlp printed, deduplicated, with credentials in URLs redacted.
+function ytdlpWarningLines(stderr) {
+  const lines = String(stderr || '').split('\n').map((l) => l.trim())
+    .filter((l) => /^(WARNING|ERROR):/.test(l))
+    .map((l) => l.replace(/(https?:\/\/)[^\s/@]+@/gi, '$1[redacted]@').slice(0, 500));
+  return [...new Set(lines)];
+}
+
 // onProgress, when given, receives each parseStageLine() result while yt-dlp works. -J is
 // quiet by default; --no-quiet prints those status lines on stdout ahead of the single JSON
 // line, so they're split off from the JSON below.
@@ -501,7 +509,13 @@ function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, play
         const cleanJson = (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace)
           ? raw.slice(firstBrace, lastBrace + 1)
           : raw;
-        resolve(JSON.parse(cleanJson));
+        const info = JSON.parse(cleanJson);
+        // yt-dlp still exits 0 when --ignore-no-formats-error swallows a failure, so its
+        // WARNING/ERROR lines are the only record of why a video came back with no formats.
+        if (info && typeof info === 'object') {
+          Object.defineProperty(info, 'ytdlpWarnings', { value: ytdlpWarningLines(stderr), enumerable: false });
+        }
+        resolve(info);
       } catch (e) {
         console.error(`[ytdlp:info] Unparseable JSON (${url}): ${e.message}; stdout starts: ${stdout.slice(0, 200)}`);
         reject(new Error('Failed to parse yt-dlp JSON output: ' + e.message));
@@ -1713,6 +1727,7 @@ async function searchYouTube(query, limit = 1) {
 }
 
 module.exports = {
+  ytdlpWarningLines,
   getInfo,
   clearRecentCaches,
   resolveShareUrl,
