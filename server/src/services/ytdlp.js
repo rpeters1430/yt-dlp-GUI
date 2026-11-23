@@ -138,9 +138,10 @@ function impersonateArgs(overrideTarget) {
 
 // Through the Solverr proxy the outbound TLS handshake is Solverr's own (it impersonates
 // browsers itself), and curl_cffi ignores --compat-options no-certifi so it would reject
-// Solverr's CA. --impersonate is therefore dropped while the proxy is in use.
+// Solverr's CA. --impersonate is therefore dropped while the proxy is in use. `options.url`
+// (the link being fetched) lets YouTube/Google bypass the proxy — see solverrProxy.bypassesProxy.
 function commonArgs(options = {}) {
-  const proxy = solverrProxy.proxyArgs();
+  const proxy = solverrProxy.proxyArgs(options?.url);
   return [
     ...jsRuntimeArgs(),
     '--remote-components', 'ejs:github',
@@ -430,7 +431,7 @@ function getInfoResolved(url, { flatPlaylist = false, playlistStart = null, play
     // A scheduled (not yet live) broadcast has no formats, which yt-dlp otherwise treats as
     // an error ("This live event will begin in …") — so the link could never be probed and
     // offered as "wait for it to start". Callers check for empty formats themselves.
-    const args = ['-J', '--ignore-no-formats-error', ...commonArgs({ impersonate })];
+    const args = ['-J', '--ignore-no-formats-error', ...commonArgs({ impersonate, url })];
     if (flatPlaylist) args.push('--flat-playlist');
     if (playlistStart && playlistStart > 0) args.push('--playlist-start', String(playlistStart));
     if (playlistEnd) args.push('--playlist-end', String(playlistEnd));
@@ -842,7 +843,7 @@ function buildDownloadArgs(url, rawOptions = {}) {
     ...work.args,
     '--newline',
     '--progress',
-    ...commonArgs(options),
+    ...commonArgs({ ...options, url }),
     '--progress-template', PROGRESS_TEMPLATE,
     '--progress-template', 'postprocess:YTDLP_STAGE %(progress.postprocessor)s|%(progress.status)s',
     '-o', work.output,

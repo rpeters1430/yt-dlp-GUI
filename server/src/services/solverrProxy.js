@@ -94,8 +94,30 @@ function isActive() {
   return getMode() === 'auto' && !!url && state.reachable && state.checkedUrl === url && isCaInstalled();
 }
 
-function proxyArgs() {
-  if (!isActive()) return [];
+// YouTube and Google are never sent through Solverr. They don't sit behind Cloudflare, so the
+// proxy can't help them, and Google ties a signed-in session to the client that uses it: the
+// same cookies showing up behind a TLS-decrypting proxy, with Solverr's TLS fingerprint and
+// possibly a different exit IP, gets the session rotated or revoked within minutes.
+const BYPASS_DOMAINS = [
+  'youtube.com', 'youtu.be', 'youtube-nocookie.com', 'youtubei.googleapis.com',
+  'googlevideo.com', 'ytimg.com', 'ggpht.com', 'google.com', 'googleapis.com', 'gstatic.com',
+];
+
+function bypassesProxy(url) {
+  if (typeof url !== 'string') return false;
+  if (/^yt(?:search|dl)/i.test(url.trim())) return true; // ytsearch:..., ytsearchdate:...
+  let host;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/\.+$/, '');
+  } catch {
+    return false;
+  }
+  return BYPASS_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+// `url` is the link yt-dlp is about to fetch; YouTube/Google links always go direct.
+function proxyArgs(url) {
+  if (!isActive() || bypassesProxy(url)) return [];
   return ['--proxy', getProxyUrl(), '--compat-options', 'no-certifi'];
 }
 
@@ -230,6 +252,7 @@ module.exports = {
   getProxyUrl,
   isActive,
   proxyArgs,
+  bypassesProxy,
   dispatcher,
   proxiedFetch,
   curlProxyOptions,

@@ -104,7 +104,7 @@ function classifyCheck({ inspection, exitCode, stderr, timedOut }) {
 
 function runYtdlpCheck({ spawn = ytdlp.spawnYtdlp, timeoutMs = CHECK_TIMEOUT_MS } = {}) {
   return new Promise((resolve) => {
-    const args = ['--simulate', '--no-playlist', '--print', 'id', ...ytdlp.commonArgs(), TEST_VIDEO_URL];
+    const args = ['--simulate', '--no-playlist', '--print', 'id', ...ytdlp.commonArgs({ url: TEST_VIDEO_URL }), TEST_VIDEO_URL];
     let proc;
     try {
       proc = spawn(args, { detached: process.platform !== 'win32' });

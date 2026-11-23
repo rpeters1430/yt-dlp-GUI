@@ -126,15 +126,18 @@ function parseCookiesContent(text) {
   return [];
 }
 
-// The Cookie header a browser would send to `url`: domain, path, secure and expiry all have
-// to match, so a cookie is never leaked to a host it wasn't set for (including redirects).
-function cookieHeaderFor(cookies, url, now = Date.now()) {
+// The cookies a browser would send to `url`: domain, path, secure and expiry all have to
+// match, so a cookie is never leaked to a host it wasn't set for (including redirects). Everything that leaves this process for a page
+// fetch — the Cookie header, the challenge solver's browser, the curl_cffi fallback — goes
+// through this, so e.g. YouTube/Google login cookies from the shared cookies.txt never reach a
+// forum or the solver.
+function cookiesFor(cookies, url, now = Date.now()) {
   let parsed;
-  try { parsed = new URL(url); } catch { return ''; }
+  try { parsed = new URL(url); } catch { return []; }
   const host = parsed.hostname.toLowerCase();
   const nowSec = Math.floor(now / 1000);
-  const pairs = [];
-  for (const c of cookies) {
+  const matched = [];
+  for (const c of cookies || []) {
     const domain = (c.domain || '').replace(/^\./, '');
     if (domain && host !== domain && !host.endsWith(`.${domain}`)) continue;
     if (c.secure && parsed.protocol !== 'https:') continue;
@@ -142,9 +145,13 @@ function cookieHeaderFor(cookies, url, now = Date.now()) {
     if (c.expiry && c.expiry < nowSec && !/^(__ddg|cf_|yMzi|xf_)/i.test(c.name)) continue;
     const cookiePath = c.path || '/';
     if (!(parsed.pathname === cookiePath || parsed.pathname.startsWith(cookiePath.endsWith('/') ? cookiePath : `${cookiePath}/`))) continue;
-    pairs.push(`${c.name}=${c.value}`);
+    matched.push(c);
   }
-  return pairs.join('; ');
+  return matched;
+}
+
+function cookieHeaderFor(cookies, url, now = Date.now()) {
+  return cookiesFor(cookies, url, now).map((c) => `${c.name}=${c.value}`).join('; ');
 }
 
 function getCrawlerCookiesStatus() {
@@ -772,7 +779,7 @@ async function fetchPage(url, {
       if (cfChallenge || ddgChallenge || res.status === 403 || res.status === 503) {
         if (solverUrl) {
           try {
-            const solved = await solveWithFlareSolverr(solverUrl, current, cookies, { signal });
+            const solved = await solveWithFlareSolverr(solverUrl, current, cookiesFor(cookies, current), { signal });
             if (solved && solved.html) {
               rememberSolverCookies(cookies, solved.cookies);
               return { url: solved.url, html: solved.html, userAgent: solved.userAgent };
@@ -783,7 +790,7 @@ async function fetchPage(url, {
           }
         }
         try {
-          const stealth = await fetchWithCurlCffi(current, { headers, cookies, signal, proxy: solverrProxy.curlProxyOptions() });
+          const stealth = await fetchWithCurlCffi(current, { headers, cookies: cookiesFor(cookies, current), signal, proxy: solverrProxy.curlProxyOptions() });
           if (stealth && stealth.status >= 200 && stealth.status < 300 && stealth.html) {
             rememberSolverCookies(cookies, stealth.cookies);
             return { url: current, html: stealth.html };
@@ -1295,6 +1302,7 @@ module.exports = {
   parseNetscapeCookies,
   parseCookiesContent,
   cookieHeaderFor,
+  cookiesFor,
   getCrawlerCookiesStatus,
   saveCrawlerCookies,
   deleteCrawlerCookies,

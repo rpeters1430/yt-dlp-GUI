@@ -73,6 +73,20 @@ test('only adds proxy args while reachable with the CA installed', async () => {
   assert.ok(!args.includes('--impersonate'));
   assert.ok(!ytdlp.formatCommand('yt-dlp', args).includes(':pw@'), 'password redacted from logged command');
 
+  // YouTube/Google always connect directly, keeping --impersonate, so the signed-in session
+  // isn't seen through Solverr's TLS-decrypting proxy.
+  for (const yt of ['https://www.youtube.com/watch?v=jNQXAC9IVRw', 'https://youtu.be/abc', 'https://music.youtube.com/x', 'ytsearch5:cats']) {
+    assert.deepEqual(solverrProxy.proxyArgs(yt), [], yt);
+  }
+  const ytInfo = ytdlp.commonArgs({ url: 'https://www.youtube.com/@channel/videos' });
+  assert.ok(!ytInfo.includes('--proxy'));
+  assert.ok(ytInfo.includes('--impersonate'));
+  const ytDownload = ytdlp.buildDownloadArgs('https://www.youtube.com/watch?v=jNQXAC9IVRw', { impersonate: 'chrome' });
+  assert.ok(!ytDownload.includes('--proxy'));
+  assert.ok(!ytDownload.includes('no-certifi'));
+  assert.ok(!solverrProxy.bypassesProxy('https://notyoutube.com/'));
+  assert.ok(solverrProxy.bypassesProxy('https://rr1---sn-abc.googlevideo.com/videoplayback'));
+
   setSetting('solverr_proxy_mode', 'off');
   assert.deepEqual(solverrProxy.proxyArgs(), []);
   assert.ok(ytdlp.commonArgs().includes('--impersonate'));
