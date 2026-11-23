@@ -95,6 +95,33 @@ function setTwitchAuthCookie(token) {
   }
 }
 
+// YouTube's login lives on Google's domains too (SID, HSID, ... on .google.com and, for some
+// exports, country domains like .google.co.uk), so all of them go with "remove YouTube cookies".
+const YOUTUBE_COOKIE_DOMAIN_RE = /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com|google\.[a-z]{2,3}(\.[a-z]{2})?)$/i;
+
+function isYoutubeCookieLine(line) {
+  const c = parseCookieLine(line);
+  return !!c && YOUTUBE_COOKIE_DOMAIN_RE.test(c.domain.replace(/^\./, ''));
+}
+
+// Strips the YouTube/Google rows from the shared cookies.txt and keeps every other site's
+// cookies (Twitch auth-token included). Deletes the file when nothing real is left, like
+// setTwitchAuthCookie does. Returns how many rows were removed and whether a file remains.
+function removeYoutubeCookies() {
+  const lines = readCookieLines();
+  const removed = lines.filter(isYoutubeCookieLine).length;
+  const kept = lines.filter((line) => line.trim() !== '' && !isYoutubeCookieLine(line));
+  if (!kept.some((line) => parseCookieLine(line))) {
+    if (fs.existsSync(COOKIES_FILE)) fs.unlinkSync(COOKIES_FILE);
+    return { removed, remaining: false };
+  }
+  if (removed > 0) {
+    fs.writeFileSync(COOKIES_FILE, kept.join('\n') + '\n', { mode: 0o600 });
+    fs.chmodSync(COOKIES_FILE, 0o600);
+  }
+  return { removed, remaining: true };
+}
+
 function hasTwitchAuthCookie() {
   return readCookieLines().some(isTwitchAuthCookieLine);
 }
@@ -262,5 +289,5 @@ function withPrivateCookies(args) {
 module.exports = {
   SITE_COOKIES, writeSiteCookies, clearSiteCookies, siteCookiesStatus, filterSiteCookies,
   cookieArgs, setTwitchAuthCookie, hasTwitchAuthCookie, getTwitchAuthTokenRaw, getTwitchAuthTokenMasked,
-  writeCookiesFilePreservingTwitchAuth, withPrivateCookies, sweepPrivateCookieDirs, PRIVATE_COOKIES_ROOT,
+  writeCookiesFilePreservingTwitchAuth, removeYoutubeCookies, withPrivateCookies, sweepPrivateCookieDirs, PRIVATE_COOKIES_ROOT,
 };

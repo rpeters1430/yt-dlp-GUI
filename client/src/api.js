@@ -104,6 +104,7 @@ export const api = {
   getCookiesStatus: () => request('/settings/cookies'),
   saveCookies: (content) => request('/settings/cookies', { method: 'PUT', body: JSON.stringify({ content }) }),
   clearCookies: () => request('/settings/cookies', { method: 'DELETE' }),
+  clearYoutubeCookies: () => request('/settings/cookies/youtube', { method: 'DELETE' }),
   getCookieCheck: () => request('/settings/cookies/check'),
   checkCookies: () => request('/settings/cookies/check', { method: 'POST' }),
   getSiteCookies: () => request('/settings/cookies/sites'),
