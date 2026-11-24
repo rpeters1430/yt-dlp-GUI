@@ -18,7 +18,7 @@ RUN npm run build
 # yt-dlp needs an external JS runtime to solve YouTube's JS challenges. QuickJS-ng's `qjs` is
 # built from a pinned, verified release commit and cross-compiled on the build host (so arm64
 # doesn't compile under QEMU) into a static binary for the target architecture.
-FROM --platform=$BUILDPLATFORM node:26-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS quickjs-build
+FROM --platform=$BUILDPLATFORM node:26-bookworm-slim@sha256:0042e17d232a87a2cd485be1da7900fca4d10a4ad11b29e9285da1d2e54798c9 AS quickjs-build
 ARG TARGETARCH
 ARG BUILDARCH
 # Update the version and its tag's commit together.
@@ -42,7 +42,7 @@ RUN set -eux; \
     "${QJS_TRIPLE}-strip" -o /out/qjs /tmp/quickjs/build/qjs
 
 # --- Final image ---
-FROM node:26-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1
+FROM node:26-bookworm-slim@sha256:0042e17d232a87a2cd485be1da7900fca4d10a4ad11b29e9285da1d2e54798c9
 
 # The resolved source/archive hashes are also retained for diagnostics.
 COPY --from=tool-versions /out/requirements-docker.txt /tmp/requirements-docker.txt
